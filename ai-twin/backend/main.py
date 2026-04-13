@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from dotenv import load_dotenv
 import os
+from tools.gmail_tool import read_recent_emails, draft_email, send_email
 
 load_dotenv()
 
@@ -24,6 +25,16 @@ class MemoryUpdateRequest(BaseModel):
     user_id: Optional[str] = "default_user"
     doc_id: str
     text: str
+
+class EmailDraftRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+
+class EmailSendRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
 
 @app.get("/")
 def root():
@@ -73,3 +84,27 @@ def reset_memory(user_id: str = "default_user"):
 def update_memory(req: MemoryUpdateRequest):
     store_memory(user_id=req.user_id, doc_id=req.doc_id, text=req.text)
     return {"status": "updated", "doc_id": req.doc_id}
+
+@app.get("/gmail/inbox")
+def get_inbox(max_results: int = 5):
+    try:
+        emails = read_recent_emails(max_results=max_results)
+        return {"emails": emails, "count": len(emails)}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/gmail/draft")
+def create_draft(req: EmailDraftRequest):
+    try:
+        result = draft_email(to=req.to, subject=req.subject, body=req.body)
+        return {"status": "draft_created", "details": result}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/gmail/send")
+def send_mail(req: EmailSendRequest):
+    try:
+        result = send_email(to=req.to, subject=req.subject, body=req.body)
+        return {"status": "sent", "details": result}
+    except Exception as e:
+        return {"error": str(e)}
