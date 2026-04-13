@@ -3,6 +3,7 @@ venv/
 **/*.pyc
 .env
 **/credentials.json
+**/venv/
 **/token_gmail.json
 **/chroma_store/
 **/chroma_db/
