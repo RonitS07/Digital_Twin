@@ -28,3 +28,4 @@ def retrieve_memory(user_id: str, query: str, n: int = 3) -> str:
         return "\n".join(docs) if docs else ""
     except Exception:
         return ""
+ 

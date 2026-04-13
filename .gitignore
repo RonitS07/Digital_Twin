@@ -1,20 +1,12 @@
 venv/
-**/venv/
-__pycache__/
 **/__pycache__/
-*.pyc
+**/*.pyc
 .env
-**/.env
-credentials.json
 **/credentials.json
-token_gmail.json
 **/token_gmail.json
-chroma_store/
 **/chroma_store/
-chroma_db/
 **/chroma_db/
-*.bin
-*.sqlite3
-*.egg-info/
+**/*.bin
+**/*.sqlite3
+**/*.egg-info/
 .DS_Store
-**/ .DS_Store
