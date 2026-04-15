@@ -1,0 +1,26 @@
+# Environment
+.env
+**/.env
+
+# Credentials & tokens
+**/credentials.json
+**/token_gmail.json
+**/token_calendar.json
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/venv/
+**/*.egg-info/
+
+# Database
+**/chroma_db/
+**/chroma_store/
+**/*.bin
+**/*.sqlite3
+
+# Node
+**/node_modules/
+
+# OS
+.DS_Store
