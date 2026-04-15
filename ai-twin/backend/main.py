@@ -89,16 +89,29 @@ def process(req: ProcessRequest, db: Session = Depends(get_db)):
     try:
         result = twin_graph.invoke(initial_state)
 
-        # Log every interaction to PostgreSQL
-        log = TaskLog(
-            user_id=uuid.UUID(req.user_id) if req.user_id != "default_user" else uuid.uuid4(),
-            input=result["input"],
-            intent=result["intent"],
-            output=result["output"],
-            approved=not result["approval_required"]
-        )
-        db.add(log)
-        db.commit()
+        # ── Log to PostgreSQL ────────────────────────────────────
+        try:
+            log_user_id = None
+            if req.user_id and req.user_id != "default_user":
+                try:
+                    log_user_id = uuid.UUID(req.user_id)
+                except ValueError:
+                    log_user_id = None
+
+            log = TaskLog(
+                user_id=log_user_id,
+                input=result["input"],
+                intent=result["intent"],
+                output=result["output"],
+                approved=not result["approval_required"]
+            )
+            db.add(log)
+            db.commit()
+            print("Task logged successfully")
+        except Exception as log_err:
+            print(f"Logging error: {log_err}")
+            db.rollback()
+        # ────────────────────────────────────────────────────────
 
         return {
             "input":             result["input"],
@@ -110,6 +123,11 @@ def process(req: ProcessRequest, db: Session = Depends(get_db)):
         }
     except Exception as e:
         return {"error": str(e)}
+        
+@app.post("/memory/store")
+def store(req: MemoryStoreRequest):
+    store_memory(user_id=req.user_id, doc_id=req.doc_id, text=req.text)
+    return {"status": "stored", "doc_id": req.doc_id}
 
 @app.get("/history")
 def get_history(user_id: str = "default_user", db: Session = Depends(get_db)):
@@ -130,7 +148,7 @@ def get_history(user_id: str = "default_user", db: Session = Depends(get_db)):
         }
     except Exception as e:
         return {"error": str(e)}
-        
+
 @app.delete("/memory/reset")
 def reset_memory(user_id: str = "default_user"):
     from memory.chroma import client

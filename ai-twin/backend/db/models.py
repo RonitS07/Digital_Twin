@@ -8,24 +8,22 @@ import uuid
 class User(Base):
     __tablename__ = "users"
 
-    id           = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email        = Column(String, unique=True, nullable=False, index=True)
-    name         = Column(String, nullable=False)
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email           = Column(String, unique=True, nullable=False, index=True)
+    name            = Column(String, nullable=False)
     hashed_password = Column(String, nullable=False)
-    is_active    = Column(Boolean, default=True)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-
-    tasks        = relationship("TaskLog", back_populates="user")
+    is_active       = Column(Boolean, default=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    tasks           = relationship("TaskLog", back_populates="user")
 
 class TaskLog(Base):
     __tablename__ = "task_logs"
 
-    id           = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id      = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    input        = Column(Text, nullable=False)
-    intent       = Column(String, nullable=False)
-    output       = Column(Text)
-    approved     = Column(Boolean, default=False)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-
-    user         = relationship("User", back_populates="tasks")
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)  # nullable now
+    input      = Column(Text, nullable=False)
+    intent     = Column(String, nullable=False)
+    output     = Column(Text)
+    approved   = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    user       = relationship("User", back_populates="tasks")
