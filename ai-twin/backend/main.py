@@ -6,7 +6,7 @@ import os
 
 load_dotenv()
 
-from tools.gmail_tool import read_recent_emails, draft_email, send_email
+from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email
 from tools.calendar_tool import get_upcoming_events, create_event
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -16,6 +16,9 @@ from db.models import Base, User, TaskLog
 from db.auth import hash_password, verify_password, create_access_token, decode_token
 import uuid
 from typing import Optional, List, Union
+import re
+import asyncio
+from db.models import ProcessedEmail
 
 Base.metadata.create_all(bind=engine)
 
@@ -25,6 +28,91 @@ from graph.graph import twin_graph
 from memory.chroma import store_memory
 
 app = FastAPI(title="AI Twin API")
+
+def extract_reply(text: str) -> str:
+    """Extracts only the content within <reply> tags, or returns original text if tags not found."""
+    match = re.search(r'<reply>(.*?)</reply>', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
+
+# Setup Background Task
+AUTO_SEND = os.getenv("AUTO_SEND", "false").lower() == "true"
+
+async def process_new_emails():
+    """Shared logic to check and process new emails. Returns True if any new email was processed."""
+    processed_count = 0
+    try:
+        with next(get_db()) as db:
+            emails = read_recent_emails(max_results=5)
+            for mail in emails:
+                # Check if already processed
+                existing = db.query(ProcessedEmail).filter(ProcessedEmail.id == mail["id"]).first()
+                if existing:
+                    continue
+                
+                print(f"Instantly processing email: {mail['id']}")
+                
+                # 1. Ask AI to draft a reply
+                initial_state = {
+                    "user_id":           "default_user",
+                    "input":             f"Read email {mail['id']} and suggest a suitable reply.",
+                    "intent":            "",
+                    "task_plan":         [],
+                    "context":           "",
+                    "output":            "",
+                    "approval_required": False
+                }
+                result = twin_graph.invoke(initial_state)
+                
+                # 2. Execute Action
+                clean_body = extract_reply(result["output"])
+                if AUTO_SEND:
+                    reply_to_email(message_id=mail["id"], body=clean_body)
+                    action = "sent"
+                else:
+                    from tools.gmail_tool import get_email_details, draft_email
+                    info = get_email_details(mail["id"])
+                    draft_email(to=info["from"], subject=f"Re: {info['subject']}", body=clean_body)
+                    action = "drafted"
+
+                # 3. Mark as processed
+                entry = ProcessedEmail(id=mail["id"], thread_id=mail.get("threadId", ""), action_taken=action)
+                db.add(entry)
+                db.commit()
+                processed_count += 1
+    except Exception as e:
+        print(f"Email processing error: {e}")
+    return processed_count > 0
+
+async def monitor_emails():
+    print(f"Starting Email Monitor (Auto-Send: {AUTO_SEND})")
+    while True:
+        await process_new_emails()
+        await asyncio.sleep(600) # Fallback polling every 10 mins
+
+@app.post("/gmail/webhook")
+async def gmail_webhook(req: dict):
+    """Endpoint where Google Pub/Sub sends notifications."""
+    # Only print if a new email was actually handled
+    new_found = await process_new_emails()
+    if new_found:
+        print("🔔 New email discovered and handled!")
+    return {"status": "processed"}
+
+@app.post("/gmail/watch")
+def start_watch(topic_name: str):
+    """Initialize the Gmail watch subscription."""
+    from tools.gmail_tool import watch_gmail
+    try:
+        result = watch_gmail(topic_name)
+        return {"status": "watch_started", "details": result}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(monitor_emails())
 
 class ProcessRequest(BaseModel):
     input: str
@@ -48,6 +136,10 @@ class EmailDraftRequest(BaseModel):
 class EmailSendRequest(BaseModel):
     to: str
     subject: str
+    body: str
+
+class EmailReplyRequest(BaseModel):
+    message_id: str
     body: str
 
 class RegisterRequest(BaseModel):
@@ -111,6 +203,32 @@ def process(req: ProcessRequest, db: Session = Depends(get_db)):
         except Exception as log_err:
             print(f"Logging error: {log_err}")
             db.rollback()
+        # ────────────────────────────────────────────────────────
+
+        # ── Auto-Draft Logic ─────────────────────────────────────
+        if result["intent"] == "email" and "draft" in result["output"].lower():
+            # Extract email ID from context or input
+            match = re.search(r'\b([a-f0-9]{16})\b', result["input"])
+            email_id = match.group(1) if match else None
+            
+            # Create a draft with the AI output
+            try:
+                # Extract only the content between <reply> tags
+                body = extract_reply(result["output"])
+                
+                # If we have an email_id, we use the reply tool
+                if email_id:
+                    # Fetch receiver for replying
+                    from tools.gmail_tool import get_email_details
+                    info = get_email_details(email_id)
+                    draft_res = draft_email(to=info["from"], subject=f"Re: {info['subject']}", body=body)
+                else:
+                    # New draft
+                    draft_res = draft_email(to="recipient@example.com", subject="AI Generated Draft", body=body)
+                
+                result["task_plan"].append(f"Auto-Draft Created: {draft_res.get('draft_id')}")
+            except Exception as e:
+                print(f"Auto-drafting error: {e}")
         # ────────────────────────────────────────────────────────
 
         return {
@@ -184,6 +302,14 @@ def send_mail(req: EmailSendRequest):
     try:
         result = send_email(to=req.to, subject=req.subject, body=req.body)
         return {"status": "sent", "details": result}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/gmail/reply")
+def reply_to_mail(req: EmailReplyRequest):
+    try:
+        result = reply_to_email(message_id=req.message_id, body=req.body)
+        return {"status": "replied", "details": result}
     except Exception as e:
         return {"error": str(e)}
 

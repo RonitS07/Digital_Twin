@@ -86,3 +86,76 @@ def send_email(to: str, subject: str, body: str) -> dict:
         body={"raw": raw}
     ).execute()
     return {"message_id": sent["id"], "status": "sent"}
+def reply_to_email(message_id: str, body: str) -> dict:
+    service = get_gmail_service()
+    
+    # 1. Fetch original message details
+    original = service.users().messages().get(userId="me", id=message_id, format="metadata").execute()
+    headers = original.get("payload", {}).get("headers", [])
+    
+    msg_id  = next((h["value"] for h in headers if h["name"].lower() == "message-id"), None)
+    subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "No Subject")
+    to_addr = next((h["value"] for h in headers if h["name"].lower() == "from"), None)
+    thread_id = original.get("threadId")
+
+    if not to_addr:
+        return {"error": "Could not determine recipient from original message"}
+
+    # 2. Build the reply message
+    reply = MIMEText(body)
+    reply["to"] = to_addr
+    # Add Re: if not present
+    if not subject.lower().startswith("re:"):
+        reply["subject"] = "Re: " + subject
+    else:
+        reply["subject"] = subject
+        
+    if msg_id:
+        reply["In-Reply-To"] = msg_id
+        reply["References"]  = msg_id
+    
+    raw = base64.urlsafe_b64encode(reply.as_bytes()).decode()
+    
+    # 3. Send as part of the same thread
+    sent = service.users().messages().send(
+        userId="me",
+        body={
+            "raw": raw,
+            "threadId": thread_id
+        }
+    ).execute()
+    
+    return {"message_id": sent["id"], "thread_id": sent["threadId"], "status": "replied"}
+
+def get_email_details(message_id: str) -> dict:
+    service = get_gmail_service()
+    full = service.users().messages().get(
+        userId="me",
+        id=message_id,
+        format="full"
+    ).execute()
+
+    headers = full["payload"].get("headers", [])
+    subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
+    sender  = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
+    snippet = full.get("snippet", "")
+    
+    return {
+        "id": message_id,
+        "subject": subject,
+        "from": sender,
+        "snippet": snippet
+    }
+
+def watch_gmail(topic_name: str) -> dict:
+    """Tells Google to send push notifications to the specified Pub/Sub topic."""
+    service = get_gmail_service()
+    request = {
+        'labelIds': ['INBOX'],
+        'topicName': topic_name
+    }
+    return service.users().watch(userId='me', body=request).execute()
+
+def stop_gmail_watch():
+    service = get_gmail_service()
+    return service.users().stop(userId='me').execute()

@@ -27,3 +27,9 @@ class TaskLog(Base):
     approved   = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     user       = relationship("User", back_populates="tasks")
+class ProcessedEmail(Base):
+    __tablename__ = "processed_emails"
+    id = Column(String, primary_key=True)  # Gmail message ID
+    thread_id = Column(String)
+    action_taken = Column(String)  # 'drafted' or 'sent'
+    processed_at = Column(DateTime, default=datetime.utcnow)
