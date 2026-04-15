@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-surface-base text-on-surface font-inter antialiased;
+  margin: 0;
+}
+
+.glass-panel {
+  @apply bg-neutral/5 backdrop-blur-40;
+}
+
+.ai-glow {
+  box-shadow: 0px 0px 20px rgba(103, 96, 253, 0.1);
+}
+
+.liquid-movement {
+  transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ai-orb-glow {
+  background: radial-gradient(circle at center, #6760fd 0%, #413f82 40%, transparent 70%);
+  filter: blur(40px);
+  opacity: 0.4;
+}
+
+.ai-orb-core {
+  background: linear-gradient(135deg, #c3c0ff 0%, #6760fd 100%);
+  box-shadow: 0 0 60px rgba(103, 96, 253, 0.4);
+}

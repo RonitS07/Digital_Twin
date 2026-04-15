@@ -1,24 +1,24 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import Optional
-from dotenv import load_dotenv
 import os
+import re
+import uuid
+import asyncio
+from typing import Optional, List, Union
+
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from dotenv import load_dotenv
+
+from db.database import get_db, engine
+from db.models import Base, User, TaskLog, ProcessedEmail
+from db.auth import hash_password, verify_password, create_access_token, decode_token
+from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email, get_email_details, watch_gmail
+from tools.calendar_tool import get_upcoming_events, create_event
+from graph.graph import twin_graph
+from memory.chroma import store_memory
 
 load_dotenv()
-
-from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email
-from tools.calendar_tool import get_upcoming_events, create_event
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
-from db.database import get_db, engine
-from db.models import Base, User, TaskLog
-from db.auth import hash_password, verify_password, create_access_token, decode_token
-import uuid
-from typing import Optional, List, Union
-import re
-import asyncio
-from db.models import ProcessedEmail
 
 Base.metadata.create_all(bind=engine)
 
@@ -71,7 +71,6 @@ async def process_new_emails():
                     reply_to_email(message_id=mail["id"], body=clean_body)
                     action = "sent"
                 else:
-                    from tools.gmail_tool import get_email_details, draft_email
                     info = get_email_details(mail["id"])
                     draft_email(to=info["from"], subject=f"Re: {info['subject']}", body=clean_body)
                     action = "drafted"
@@ -219,7 +218,6 @@ def process(req: ProcessRequest, db: Session = Depends(get_db)):
                 # If we have an email_id, we use the reply tool
                 if email_id:
                     # Fetch receiver for replying
-                    from tools.gmail_tool import get_email_details
                     info = get_email_details(email_id)
                     draft_res = draft_email(to=info["from"], subject=f"Re: {info['subject']}", body=body)
                 else:
