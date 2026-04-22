@@ -1,197 +1,641 @@
-import React from 'react'
-import { motion } from 'framer-motion'
-import { Sparkles, ShieldCheck, Zap, UserPlus, Check, Eye } from 'lucide-react'
+import React, { useState, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+    Sparkles, Eye, EyeOff, ArrowLeft, CheckCircle2,
+    Mail, Lock, User, AlertCircle, Loader2
+} from 'lucide-react'
+import {
+    signInWithEmailAndPassword,
+    createUserWithEmailAndPassword,
+    signInWithPopup,
+    sendPasswordResetEmail,
+    updateProfile
+} from 'firebase/auth'
+import { auth, googleProvider } from '../firebase'
 
-const AuthLayout = ({ children, title, subtitle, isLogin = true, onSwitch }) => (
-    <div className="min-h-screen flex items-stretch bg-surface-base selection:bg-primary/30">
-        {/* Left Side: Branding */}
-        <section className="hidden lg:flex w-1/2 flex-col justify-between p-16 relative overflow-hidden bg-surface-container-lowest border-r border-neutral/5">
-            <div className="absolute inset-0 bg-neutral/5 pointer-events-none"></div>
-            <div className="absolute -top-24 -left-24 w-96 h-96 bg-primary-container/10 blur-[120px] rounded-full"></div>
+// ─── Shared Primitives ──────────────────────────────────────────────────────
 
-            <div className="relative z-10">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-primary-container rounded-lg flex items-center justify-center">
-                        <Sparkles size={24} className="text-white" fill="currentColor" />
-                    </div>
-                    <h1 className="text-2xl font-manrope font-extrabold tracking-tighter text-white uppercase">AI Twin</h1>
-                </div>
-            </div>
-
-            <div className="relative z-10 max-w-lg">
-                <h2 className="text-6xl font-manrope font-bold text-white leading-tight mb-6 tracking-tight">
-                    {isLogin ? "Welcome back." : "Start your journey."}
-                </h2>
-                <p className="text-xl text-on-surface-variant font-inter leading-relaxed mb-12">
-                    Your digital twin is ready to brief, automate, and assist. Experience the future of executive productivity.
-                </p>
-
-                <div className="space-y-8">
-                    {[
-                        { icon: ShieldCheck, title: "Enterprise-grade security", desc: "Military-grade encryption for your data." },
-                        { icon: Zap, title: "Smart automation", desc: "Delegate complex tasks to your digital double." },
-                        { icon: UserPlus, title: "Full user control", desc: "You remain the architect of your twin's logic." }
-                    ].map((item, i) => (
-                        <div key={i} className="flex items-center gap-4 group">
-                            <div className="w-12 h-12 rounded-xl bg-surface-container-high flex items-center justify-center border border-neutral/10 group-hover:border-primary/50 transition-colors">
-                                <item.icon size={20} className="text-primary" />
-                            </div>
-                            <div>
-                                <p className="font-manrope font-semibold text-white">{item.title}</p>
-                                <p className="text-sm text-on-surface-variant">{item.desc}</p>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            <div className="relative z-10">
-                <div className="p-1 rounded-full w-fit bg-gradient-to-r from-primary/20 to-tertiary/20">
-                    <div className="glass-panel px-4 py-2 rounded-full flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-primary shadow-[0_0_8px_#6760fd]"></div>
-                        <span className="text-[10px] uppercase tracking-widest font-bold text-neutral">Twin Status: Active</span>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        {/* Right Side: Form */}
-        <section className="flex-1 flex flex-col justify-center items-center p-8 bg-surface-container-low">
-            <div className="w-full max-w-md space-y-8">
-                <div className="text-center lg:text-left">
-                    <h3 className="text-3xl font-manrope font-bold text-white mb-2">{title}</h3>
-                    <p className="text-on-surface-variant font-inter">{subtitle}</p>
-                </div>
-
-                <div className="space-y-6">
-                    <div className="grid grid-cols-2 gap-4">
-                        <button className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-surface-container-high border border-neutral/10 hover:border-neutral/30 transition-all font-medium text-sm">
-                            <span>Google</span>
-                        </button>
-                        <button className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-surface-container-high border border-neutral/10 hover:border-neutral/30 transition-all font-medium text-sm">
-                            <span>Microsoft</span>
-                        </button>
-                    </div>
-
-                    <div className="relative flex items-center">
-                        <div className="flex-grow border-t border-neutral/10"></div>
-                        <span className="mx-4 text-[10px] font-bold uppercase tracking-[0.2em] text-neutral">or email</span>
-                        <div className="flex-grow border-t border-neutral/10"></div>
-                    </div>
-
-                    {children}
-                </div>
-
-                <div className="pt-8 text-center">
-                    <p className="text-on-surface-variant text-sm">
-                        {isLogin ? "New here?" : "Already have an account?"}{' '}
-                        <button
-                            onClick={onSwitch}
-                            className="text-primary font-semibold underline underline-offset-4 hover:text-white transition-all"
-                        >
-                            {isLogin ? "Create account" : "Sign in"}
-                        </button>
-                    </p>
-                </div>
-            </div>
-
-            <footer className="mt-auto pt-16 w-full flex justify-between items-center text-[10px] uppercase tracking-widest font-bold text-neutral opacity-60 px-8 pb-8">
-                <div className="hidden lg:block">© 2024 AI Twin Enterprise.</div>
-                <div className="flex gap-6">
-                    <a href="#">Privacy</a>
-                    <a href="#">Terms</a>
-                </div>
-            </footer>
-        </section>
-    </div>
+const GoogleIcon = () => (
+    <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+    </svg>
 )
 
-const InputField = ({ label, type = "text", placeholder, extra }) => (
-    <div className="space-y-2">
-        <div className="flex justify-between items-center px-1">
-            <label className="text-[10px] uppercase tracking-widest font-bold text-neutral ml-1">{label}</label>
-            {extra}
-        </div>
-        <div className="relative">
+const FormField = ({ label, icon: Icon, type = 'text', placeholder, value, onChange, error, rightElement, autoComplete }) => (
+    <div className="space-y-1.5">
+        <label className="block text-xs font-semibold uppercase tracking-widest text-on-surface-variant/70 pl-1">
+            {label}
+        </label>
+        <div className={`relative flex items-center rounded-xl border transition-all duration-200 bg-surface-container
+            ${error
+                ? 'border-red-500/50 ring-1 ring-red-500/20'
+                : 'border-outline-variant/40 focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/20'
+            }`}>
+            {Icon && (
+                <div className="pl-4 pointer-events-none">
+                    <Icon size={16} className={`${error ? 'text-red-400' : 'text-neutral'}`} />
+                </div>
+            )}
             <input
                 type={type}
-                className="w-full bg-surface-container border-none rounded-xl px-4 py-3.5 text-on-surface placeholder:text-neutral/40 focus:ring-1 focus:ring-primary/40 transition-all outline-none"
                 placeholder={placeholder}
+                value={value}
+                onChange={onChange}
+                autoComplete={autoComplete}
+                className="flex-1 bg-transparent px-3 py-3.5 text-sm text-on-surface placeholder:text-neutral/40 focus:outline-none"
             />
-            {type === "password" && (
-                <button className="absolute right-4 top-1/2 -translate-y-1/2 text-neutral hover:text-white transition-colors">
-                    <Eye size={18} />
-                </button>
+            {rightElement && (
+                <div className="pr-3">
+                    {rightElement}
+                </div>
             )}
+        </div>
+        <AnimatePresence>
+            {error && (
+                <motion.p
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    className="flex items-center gap-1.5 text-xs text-red-400 pl-1"
+                >
+                    <AlertCircle size={12} /> {error}
+                </motion.p>
+            )}
+        </AnimatePresence>
+    </div>
+)
+
+const PrimaryButton = ({ children, loading, disabled, type = 'submit', onClick, className = '' }) => (
+    <button
+        type={type}
+        disabled={loading || disabled}
+        onClick={onClick}
+        className={`w-full relative flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl font-bold text-sm
+            bg-gradient-to-r from-primary to-secondary text-white
+            shadow-lg shadow-primary/25 hover:shadow-primary/40 hover:brightness-105
+            active:scale-[0.99] transition-all duration-200
+            disabled:opacity-60 disabled:pointer-events-none ${className}`}
+    >
+        {loading ? <Loader2 size={18} className="animate-spin" /> : children}
+    </button>
+)
+
+const GoogleButton = ({ onClick, loading, label = 'Continue with Google' }) => (
+    <button
+        type="button"
+        onClick={onClick}
+        disabled={loading}
+        className="w-full flex items-center justify-center gap-3 py-3.5 px-6 rounded-xl border border-outline-variant/50
+            bg-surface-container hover:bg-surface-container-high font-semibold text-sm text-on-surface
+            transition-all duration-200 active:scale-[0.99] disabled:opacity-60 disabled:pointer-events-none"
+    >
+        {loading ? <Loader2 size={18} className="animate-spin text-primary" /> : <GoogleIcon />}
+        {label}
+    </button>
+)
+
+const Divider = ({ text = 'or' }) => (
+    <div className="relative flex items-center">
+        <div className="flex-1 border-t border-outline-variant/30" />
+        <span className="mx-4 text-[11px] font-bold uppercase tracking-widest text-neutral/60">{text}</span>
+        <div className="flex-1 border-t border-outline-variant/30" />
+    </div>
+)
+
+// ─── Branding Panel (Left side on desktop) ───────────────────────────────────
+
+const BrandPanel = ({ quote, author }) => (
+    <div className="hidden lg:flex lg:w-[46%] xl:w-[42%] flex-col justify-between p-12 xl:p-16 relative overflow-hidden
+        bg-gradient-to-br from-surface-container via-surface-container-low to-surface-base
+        border-r border-outline-variant/20">
+        {/* Ambient glows */}
+        <div className="absolute -top-32 -left-32 w-80 h-80 bg-primary/10 rounded-full blur-[100px] pointer-events-none" />
+        <div className="absolute bottom-0 right-0 w-64 h-64 bg-secondary/5 rounded-full blur-[80px] pointer-events-none" />
+
+        {/* Logo */}
+        <div className="relative z-10 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/30">
+                <Sparkles size={20} className="text-white" fill="currentColor" />
+            </div>
+            <div>
+                <p className="font-manrope font-extrabold tracking-tighter text-lg text-on-surface leading-none">AI Twin</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral/70 mt-0.5">Executive Assistant</p>
+            </div>
+        </div>
+
+        {/* Center visual */}
+        <div className="relative z-10 flex flex-col items-center justify-center flex-1 py-16">
+            <div className="relative">
+                <div className="w-40 h-40 rounded-full border border-primary/20 flex items-center justify-center animate-[spin_20s_linear_infinite]">
+                    <div className="absolute -top-1 left-1/2 w-2 h-2 rounded-full bg-primary shadow-[0_0_12px_#6760fd]" />
+                </div>
+                <div className="absolute inset-4 rounded-full border border-primary/10 flex items-center justify-center animate-[spin_15s_linear_infinite_reverse]">
+                    <div className="absolute top-0 left-1/2 w-1.5 h-1.5 rounded-full bg-secondary/70" />
+                </div>
+                <div className="absolute inset-10 rounded-full bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-[0_0_50px_rgba(103,96,253,0.4)]">
+                    <Sparkles size={28} className="text-white" fill="currentColor" />
+                </div>
+            </div>
+
+            <div className="mt-12 text-center max-w-xs space-y-2">
+                <p className="text-lg font-manrope font-bold text-on-surface leading-snug">
+                    Your digital executive<br />working while you sleep.
+                </p>
+                <p className="text-sm text-on-surface-variant/70">
+                    AI Twin handles emails, meetings, and tasks autonomously — with your approval.
+                </p>
+            </div>
+        </div>
+
+        {/* Bottom quote */}
+        {quote && (
+            <div className="relative z-10 glass-panel rounded-2xl p-5 border border-primary/10">
+                <p className="text-sm text-on-surface-variant italic leading-relaxed">"{quote}"</p>
+                {author && <p className="text-[11px] font-bold text-primary mt-2 tracking-wide">{author}</p>}
+            </div>
+        )}
+    </div>
+)
+
+// ─── Auth Shell ───────────────────────────────────────────────────────────────
+
+const AuthShell = ({ children, title, subtitle, branding }) => (
+    <div className="min-h-screen flex bg-surface-base">
+        <BrandPanel {...(branding || {})} />
+
+        {/* Right: form area */}
+        <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-10 overflow-y-auto">
+            {/* Mobile logo */}
+            <div className="lg:hidden flex items-center gap-2 mb-10">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-primary to-secondary flex items-center justify-center">
+                    <Sparkles size={16} className="text-white" fill="currentColor" />
+                </div>
+                <span className="font-manrope font-extrabold tracking-tighter text-on-surface">AI Twin</span>
+            </div>
+
+            <div className="w-full max-w-[400px] space-y-7">
+                {/* Heading */}
+                <div>
+                    <h1 className="text-2xl sm:text-3xl font-manrope font-extrabold text-on-surface tracking-tight">{title}</h1>
+                    {subtitle && <p className="text-sm text-on-surface-variant mt-1.5">{subtitle}</p>}
+                </div>
+
+                {children}
+
+                {/* Footer */}
+                <p className="text-center text-[11px] text-neutral/50 font-medium">
+                    © 2025 AI Twin · <a href="#" className="hover:text-primary transition-colors">Privacy</a> · <a href="#" className="hover:text-primary transition-colors">Terms</a>
+                </p>
+            </div>
         </div>
     </div>
 )
 
-export const Login = ({ onLogin, onSignup, onForgotPassword }) => (
-    <AuthLayout
-        title="Sign in to your account"
-        subtitle="Access your executive suite and twin settings."
-        onSwitch={onSignup}
-    >
-        <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); onLogin(); }}>
-            <InputField label="Work Email" placeholder="name@company.com" />
-            <InputField
-                label="Password"
-                type="password"
-                placeholder="••••••••"
-                extra={<button type="button" onClick={onForgotPassword} className="text-[10px] uppercase tracking-widest font-bold text-primary">Forgot?</button>}
-            />
-            <div className="flex items-center px-1">
-                <input type="checkbox" className="rounded bg-surface-container border-neutral/20 text-primary focus:ring-0 mr-3" />
-                <span className="text-sm text-on-surface-variant">Remember me for 30 days</span>
-            </div>
-            <button
-                type="submit"
-                className="w-full py-4 bg-primary text-surface-base font-manrope font-bold rounded-xl shadow-xl shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all"
-            >
-                Sign In
-            </button>
-        </form>
-    </AuthLayout>
-)
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-export const Signup = ({ onBack, onComplete }) => (
-    <AuthLayout
-        isLogin={false}
-        title="Create your account"
-        subtitle="Begin your executive digital transformation."
-        onSwitch={onBack}
-    >
-        <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); onComplete(); }}>
-            <div className="grid grid-cols-2 gap-4">
-                <InputField label="First Name" placeholder="Alex" />
-                <InputField label="Last Name" placeholder="Smith" />
-            </div>
-            <InputField label="Work Email" placeholder="name@company.com" />
-            <InputField label="New Password" type="password" placeholder="••••••••" />
-            <button
-                type="submit"
-                className="w-full py-4 bg-primary text-surface-base font-manrope font-bold rounded-xl shadow-xl shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all"
-            >
-                Create Account
-            </button>
-        </form>
-    </AuthLayout>
-)
-export const ForgotPassword = ({ onBack }) => (
-    <AuthLayout
-        title="Reset your password"
-        subtitle="Enter your email and we'll send you instructions."
-        onSwitch={onBack}
-    >
-        <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); }}>
-            <InputField label="Work Email" placeholder="name@company.com" />
-            <button
-                type="submit"
-                className="w-full py-4 bg-primary text-surface-base font-manrope font-bold rounded-xl shadow-xl shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all"
-            >
-                Send Instructions
-            </button>
-        </form>
-    </AuthLayout>
-)
+const firebaseErrorMessage = (code) => {
+    const map = {
+        'auth/user-not-found': 'No account found with this email.',
+        'auth/wrong-password': 'Incorrect password. Try again.',
+        'auth/invalid-credential': 'Invalid email or password.',
+        'auth/email-already-in-use': 'An account with this email already exists.',
+        'auth/weak-password': 'Password must be at least 6 characters.',
+        'auth/invalid-email': 'Please enter a valid email address.',
+        'auth/popup-closed-by-user': 'Sign-in cancelled. Please try again.',
+        'auth/network-request-failed': 'Network error. Check your connection.',
+        'auth/too-many-requests': 'Too many attempts. Please wait a moment.',
+    }
+    return map[code] || 'Something went wrong. Please try again.'
+}
+
+const passwordStrength = (pw) => {
+    if (!pw) return null
+    if (pw.length < 6) return { level: 'weak', label: 'Too short', color: 'bg-red-500', width: 'w-1/4' }
+    if (pw.length < 8 || !/[A-Z]/.test(pw) || !/\d/.test(pw))
+        return { level: 'fair', label: 'Fair', color: 'bg-amber-400', width: 'w-2/4' }
+    if (!/[^A-Za-z0-9]/.test(pw))
+        return { level: 'good', label: 'Good', color: 'bg-blue-400', width: 'w-3/4' }
+    return { level: 'strong', label: 'Strong', color: 'bg-green-500', width: 'w-full' }
+}
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
+
+export const Login = ({ onSignup, onForgotPassword }) => {
+    const [email, setEmail] = useState('')
+    const [password, setPassword] = useState('')
+    const [showPw, setShowPw] = useState(false)
+    const [rememberMe, setRememberMe] = useState(false)
+    const [errors, setErrors] = useState({})
+    const [globalError, setGlobalError] = useState('')
+    const [loading, setLoading] = useState(false)
+    const [googleLoading, setGoogleLoading] = useState(false)
+
+    const validate = () => {
+        const e = {}
+        if (!email) e.email = 'Email is required'
+        else if (!/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email'
+        if (!password) e.password = 'Password is required'
+        setErrors(e)
+        return Object.keys(e).length === 0
+    }
+
+    const handleEmailLogin = async (ev) => {
+        ev.preventDefault()
+        setGlobalError('')
+        if (!validate()) return
+        setLoading(true)
+        try {
+            await signInWithEmailAndPassword(auth, email, password)
+            // onAuthStateChanged in App.jsx will handle navigation
+        } catch (err) {
+            setGlobalError(firebaseErrorMessage(err.code))
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const handleGoogleLogin = async () => {
+        setGoogleLoading(true)
+        setGlobalError('')
+        try {
+            await signInWithPopup(auth, googleProvider)
+        } catch (err) {
+            if (err.code !== 'auth/popup-closed-by-user') {
+                setGlobalError(firebaseErrorMessage(err.code))
+            }
+        } finally {
+            setGoogleLoading(false)
+        }
+    }
+
+    return (
+        <AuthShell
+            title="Welcome back"
+            subtitle="Sign in to your AI Twin workspace."
+            branding={{ quote: "The bottleneck is always time. AI Twin reclaims it.", author: "AI Twin Product Team" }}
+        >
+            {/* Google first (most common) */}
+            <GoogleButton onClick={handleGoogleLogin} loading={googleLoading} />
+
+            <Divider text="or sign in with email" />
+
+            <form onSubmit={handleEmailLogin} className="space-y-4" noValidate>
+                {globalError && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex items-start gap-2.5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+                    >
+                        <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                        <span>{globalError}</span>
+                    </motion.div>
+                )}
+
+                <FormField
+                    label="Email address"
+                    icon={Mail}
+                    type="email"
+                    placeholder="name@company.com"
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); setErrors(p => ({ ...p, email: '' })) }}
+                    error={errors.email}
+                    autoComplete="email"
+                />
+
+                <FormField
+                    label="Password"
+                    icon={Lock}
+                    type={showPw ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={e => { setPassword(e.target.value); setErrors(p => ({ ...p, password: '' })) }}
+                    error={errors.password}
+                    autoComplete="current-password"
+                    rightElement={
+                        <button type="button" onClick={() => setShowPw(v => !v)}
+                            className="text-neutral hover:text-on-surface transition-colors p-1">
+                            {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                    }
+                />
+
+                <div className="flex items-center justify-between pt-1">
+                    <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                        <div
+                            onClick={() => setRememberMe(v => !v)}
+                            className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all cursor-pointer
+                                ${rememberMe ? 'bg-primary border-primary' : 'border-outline-variant/50 hover:border-primary/50'}`}
+                        >
+                            {rememberMe && <svg viewBox="0 0 10 8" className="w-2.5 h-2.5 fill-white"><path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                        </div>
+                        <span className="text-sm text-on-surface-variant">Remember me</span>
+                    </label>
+                    <button type="button" onClick={onForgotPassword}
+                        className="text-sm text-primary font-semibold hover:underline underline-offset-4 transition-colors">
+                        Forgot password?
+                    </button>
+                </div>
+
+                <div className="pt-1">
+                    <PrimaryButton loading={loading}>Sign In</PrimaryButton>
+                </div>
+            </form>
+
+            <p className="text-center text-sm text-on-surface-variant">
+                Don't have an account?{' '}
+                <button onClick={onSignup} className="font-semibold text-primary hover:underline underline-offset-4 transition-colors">
+                    Create account
+                </button>
+            </p>
+        </AuthShell>
+    )
+}
+
+// ─── SIGN UP ──────────────────────────────────────────────────────────────────
+
+export const Signup = ({ onBack }) => {
+    const [name, setName] = useState('')
+    const [email, setEmail] = useState('')
+    const [password, setPassword] = useState('')
+    const [confirmPw, setConfirmPw] = useState('')
+    const [showPw, setShowPw] = useState(false)
+    const [showConfirm, setShowConfirm] = useState(false)
+    const [agreed, setAgreed] = useState(false)
+    const [errors, setErrors] = useState({})
+    const [globalError, setGlobalError] = useState('')
+    const [loading, setLoading] = useState(false)
+    const [googleLoading, setGoogleLoading] = useState(false)
+
+    const strength = passwordStrength(password)
+
+    const validate = () => {
+        const e = {}
+        if (!name.trim()) e.name = 'Full name is required'
+        if (!email) e.email = 'Email is required'
+        else if (!/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email'
+        if (!password) e.password = 'Password is required'
+        else if (password.length < 6) e.password = 'Minimum 6 characters'
+        if (!confirmPw) e.confirmPw = 'Please confirm your password'
+        else if (password !== confirmPw) e.confirmPw = 'Passwords do not match'
+        if (!agreed) e.terms = 'You must agree to the terms to continue'
+        setErrors(e)
+        return Object.keys(e).length === 0
+    }
+
+    const handleSignup = async (ev) => {
+        ev.preventDefault()
+        setGlobalError('')
+        if (!validate()) return
+        setLoading(true)
+        try {
+            const cred = await createUserWithEmailAndPassword(auth, email, password)
+            await updateProfile(cred.user, { displayName: name.trim() })
+            // onAuthStateChanged handles navigation
+        } catch (err) {
+            setGlobalError(firebaseErrorMessage(err.code))
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const handleGoogleSignup = async () => {
+        setGoogleLoading(true)
+        setGlobalError('')
+        try {
+            await signInWithPopup(auth, googleProvider)
+        } catch (err) {
+            if (err.code !== 'auth/popup-closed-by-user') {
+                setGlobalError(firebaseErrorMessage(err.code))
+            }
+        } finally {
+            setGoogleLoading(false)
+        }
+    }
+
+    return (
+        <AuthShell
+            title="Create your account"
+            subtitle="Start your AI Twin journey today."
+            branding={{ quote: "Delegate confidently. Your twin mirrors your judgement.", author: "AI Twin Product Team" }}
+        >
+            <GoogleButton onClick={handleGoogleSignup} loading={googleLoading} label="Sign up with Google" />
+
+            <Divider text="or sign up with email" />
+
+            <form onSubmit={handleSignup} className="space-y-4" noValidate>
+                {globalError && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex items-start gap-2.5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+                    >
+                        <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                        <span>{globalError}</span>
+                    </motion.div>
+                )}
+
+                <FormField
+                    label="Full name"
+                    icon={User}
+                    placeholder="Alex Johnson"
+                    value={name}
+                    onChange={e => { setName(e.target.value); setErrors(p => ({ ...p, name: '' })) }}
+                    error={errors.name}
+                    autoComplete="name"
+                />
+
+                <FormField
+                    label="Work email"
+                    icon={Mail}
+                    type="email"
+                    placeholder="name@company.com"
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); setErrors(p => ({ ...p, email: '' })) }}
+                    error={errors.email}
+                    autoComplete="email"
+                />
+
+                <div className="space-y-1.5">
+                    <FormField
+                        label="Password"
+                        icon={Lock}
+                        type={showPw ? 'text' : 'password'}
+                        placeholder="Min. 8 characters"
+                        value={password}
+                        onChange={e => { setPassword(e.target.value); setErrors(p => ({ ...p, password: '' })) }}
+                        error={errors.password}
+                        autoComplete="new-password"
+                        rightElement={
+                            <button type="button" onClick={() => setShowPw(v => !v)}
+                                className="text-neutral hover:text-on-surface transition-colors p-1">
+                                {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
+                        }
+                    />
+                    {/* Password strength bar */}
+                    {password && strength && (
+                        <div className="space-y-1 pl-1">
+                            <div className="h-1 w-full bg-surface-container-highest rounded-full overflow-hidden">
+                                <motion.div
+                                    initial={{ width: 0 }}
+                                    animate={{ width: '100%' }}
+                                    className={`h-full ${strength.color} ${strength.width} rounded-full transition-all duration-500`}
+                                />
+                            </div>
+                            <p className={`text-[11px] font-semibold ${strength.level === 'strong' ? 'text-green-400' : strength.level === 'good' ? 'text-blue-400' : strength.level === 'fair' ? 'text-amber-400' : 'text-red-400'}`}>
+                                {strength.label}
+                            </p>
+                        </div>
+                    )}
+                </div>
+
+                <FormField
+                    label="Confirm password"
+                    icon={Lock}
+                    type={showConfirm ? 'text' : 'password'}
+                    placeholder="Re-enter password"
+                    value={confirmPw}
+                    onChange={e => { setConfirmPw(e.target.value); setErrors(p => ({ ...p, confirmPw: '' })) }}
+                    error={errors.confirmPw}
+                    autoComplete="new-password"
+                    rightElement={
+                        <button type="button" onClick={() => setShowConfirm(v => !v)}
+                            className="text-neutral hover:text-on-surface transition-colors p-1">
+                            {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                    }
+                />
+
+                {/* Terms */}
+                <div className="space-y-1">
+                    <label className="flex items-start gap-3 cursor-pointer select-none">
+                        <div
+                            onClick={() => { setAgreed(v => !v); setErrors(p => ({ ...p, terms: '' })) }}
+                            className={`mt-0.5 w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center transition-all cursor-pointer
+                                ${agreed ? 'bg-primary border-primary' : errors.terms ? 'border-red-500/60' : 'border-outline-variant/50 hover:border-primary/50'}`}
+                        >
+                            {agreed && <svg viewBox="0 0 10 8" className="w-2.5 h-2.5 fill-white"><path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                        </div>
+                        <span className="text-sm text-on-surface-variant leading-relaxed">
+                            I agree to the{' '}
+                            <a href="#" className="text-primary font-semibold hover:underline">Terms of Service</a>
+                            {' '}and{' '}
+                            <a href="#" className="text-primary font-semibold hover:underline">Privacy Policy</a>
+                        </span>
+                    </label>
+                    <AnimatePresence>
+                        {errors.terms && (
+                            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                                className="flex items-center gap-1.5 text-xs text-red-400 pl-1">
+                                <AlertCircle size={12} /> {errors.terms}
+                            </motion.p>
+                        )}
+                    </AnimatePresence>
+                </div>
+
+                <div className="pt-1">
+                    <PrimaryButton loading={loading}>Create Account</PrimaryButton>
+                </div>
+            </form>
+
+            <p className="text-center text-sm text-on-surface-variant">
+                Already have an account?{' '}
+                <button onClick={onBack} className="font-semibold text-primary hover:underline underline-offset-4 transition-colors">
+                    Sign in
+                </button>
+            </p>
+        </AuthShell>
+    )
+}
+
+// ─── FORGOT PASSWORD ──────────────────────────────────────────────────────────
+
+export const ForgotPassword = ({ onBack }) => {
+    const [email, setEmail] = useState('')
+    const [emailError, setEmailError] = useState('')
+    const [globalError, setGlobalError] = useState('')
+    const [loading, setLoading] = useState(false)
+    const [sent, setSent] = useState(false)
+
+    const handleSubmit = async (ev) => {
+        ev.preventDefault()
+        setGlobalError('')
+        if (!email) { setEmailError('Email is required'); return }
+        if (!/\S+@\S+\.\S+/.test(email)) { setEmailError('Enter a valid email'); return }
+
+        setLoading(true)
+        try {
+            await sendPasswordResetEmail(auth, email)
+            setSent(true)
+        } catch (err) {
+            setGlobalError(firebaseErrorMessage(err.code))
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    return (
+        <AuthShell
+            title={sent ? 'Check your inbox' : 'Reset your password'}
+            subtitle={sent ? `We sent a reset link to ${email}` : "Enter your email and we'll send a reset link."}
+            branding={{}}
+        >
+            {sent ? (
+                <div className="space-y-6">
+                    <div className="flex flex-col items-center py-8 space-y-4">
+                        <motion.div
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ type: 'spring', stiffness: 200 }}
+                            className="w-20 h-20 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center"
+                        >
+                            <CheckCircle2 size={40} className="text-green-400" />
+                        </motion.div>
+                        <div className="text-center space-y-1">
+                            <p className="text-sm text-on-surface font-semibold">Password reset link sent</p>
+                            <p className="text-sm text-on-surface-variant">
+                                Didn't receive it? Check spam or{' '}
+                                <button onClick={() => setSent(false)} className="text-primary font-semibold hover:underline">try again</button>.
+                            </p>
+                        </div>
+                    </div>
+                    <PrimaryButton type="button" onClick={onBack}>Back to Sign In</PrimaryButton>
+                </div>
+            ) : (
+                <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+                    {globalError && (
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                            className="flex items-start gap-2.5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                            <span>{globalError}</span>
+                        </motion.div>
+                    )}
+
+                    <FormField
+                        label="Email address"
+                        icon={Mail}
+                        type="email"
+                        placeholder="name@company.com"
+                        value={email}
+                        onChange={e => { setEmail(e.target.value); setEmailError('') }}
+                        error={emailError}
+                        autoComplete="email"
+                    />
+
+                    <PrimaryButton loading={loading}>Send Reset Link</PrimaryButton>
+
+                    <button
+                        type="button"
+                        onClick={onBack}
+                        className="w-full flex items-center justify-center gap-2 py-3 text-sm text-on-surface-variant hover:text-on-surface transition-colors font-medium"
+                    >
+                        <ArrowLeft size={16} /> Back to Sign In
+                    </button>
+                </form>
+            )}
+        </AuthShell>
+    )
+}

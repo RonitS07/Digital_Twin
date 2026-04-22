@@ -1,33 +1,20 @@
-import os
 import time
 import uuid
 
 from datetime import datetime, timezone
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+
+from sqlalchemy.orm import Session
+
+from tools.google_oauth import get_google_credentials, CALENDAR_SCOPES
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events"
 ]
 
-CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token_calendar.json"
-
-def get_calendar_service():
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
+def get_calendar_service(db: Session, user_id: str):
+    creds = get_google_credentials(db=db, user_id=user_id, scopes=CALENDAR_SCOPES)
     return build("calendar", "v3", credentials=creds)
 
 def normalize_datetime(dt_str: str) -> str:
@@ -63,8 +50,8 @@ def normalize_datetime(dt_str: str) -> str:
 
     raise ValueError(f"Cannot parse datetime: '{dt_str}'. Use format: 'YYYY-MM-DD HH:MM'")
 
-def get_upcoming_events(max_results: int = 10) -> list:
-    service = get_calendar_service()
+def get_upcoming_events(db: Session, user_id: str, max_results: int = 10) -> list:
+    service = get_calendar_service(db=db, user_id=user_id)
     now = datetime.now(timezone.utc).isoformat()
     events_result = service.events().list(
         calendarId="primary",
@@ -91,8 +78,10 @@ def get_upcoming_events(max_results: int = 10) -> list:
 
 def create_event(title: str, start_datetime: str, end_datetime: str,
                  attendees: list = [], description: str = "",
-                 location: str = "") -> dict:
-    service = get_calendar_service()
+                 location: str = "", db: Session = None, user_id: str = None) -> dict:
+    if db is None or user_id is None:
+        raise ValueError("db and user_id are required")
+    service = get_calendar_service(db=db, user_id=user_id)
 
     # Normalize datetime strings — accepts flexible formats
     start_fmt = normalize_datetime(start_datetime)
@@ -134,6 +123,7 @@ def create_event(title: str, start_datetime: str, end_datetime: str,
 
     # Retry fetching until Meet link appears (max 5 attempts)
     meet_link = ""
+    fetched = None
     for attempt in range(5):
         time.sleep(1)
         fetched = service.events().get(
@@ -149,6 +139,9 @@ def create_event(title: str, start_datetime: str, end_datetime: str,
 
         if meet_link:
             break
+
+    if fetched is None:
+        fetched = created
 
     return {
         "event_id":      fetched["id"],

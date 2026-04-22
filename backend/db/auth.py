@@ -16,6 +16,8 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 def create_access_token(data: dict) -> str:
+    if not SECRET_KEY:
+        raise RuntimeError("SECRET_KEY is not set")
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
@@ -23,6 +25,8 @@ def create_access_token(data: dict) -> str:
 
 def decode_token(token: str) -> dict:
     try:
+        if not SECRET_KEY:
+            raise RuntimeError("SECRET_KEY is not set")
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None

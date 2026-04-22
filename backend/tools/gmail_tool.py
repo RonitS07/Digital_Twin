@@ -1,10 +1,10 @@
-import os
 import base64
 from email.mime.text import MIMEText
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+
+from sqlalchemy.orm import Session
+
+from tools.google_oauth import get_google_credentials, GMAIL_SCOPES
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -12,25 +12,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose"
 ]
 
-CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token_gmail.json"
-
-def get_gmail_service():
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
+def get_gmail_service(db: Session, user_id: str):
+    creds = get_google_credentials(db=db, user_id=user_id, scopes=GMAIL_SCOPES)
     return build("gmail", "v1", credentials=creds)
 
-def read_recent_emails(max_results: int = 5) -> list:
-    service = get_gmail_service()
+def read_recent_emails(db: Session, user_id: str, max_results: int = 5) -> list:
+    service = get_gmail_service(db=db, user_id=user_id)
     result = service.users().messages().list(
         userId="me",
         maxResults=max_results,
@@ -63,8 +50,8 @@ def read_recent_emails(max_results: int = 5) -> list:
 
     return emails
 
-def draft_email(to: str, subject: str, body: str) -> dict:
-    service = get_gmail_service()
+def draft_email(db: Session, user_id: str, to: str, subject: str, body: str) -> dict:
+    service = get_gmail_service(db=db, user_id=user_id)
     message = MIMEText(body)
     message["to"]      = to
     message["subject"] = subject
@@ -75,8 +62,8 @@ def draft_email(to: str, subject: str, body: str) -> dict:
     ).execute()
     return {"draft_id": draft["id"], "to": to, "subject": subject}
 
-def send_email(to: str, subject: str, body: str) -> dict:
-    service = get_gmail_service()
+def send_email(db: Session, user_id: str, to: str, subject: str, body: str) -> dict:
+    service = get_gmail_service(db=db, user_id=user_id)
     message = MIMEText(body)
     message["to"]      = to
     message["subject"] = subject
@@ -86,8 +73,9 @@ def send_email(to: str, subject: str, body: str) -> dict:
         body={"raw": raw}
     ).execute()
     return {"message_id": sent["id"], "status": "sent"}
-def reply_to_email(message_id: str, body: str) -> dict:
-    service = get_gmail_service()
+
+def reply_to_email(db: Session, user_id: str, message_id: str, body: str) -> dict:
+    service = get_gmail_service(db=db, user_id=user_id)
     
     # 1. Fetch original message details
     original = service.users().messages().get(userId="me", id=message_id, format="metadata").execute()
@@ -127,8 +115,8 @@ def reply_to_email(message_id: str, body: str) -> dict:
     
     return {"message_id": sent["id"], "thread_id": sent["threadId"], "status": "replied"}
 
-def get_email_details(message_id: str) -> dict:
-    service = get_gmail_service()
+def get_email_details(db: Session, user_id: str, message_id: str) -> dict:
+    service = get_gmail_service(db=db, user_id=user_id)
     full = service.users().messages().get(
         userId="me",
         id=message_id,
@@ -147,15 +135,15 @@ def get_email_details(message_id: str) -> dict:
         "snippet": snippet
     }
 
-def watch_gmail(topic_name: str) -> dict:
+def watch_gmail(db: Session, user_id: str, topic_name: str) -> dict:
     """Tells Google to send push notifications to the specified Pub/Sub topic."""
-    service = get_gmail_service()
+    service = get_gmail_service(db=db, user_id=user_id)
     request = {
         'labelIds': ['INBOX'],
         'topicName': topic_name
     }
     return service.users().watch(userId='me', body=request).execute()
 
-def stop_gmail_watch():
-    service = get_gmail_service()
+def stop_gmail_watch(db: Session, user_id: str):
+    service = get_gmail_service(db=db, user_id=user_id)
     return service.users().stop(userId='me').execute()
