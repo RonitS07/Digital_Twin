@@ -1,0 +1,9 @@
+token_calendar.json
+token_gmail.json
+__pycache__/
+venv/
+.env
+chroma_db/
+chroma_store/
+credentials.json
+.vscode/
