@@ -3,18 +3,21 @@ import logging
 import chromadb
 from chromadb.utils import embedding_functions
 
-# Suppress tokenizer warnings
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# VERCEL COMPATIBILITY: Switched from local SentenceTransformer (1GB+) 
+# to Google Generative AI embeddings (Cloud API) to keep the bundle size small.
+GOOGLE_API_KEY = os.getenv("GOOGLE_GENAI_API_KEY") or os.getenv("GROQ_API_KEY") # Fallback to common keys if needed
 
-# Suppress transformers 'UNEXPECTED' warnings for specific model keys
-logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+if GOOGLE_API_KEY:
+    embedder = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
+        api_key=GOOGLE_API_KEY,
+        model_name="models/embedding-001"
+    )
+else:
+    # Fallback to a lightweight internal embedder if no cloud key is provided
+    # Note: DefaultEmbeddingFunction might still download small models
+    embedder = embedding_functions.DefaultEmbeddingFunction()
 
 client = chromadb.PersistentClient(path="./chroma_store")
-
-# Use a specific embedder and handle potential warnings
-embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"
-)
 
 USE_PER_USER_COLLECTION = os.getenv("CHROMA_PER_USER_COLLECTION", "true").lower() == "true"
 SHARED_COLLECTION_NAME = os.getenv("CHROMA_SHARED_COLLECTION", "twin_memory")
@@ -42,4 +45,3 @@ def retrieve_memory(user_id: str, query: str, n: int = 3, type: str | None = Non
         return "\n".join(docs) if docs else ""
     except Exception:
         return ""
- 
