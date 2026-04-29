@@ -27,12 +27,12 @@ const Section = ({ icon: Icon, title, children }) => (
 );
 
 const Row = ({ label, description, children }) => (
-    <div className="flex items-center justify-between gap-4 px-7 py-5 hover:bg-surface-container-high/30 transition-colors">
-        <div>
+    <div className="flex items-start sm:items-center justify-between gap-3 px-5 lg:px-7 py-4 lg:py-5 hover:bg-surface-container-high/30 transition-colors">
+        <div className="flex-1 min-w-0">
             <p className="font-semibold text-sm text-on-surface">{label}</p>
             {description && <p className="text-xs text-on-surface-variant mt-0.5 opacity-80">{description}</p>}
         </div>
-        {children}
+        <div className="shrink-0">{children}</div>
     </div>
 );
 
@@ -176,7 +176,7 @@ const Settings = () => {
     };
 
     return (
-        <div className="p-10 max-w-3xl mx-auto space-y-8 relative">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-3xl mx-auto space-y-6 lg:space-y-8 relative">
             {toast && (
                 <div className={`fixed top-6 right-6 z-[200] px-5 py-3 rounded-2xl shadow-2xl text-sm font-bold flex items-center gap-3 transition-all ${
                     toast.type === 'error'
@@ -186,10 +186,10 @@ const Settings = () => {
                     {toast.type === 'error' ? '\u274c' : '\u2705'} {toast.msg}
                 </div>
             )}
-            <div className="flex items-end justify-between mb-2">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-2">
                 <div>
                     <p className="text-xs font-bold uppercase tracking-widest text-primary mb-2">Configuration</p>
-                    <h2 className="text-4xl font-manrope font-extrabold text-on-surface tracking-tight">Settings</h2>
+                    <h2 className="text-3xl lg:text-4xl font-manrope font-extrabold text-on-surface tracking-tight">Settings</h2>
                     <p className="text-on-surface-variant mt-1 text-sm">Manage your AI Twin behaviour, integrations & account.</p>
                 </div>
                 <motion.button

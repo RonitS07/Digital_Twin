@@ -25,19 +25,19 @@ const CalendarHeatmap = ({ data, loading }) => {
     };
 
     return (
-        <div className="glass-panel p-8 rounded-[2rem] border border-primary/10 mb-10 bg-surface-container-low/30">
-            <div className="flex items-center justify-between mb-10">
+        <div className="glass-panel p-4 lg:p-8 rounded-[1.5rem] lg:rounded-[2rem] border border-primary/10 mb-6 lg:mb-10 bg-surface-container-low/30">
+            <div className="flex items-center justify-between mb-5 lg:mb-10">
                 <div>
-                    <h3 className="font-manrope text-xl font-black tracking-tight text-on-surface">Weekly Focus Heatmap</h3>
+                    <h3 className="font-manrope text-base lg:text-xl font-black tracking-tight text-on-surface">Weekly Focus Heatmap</h3>
                     <p className="text-[10px] text-neutral font-bold uppercase tracking-widest mt-1">Cognitive Load Distribution</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-primary animate-ping"></div>
+                    <div className="w-2 h-2 rounded-full bg-primary animate-ping" />
                     <span className="text-[10px] text-primary font-black uppercase tracking-widest">Live Syncing</span>
                 </div>
             </div>
 
-            <div className="flex justify-between items-end gap-4 h-64 px-4">
+            <div className="flex justify-between items-end gap-2 lg:gap-4 h-36 lg:h-64 px-0 lg:px-4">
                 {stats.map((item, idx) => (
                     <div 
                         key={item.day} 
@@ -53,20 +53,18 @@ const CalendarHeatmap = ({ data, loading }) => {
                             <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-surface-container-highest rotate-45 border-r border-b border-white/10"></div>
                         </div>
 
-                        <div className="w-10 mx-auto relative flex flex-col justify-end h-full">
+                        <div className="w-6 lg:w-10 mx-auto relative flex flex-col justify-end h-full">
                             <motion.div
                                 initial={{ height: 0 }}
                                 animate={{ height: `${45 + (item.intensity * 20)}%` }}
                                 transition={{ type: 'spring', stiffness: 200, damping: 25 }}
-                                className={`w-10 mx-auto rounded-2xl bg-gradient-to-t ${getColor(item.intensity)} border-t transition-all duration-700`}
+                                className={`w-full mx-auto rounded-xl lg:rounded-2xl bg-gradient-to-t ${getColor(item.intensity)} border-t transition-all duration-700`}
                                 style={{ height: `${45 + (item.intensity * 20)}%` }}
                             />
-
-                            {/* Reflection/Glow effect at base */}
-                            <div className="absolute bottom-0 left-0 right-0 h-1 bg-primary/20 blur-sm rounded-full"></div>
+                            <div className="absolute bottom-0 left-0 right-0 h-1 bg-primary/20 blur-sm rounded-full" />
                         </div>
 
-                        <span className="text-[11px] font-black text-neutral uppercase tracking-widest group-hover:text-primary transition-colors">{item.day}</span>
+                        <span className="text-[9px] lg:text-[11px] font-black text-neutral uppercase tracking-widest group-hover:text-primary transition-colors">{item.day}</span>
                     </div>
                 ))}
             </div>

@@ -79,6 +79,8 @@ def classifier_node(state: State):
 
     # Gmail/Email
     if any(k in user_input for k in ["email", "mail", "gmail", "inbox"]):
+        if any(k in user_input for k in ["search", "find", "show me", "read", "unread", "recent", "what did"]):
+            return {**state, "intent": "email_search"}
         return {**state, "intent": "email"}
 
     # Slack
@@ -106,7 +108,7 @@ def memory_node(state: State) -> State:
     # If it's a short/ambiguous input, we use history to make it a better RAG query.
     history_context = ""
     if state.get("chat_history"):
-        history_context = "\n".join([f"{m.get('role')}: {m.get('text')}" for m in state["chat_history"][-3:]])
+        history_context = "\n".join([f"{m.get('role')}: {_clean_output(m.get('text', ''))}" for m in state["chat_history"][-3:]])
     
     query = state["input"]
     if len(query.split()) < 4 and history_context:
@@ -509,7 +511,7 @@ Action Block Format:
   "intent": "telegram",
   "title": "Telegram Notification",
   "message": "Hello from your AI Twin!",
-  "image_url": {f'"{image_url}"' if image_url else 'null'}
+  "image_url": { '"[IMAGE_PLACEHOLDER]"' if image_url else 'null' }
 }}
 </action>
 
@@ -517,6 +519,10 @@ Provide a short, visible confirmation to the user first.
 """,
             user=state["input"]
         )
+        
+        if image_url:
+            result = result.replace("[IMAGE_PLACEHOLDER]", image_url)
+            
         return {**state, "output": result, "response_type": "text" if not image_url else "visual", "image_url": image_url}
 
     # SCHEDULE WITH ANOTHER USER (cross-twin A2A scheduling)

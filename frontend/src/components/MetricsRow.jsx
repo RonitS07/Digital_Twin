@@ -16,16 +16,16 @@ const MetricCard = ({ icon: Icon, label, value, color, delay, onClick }) => (
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay }}
         onClick={onClick}
-        className={`flex-1 min-w-[200px] glass-panel p-5 rounded-2xl border border-white/5 hover:border-white/10 transition-all group ${onClick ? 'cursor-pointer active:scale-95' : ''}`}
+        className={`flex-1 min-w-0 glass-panel p-4 lg:p-5 rounded-2xl border border-white/5 hover:border-white/10 transition-all group ${onClick ? 'cursor-pointer active:scale-95' : ''}`}
     >
         <div className="flex items-center gap-4">
-            <div className={`p-3 rounded-xl bg-${color}/10 text-${color} group-hover:scale-110 transition-transform`}>
-                <Icon size={24} />
+            <div className={`p-2.5 lg:p-3 rounded-xl bg-${color}/10 text-${color} group-hover:scale-110 transition-transform`}>
+                <Icon size={20} />
             </div>
             <div>
-                <p className="text-xs text-neutral font-bold uppercase tracking-widest mb-1">{label}</p>
-                <div className="flex items-end gap-2">
-                    <h4 className="text-2xl font-manrope font-black text-on-surface tracking-tighter">{value}</h4>
+                <p className="text-[9px] lg:text-xs text-neutral font-bold uppercase tracking-widest mb-1">{label}</p>
+                <div className="flex items-end gap-1.5 lg:gap-2">
+                    <h4 className="text-xl lg:text-2xl font-manrope font-black text-on-surface tracking-tighter">{value}</h4>
                     <span className="text-[10px] text-primary font-bold mb-1 flex items-center gap-0.5">
                         <TrendingUp size={10} /> +12%
                     </span>
@@ -39,7 +39,7 @@ const MetricsRow = ({ stats }) => {
     const { setView, setActivityFilter } = useStore();
     
     return (
-        <div className="flex flex-wrap gap-4 mb-10">
+        <div className="grid grid-cols-2 lg:flex lg:flex-wrap gap-3 lg:gap-4 mb-6 lg:mb-10">
             <MetricCard 
                 icon={Mail} 
                 label="Emails Monitored" 

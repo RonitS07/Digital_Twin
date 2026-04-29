@@ -54,6 +54,25 @@
 body {
   @apply bg-surface-base text-on-surface font-inter antialiased transition-colors duration-300;
   margin: 0;
+  /* Prevent layout shifts on iOS when keyboard opens */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Prevent iOS double-tap zoom on inputs */
+input, textarea, select, button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS zoom prevention on inputs */
+@media (max-width: 768px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
+/* Safe area bottom padding for notched phones */
+.safe-area-pb {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .glass-panel {

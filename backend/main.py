@@ -76,6 +76,10 @@ def _get_allowed_origins() -> list:
         val = os.getenv(env_var)
         if val:
             origins.add(val.rstrip("/"))
+            
+    # Add Vercel domain to avoid CORS blocks
+    origins.add("https://digital-twin-ten-sand.vercel.app")
+    
     return list(origins)
 
 app.add_middleware(
@@ -981,28 +985,6 @@ def create_calendar(req: CreateEventRequest, current_user: User = Depends(get_cu
             db.commit()
         except Exception:
             db.rollback()
-
-        # 🟢 Send Styled Invitations
-        try:
-            invite_html = get_invite_html(
-                title=req.title,
-                start_time=res.get("start"),
-                end_time=res.get("end"),
-                meet_link=res.get("meet_link"),
-                description=req.description,
-                user_name=current_user.name,
-                attendees=attendees
-            )
-            for guest in attendees:
-                send_styled_invite(
-                    db=db, 
-                    user_id=current_user.id, 
-                    to=guest, 
-                    subject=f"Meeting Invitation: {req.title}", 
-                    html_content=invite_html
-                )
-        except Exception as e:
-            logger.warning(f"Failed to send styled invites: {e}")
 
         return {"status": "success", "details": res}
     except ValueError as e:

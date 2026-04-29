@@ -5,7 +5,7 @@ from chromadb.utils import embedding_functions
 
 # VERCEL COMPATIBILITY: Switched from local SentenceTransformer (1GB+) 
 # to Google Generative AI embeddings (Cloud API) to keep the bundle size small.
-GOOGLE_API_KEY = os.getenv("GOOGLE_GENAI_API_KEY") or os.getenv("GROQ_API_KEY") # Fallback to common keys if needed
+GOOGLE_API_KEY = os.getenv("GOOGLE_GENAI_API_KEY")
 
 if GOOGLE_API_KEY:
     embedder = embedding_functions.GoogleGenerativeAiEmbeddingFunction(

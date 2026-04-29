@@ -150,23 +150,23 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
         <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`flex gap-6 ${isAi ? '' : 'flex-row-reverse'}`}
+            className={`flex gap-3 lg:gap-6 ${isAi ? '' : 'flex-row-reverse'}`}
         >
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg overflow-hidden ${isAi ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-primary/5 text-primary border border-primary/10'
+            <div className={`w-9 h-9 lg:w-12 lg:h-12 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg overflow-hidden ${isAi ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-primary/5 text-primary border border-primary/10'
                 }`}>
-                {isAi ? <Sparkles size={20} /> : (
+                {isAi ? <Sparkles size={16} /> : (
                     user?.photoURL ? (
                         <img src={user.photoURL} alt="User" className="w-full h-full object-cover" />
                     ) : (
-                        <span className="text-[12px] font-bold">
+                        <span className="text-[10px] font-bold">
                             {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || user?.email?.slice(0, 2).toUpperCase() || 'U'}
                         </span>
                     )
                 )}
             </div>
 
-            <div className={`flex flex-col gap-2 max-w-2xl ${isAi ? '' : 'items-end'}`}>
-                <div className={`flex items-center gap-3 ${isAi ? '' : 'flex-row-reverse'}`}>
+            <div className={`flex flex-col gap-1.5 lg:gap-2 max-w-[85%] lg:max-w-2xl ${isAi ? '' : 'items-end'}`}>
+                <div className={`flex items-center gap-2 lg:gap-3 ${isAi ? '' : 'flex-row-reverse'}`}>
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral/70">
                         {isAi ? 'Twin Assistant' : 'Executive User'}
                     </span>
@@ -178,12 +178,12 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                     )}
                 </div>
 
-                <div className={`p-5 rounded-[1.5rem] shadow-sm max-w-full ${isAi
+                <div className={`p-4 lg:p-5 rounded-[1.5rem] shadow-sm max-w-full ${isAi
                     ? 'bg-surface-container-low border border-neutral/5 rounded-tl-none text-on-surface-variant'
                     : 'bg-indigo-600 text-white rounded-tr-none shadow-indigo-500/20'
                     }`}>
                     {msg.responseType === "visual" ? (
-                        <div className="space-y-4">
+                        <div className="space-y-3 lg:space-y-4">
                             <SimpleMarkdown>{cleanText}</SimpleMarkdown>
                             <ImageLoader src={msg.imageUrl} />
                         </div>
@@ -269,7 +269,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                     )}
                 </div>
 
-                <div className="flex items-center gap-4 text-[10px] text-neutral font-medium px-2">
+                <div className="flex items-center gap-3 lg:gap-4 text-[10px] text-neutral font-medium px-2">
                     <span>{msg.time} • {msg.source || 'Intelligence'}</span>
                 </div>
             </div>
@@ -486,14 +486,14 @@ const Chat = () => {
     return (
         <div className="flex h-full bg-surface-base relative overflow-hidden font-inter text-on-surface">
 
-            {/* Sidebar (Thread History) */}
+            {/* Sidebar (Thread History) - hidden on mobile unless toggled */}
             <AnimatePresence>
                 {isSidebarOpen && (
                     <motion.div
                         initial={{ width: 0, opacity: 0 }}
                         animate={{ width: 280, opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
-                        className="bg-surface-container-low border-r border-neutral/5 flex flex-col z-20"
+                        className="bg-surface-container-low border-r border-neutral/5 flex flex-col z-20 absolute lg:relative h-full"
                     >
                         <div className="p-4 border-b border-white/5">
                             <button onClick={handleNewChat} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary hover:brightness-110 text-white text-sm font-bold transition-all shadow-lg shadow-primary/20">
@@ -527,8 +527,8 @@ const Chat = () => {
             </AnimatePresence>
 
             {/* Main Chat Area */}
-            <div className="flex-1 flex flex-col relative h-full overflow-hidden">
-                <header className="h-20 flex items-center justify-between px-10 bg-surface-base/80 backdrop-blur-3xl sticky top-0 z-40 border-b border-neutral/5 shrink-0">
+            <div className="flex-1 flex flex-col relative h-full overflow-hidden min-w-0">
+                <header className="h-16 flex items-center justify-between px-4 lg:px-10 bg-surface-base/80 backdrop-blur-3xl sticky top-0 z-40 border-b border-neutral/5 shrink-0">
                     <div className="flex items-center gap-4">
                         <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-white/5 rounded-xl text-neutral transition-colors">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
@@ -544,24 +544,24 @@ const Chat = () => {
                     </div>
                 </header>
 
-                <div className="flex-1 overflow-y-auto px-12 py-10 space-y-12 pb-32 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto px-4 lg:px-12 py-6 lg:py-10 space-y-6 lg:space-y-12 pb-32 custom-scrollbar">
                     {messages.map(msg => <ChatMessage key={msg.id} msg={msg} onAction={handleAction} autoApprove={autoMode} user={user} />)}
-                    {loading && <div className="flex gap-6 animate-pulse"><div className="w-12 h-12 rounded-2xl bg-primary/10" /><div className="bg-surface-container-low px-6 py-4 rounded-3xl text-sm italic opacity-50 flex items-center gap-2"><Loader2 className="animate-spin" size={14} />Twin is thinking...</div></div>}
+                    {loading && <div className="flex gap-3 lg:gap-6 animate-pulse"><div className="w-9 h-9 lg:w-12 lg:h-12 rounded-2xl bg-primary/10" /><div className="bg-surface-container-low px-4 lg:px-6 py-3 lg:py-4 rounded-3xl text-sm italic opacity-50 flex items-center gap-2"><Loader2 className="animate-spin" size={14} />Twin is thinking...</div></div>}
                     <div ref={endRef} />
                 </div>
 
-                <div className="p-8 absolute bottom-0 left-0 right-0 bg-gradient-to-t from-surface-base via-surface-base to-transparent pt-20">
+                <div className="p-4 lg:p-8 absolute bottom-0 left-0 right-0 bg-gradient-to-t from-surface-base via-surface-base to-transparent pt-12 lg:pt-20">
                     <form onSubmit={handleSend} className="max-w-4xl mx-auto relative group">
-                        <div className="bg-surface-container/80 backdrop-blur-3xl rounded-[2rem] flex items-center p-3 pl-8 shadow-2xl border border-neutral/10 focus-within:border-primary/30 transition-all">
-                            <input value={input} onChange={e => setInput(e.target.value)} disabled={loading} placeholder="Instruct your Twin... (ex: Schedule a 30m sync for tomorrow)" className="bg-transparent flex-grow py-3 outline-none text-sm placeholder:text-neutral/50" />
-                            <div className="flex items-center gap-2 pr-2">
-                                <button type="button" title="Attach file (coming soon)" disabled className="p-2 text-neutral/30 cursor-not-allowed" aria-label="Attach file">
+                        <div className="bg-surface-container/80 backdrop-blur-3xl rounded-[1.5rem] lg:rounded-[2rem] flex items-center p-2 lg:p-3 pl-4 lg:pl-8 shadow-2xl border border-neutral/10 focus-within:border-primary/30 transition-all">
+                            <input value={input} onChange={e => setInput(e.target.value)} disabled={loading} placeholder="Instruct your Twin..." className="bg-transparent flex-grow py-2 lg:py-3 outline-none text-sm placeholder:text-neutral/50" />
+                            <div className="flex items-center gap-1 lg:gap-2 pr-1 lg:pr-2">
+                                <button type="button" title="Attach file (coming soon)" disabled className="hidden sm:block p-2 text-neutral/30 cursor-not-allowed" aria-label="Attach file">
                                     <Paperclip size={18} />
                                 </button>
-                                <button type="button" title="Voice input (coming soon)" disabled className="p-2 text-neutral/30 cursor-not-allowed" aria-label="Voice input">
+                                <button type="button" title="Voice input (coming soon)" disabled className="hidden sm:block p-2 text-neutral/30 cursor-not-allowed" aria-label="Voice input">
                                     <MicIcon size={18} />
                                 </button>
-                                <button type="submit" disabled={!input.trim() || loading} className="bg-primary text-white h-11 w-11 rounded-2xl flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 disabled:opacity-30 disabled:scale-100 transition-all"><Send size={18} /></button>
+                                <button type="submit" disabled={!input.trim() || loading} className="bg-primary text-white h-10 w-10 lg:h-11 lg:w-11 rounded-xl lg:rounded-2xl flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 disabled:opacity-30 disabled:scale-100 transition-all"><Send size={16} /></button>
                             </div>
                         </div>
                     </form>

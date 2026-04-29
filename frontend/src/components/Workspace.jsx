@@ -81,10 +81,10 @@ const Workspace = () => {
     }
 
     return (
-        <div className="p-10 max-w-7xl mx-auto space-y-12 w-full">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-7xl mx-auto space-y-8 lg:space-y-12 w-full">
             <div>
-                <h2 className="text-4xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2">Connected Workspace</h2>
-                <p className="text-on-surface-variant max-w-2xl">Manage the external applications and permissions your AI Twin utilizes to execute autonomous actions.</p>
+                <h2 className="text-3xl lg:text-4xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2">Connected Workspace</h2>
+                <p className="text-on-surface-variant text-sm lg:text-base max-w-2xl">Manage the external applications and permissions your AI Twin utilizes to execute autonomous actions.</p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -99,7 +99,7 @@ const Workspace = () => {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.1 }}
                         key={i}
-                        className={`p-8 rounded-3xl border flex flex-col relative transition-all ${tool.active ? 'bg-primary/5 border-primary/20 shadow-xl shadow-primary/5' : 'bg-surface-container border-neutral/5'}`}
+                        className={`p-5 lg:p-8 rounded-3xl border flex flex-col relative transition-all ${tool.active ? 'bg-primary/5 border-primary/20 shadow-xl shadow-primary/5' : 'bg-surface-container border-neutral/5'}`}
                     >
                         <div className="flex items-center justify-between mb-6">
                             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${tool.active ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-surface-base text-neutral'}`}>

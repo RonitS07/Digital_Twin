@@ -464,25 +464,27 @@ const Dashboard = () => {
             </AnimatePresence>
 
             <div className={`transition-all duration-700 ease-in-out ${isAnyModalOpen ? 'blur-[30px] scale-[0.98] opacity-30 pointer-events-none' : 'blur-0 scale-100 opacity-100'}`}>
-                <div className="p-10 max-w-7xl mx-auto relative text-on-surface">
-                    <section className="mb-12 flex justify-between items-end">
-                        <div className="max-w-2xl">
-                            <div className="flex items-center gap-2 mb-3">
-                                <span className="px-2 py-0.5 bg-primary/20 text-primary text-[10px] font-black rounded uppercase tracking-widest">{user.role || 'Executive'}</span>
-                                <div className="w-1 h-1 rounded-full bg-neutral/30"></div>
-                                <span className="text-neutral text-[10px] font-bold uppercase tracking-widest">{user.company ? `${user.company} Workspace` : 'Personal Workspace'}</span>
+                <div className="p-4 sm:p-6 lg:p-10 max-w-7xl mx-auto relative text-on-surface">
+                    <section className="mb-6 lg:mb-12">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4">
+                            <div>
+                                <div className="flex items-center gap-2 mb-2">
+                                    <span className="px-2 py-0.5 bg-primary/20 text-primary text-[10px] font-black rounded uppercase tracking-widest">{user.role || 'Executive'}</span>
+                                    <div className="w-1 h-1 rounded-full bg-neutral/30" />
+                                    <span className="text-neutral text-[10px] font-bold uppercase tracking-widest hidden sm:inline">{user.company ? `${user.company} Workspace` : 'Personal Workspace'}</span>
+                                </div>
+                                <h2 className="text-3xl sm:text-4xl lg:text-5xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2 leading-none italic">{greeting}, {user.name ? user.name.split(' ')[0] : 'there'}.</h2>
+                                <p className="text-on-surface-variant text-sm lg:text-lg">Priority: <span className="text-tertiary font-bold">{analytics?.priority || 'Roadmap Alignment'}</span>.</p>
                             </div>
-                            <h2 className="text-5xl font-manrope font-extrabold tracking-tighter text-on-surface mb-3 leading-none italic">{greeting}, {user.name ? user.name.split(' ')[0] : 'there'}.</h2>
-                            <p className="text-on-surface-variant text-lg">Your AI Twin has synthesized overnight updates. Priority: <span className="text-tertiary font-bold underline underline-offset-8 decoration-tertiary/20">{analytics?.priority || 'Roadmap Alignment'}</span>.</p>
+                            <button
+                                onClick={fetchBriefing}
+                                disabled={loadingBriefing}
+                                className="w-full sm:w-auto bg-surface-container hover:bg-surface-container-highest text-on-surface px-5 py-3 rounded-2xl font-bold transition-all text-sm flex items-center justify-center gap-2 border border-white/5 shadow-xl ai-glow"
+                            >
+                                <Sparkles size={16} className={loadingBriefing ? 'animate-spin text-primary' : 'text-primary'} />
+                                {loadingBriefing ? 'Synthesizing...' : 'Intelligence Brief'}
+                            </button>
                         </div>
-                        <button
-                            onClick={fetchBriefing}
-                            disabled={loadingBriefing}
-                            className="bg-surface-container hover:bg-surface-container-highest text-on-surface px-6 py-3.5 rounded-2xl font-bold transition-all text-sm flex items-center gap-2 border border-white/5 shadow-2xl ai-glow"
-                        >
-                            <Sparkles size={18} className={loadingBriefing ? "animate-spin text-primary" : "text-primary"} />
-                            {loadingBriefing ? 'Synthesizing...' : 'Intelligence Brief'}
-                        </button>
                     </section>
 
                     <CalendarHeatmap data={analytics?.heatmap} loading={loadingAnalytics} />
@@ -493,8 +495,8 @@ const Dashboard = () => {
                         efficiency: analytics?.efficiency || '0%'
                     }} />
 
-                    <div className="grid grid-cols-12 gap-8 items-stretch">
-                        <div className="col-span-12 lg:col-span-6 flex flex-col gap-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-8 items-stretch">
+                        <div className="col-span-1 lg:col-span-6 flex flex-col gap-4 lg:gap-6">
                             <div className="flex items-center justify-between">
                                 <h3 className="font-manrope text-xl font-bold tracking-tight flex items-center gap-2">
                                     <Calendar size={20} className="text-primary" />
@@ -520,22 +522,19 @@ const Dashboard = () => {
                                         <div
                                             key={ev.id || i}
                                             onClick={() => setSelectedEvent(ev)}
-                                            className={`group p-8 rounded-2xl bg-surface-container-low/50 hover:bg-surface-container-high transition-all border border-neutral/5 hover:border-primary/20 flex flex-col justify-center min-h-[140px] cursor-pointer active:scale-[0.98] ${i === 0 ? 'ai-glow border-primary/20' : ''}`}
+                                            className={`group p-5 lg:p-8 rounded-2xl bg-surface-container-low/50 hover:bg-surface-container-high transition-all border border-neutral/5 hover:border-primary/20 flex flex-col justify-center min-h-[100px] lg:min-h-[140px] cursor-pointer active:scale-[0.99] ${i === 0 ? 'ai-glow border-primary/20' : ''}`}
                                         >
-                                            <div className="flex justify-between items-start mb-3">
+                                            <div className="flex justify-between items-start mb-2">
                                                 <div className="flex items-center gap-2">
-                                                    <div className={`w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-primary' : 'bg-tertiary/60'}`}></div>
+                                                    <div className={`w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-primary' : 'bg-tertiary/60'}`} />
                                                     <span className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant/60">{i === 0 ? 'Next Up' : 'Upcoming'}</span>
                                                 </div>
                                                 <span className="text-[10px] font-bold text-neutral uppercase tracking-widest">{new Date(ev.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                             </div>
-                                            <h4 className="font-manrope text-base font-bold text-on-surface group-hover:text-primary transition-colors">{ev.title}</h4>
-                                            <div className="flex items-center justify-between mt-2">
-                                                <p className="text-[11px] text-on-surface-variant opacity-60 tracking-tight text-ellipsis overflow-hidden">{ev.location || 'Digital Conference'}</p>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] font-black uppercase text-primary/40 group-hover:text-primary transition-colors">Details</span>
-                                                    <ArrowRight size={10} className="text-primary/40 group-hover:text-primary transition-all group-hover:translate-x-1" />
-                                                </div>
+                                            <h4 className="font-manrope text-sm lg:text-base font-bold text-on-surface group-hover:text-primary transition-colors line-clamp-1">{ev.title}</h4>
+                                            <div className="flex items-center justify-between mt-1.5">
+                                                <p className="text-[11px] text-on-surface-variant opacity-60 tracking-tight truncate">{ev.location || 'Digital Conference'}</p>
+                                                <ArrowRight size={10} className="text-primary/40 group-hover:text-primary transition-all group-hover:translate-x-1 shrink-0" />
                                             </div>
                                         </div>
                                     ))
@@ -543,7 +542,7 @@ const Dashboard = () => {
                             </div>
                         </div>
 
-                        <div className="col-span-12 lg:col-span-6 flex flex-col gap-6">
+                        <div className="col-span-1 lg:col-span-6 flex flex-col gap-4 lg:gap-6">
                             <div className="flex items-center justify-between">
                                 <h3 className="font-manrope text-xl font-bold tracking-tight flex items-center gap-2">
                                     <Zap size={20} className="text-tertiary" />
@@ -560,20 +559,20 @@ const Dashboard = () => {
                                         <div
                                             key={item.id}
                                             onClick={() => setSelectedActivity(item)}
-                                            className="group p-8 rounded-2xl bg-surface-container-low/50 hover:bg-surface-container-high transition-all border border-neutral/5 hover:border-tertiary/20 flex flex-col justify-center min-h-[140px] cursor-pointer active:scale-[0.98]"
+                                            className="group p-5 lg:p-8 rounded-2xl bg-surface-container-low/50 hover:bg-surface-container-high transition-all border border-neutral/5 hover:border-tertiary/20 flex flex-col justify-center min-h-[100px] lg:min-h-[140px] cursor-pointer active:scale-[0.99]"
                                         >
-                                            <div className="flex items-center justify-between mb-3">
+                                            <div className="flex items-center justify-between mb-2">
                                                 <div className="flex items-center gap-2">
-                                                    <div className={`w-1.5 h-1.5 rounded-full ${item.intent === 'calendar' ? 'bg-tertiary' : 'bg-primary'}`}></div>
+                                                    <div className={`w-1.5 h-1.5 rounded-full ${item.intent === 'calendar' ? 'bg-tertiary' : 'bg-primary'}`} />
                                                     <span className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant/60">
                                                         {item.intent} • {item.approved ? 'Approved' : 'Auto'}
                                                     </span>
                                                 </div>
                                                 <span className="text-[10px] font-bold text-neutral uppercase tracking-widest">{new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                             </div>
-                                            <p className="font-manrope text-base font-bold text-on-surface group-hover:text-tertiary transition-colors line-clamp-1">{item.input}</p>
-                                            <div className="flex items-center justify-between mt-2">
-                                                <p className="text-[11px] text-on-surface-variant opacity-40 uppercase tracking-widest font-black">Execution Logged</p>
+                                            <p className="font-manrope text-sm lg:text-base font-bold text-on-surface group-hover:text-tertiary transition-colors line-clamp-1">{item.input}</p>
+                                            <div className="flex items-center justify-between mt-1.5">
+                                                <p className="text-[11px] text-on-surface-variant opacity-40 uppercase tracking-widest font-black hidden sm:block">Execution Logged</p>
                                                 <ArrowRight size={10} className="text-primary/40 group-hover:text-primary transition-all group-hover:translate-x-1" />
                                             </div>
                                         </div>
@@ -587,33 +586,33 @@ const Dashboard = () => {
                             </div>
                         </div>
 
-                        <div className="col-span-12">
-                            <div className="glass-panel p-8 rounded-3xl border border-primary/10 relative overflow-hidden">
-                                <div className="absolute -right-20 -top-20 w-64 h-64 bg-primary/10 rounded-full blur-[100px]"></div>
-                                <div className="absolute -left-20 -bottom-20 w-64 h-64 bg-tertiary/5 rounded-full blur-[100px]"></div>
+                        <div className="col-span-1 lg:col-span-12">
+                            <div className="glass-panel p-5 lg:p-8 rounded-3xl border border-primary/10 relative overflow-hidden">
+                                <div className="absolute -right-20 -top-20 w-64 h-64 bg-primary/10 rounded-full blur-[100px]" />
+                                <div className="absolute -left-20 -bottom-20 w-64 h-64 bg-tertiary/5 rounded-full blur-[100px]" />
                                 <div className="relative z-10">
-                                    <div className="flex items-center gap-3 mb-8">
-                                        <Sparkles size={20} className="text-primary" />
-                                        <h3 className="font-manrope text-xl font-bold tracking-tight">Recent Inbox Highlights</h3>
+                                    <div className="flex items-center gap-3 mb-5 lg:mb-8">
+                                        <Sparkles size={18} className="text-primary" />
+                                        <h3 className="font-manrope text-base lg:text-xl font-bold tracking-tight">Recent Inbox Highlights</h3>
                                     </div>
 
                                     {loadingEmails ? (
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-12">
                                             {[1, 2, 3].map(i => (
                                                 <div key={i} className="animate-pulse space-y-3">
-                                                    <div className="h-3 bg-neutral/20 w-1/3 rounded"></div>
-                                                    <div className="h-4 bg-neutral/20 w-2/3 rounded"></div>
-                                                    <div className="h-10 bg-neutral/20 w-full rounded"></div>
+                                                    <div className="h-3 bg-neutral/20 w-1/3 rounded" />
+                                                    <div className="h-4 bg-neutral/20 w-2/3 rounded" />
+                                                    <div className="h-10 bg-neutral/20 w-full rounded" />
                                                 </div>
                                             ))}
                                         </div>
                                     ) : emails.length === 0 ? (
-                                        <p className="text-on-surface-variant">No recent emails found in your inbox.</p>
+                                        <p className="text-on-surface-variant text-sm">No recent emails found in your inbox.</p>
                                     ) : (
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-12">
                                             {emails.slice(0, 3).map((email, idx) => (
-                                                <div key={idx} className="space-y-3">
-                                                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-neutral font-inter truncate" title={email.from}>{email.from.split('<')[0] || email.from}</h4>
+                                                <div key={idx} className="space-y-2">
+                                                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-neutral truncate" title={email.from}>{email.from.split('<')[0] || email.from}</h4>
                                                     <h5 className="font-semibold text-on-surface text-sm truncate">{email.subject || '(No Subject)'}</h5>
                                                     <p className="text-on-surface-variant text-sm leading-relaxed line-clamp-2">{email.snippet}</p>
                                                     <a href={`https://mail.google.com/mail/u/0/#inbox/${email.id}`} target="_blank" rel="noreferrer" className="text-xs text-secondary hover:underline underline-offset-4 flex items-center gap-1 font-medium transition-all">
