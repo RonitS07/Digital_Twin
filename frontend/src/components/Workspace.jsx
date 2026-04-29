@@ -1,53 +1,75 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useStore } from '../store/useStore'
 import { Mail, Calendar, MessageSquare, ExternalLink, Unlink } from 'lucide-react'
 import { API_BASE } from '../config'
-
+import { apiFetch } from '../utils/apiClient'
 const Workspace = () => {
     const { preferences, togglePreference, setPreference, auth: storeAuth } = useStore();
-    const [connecting, setConnecting] = React.useState(false);
+    const [connecting, setConnecting] = useState(false);
 
-    React.useEffect(() => {
-        const accessToken = storeAuth.user?.accessToken;
-        if (accessToken) {
+    useEffect(() => {
+        if (storeAuth.user?.uid) {
             setConnecting(true)
-            fetch(`${API_BASE}/integrations/google/status`, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-            })
-                .then(r => r.json())
+            apiFetch(`/integrations/google/status`)
                 .then((data) => {
                     setPreference('gmailSync', !!data?.connected)
                     setPreference('calendarSync', !!data?.connected)
                 })
                 .catch(console.error)
                 .finally(() => setConnecting(false))
+            
+            apiFetch(`/integrations/slack/status`)
+                .then((data) => setPreference('slackSync', !!data?.connected))
+                .catch(console.error)
         }
-    }, [setPreference, storeAuth.user?.accessToken])
+    }, [storeAuth.user?.uid, setPreference])
 
     const handleConnect = async (tool) => {
         if (tool.active) {
-            togglePreference(tool.key);
+            if (window.confirm(`Are you sure you want to disconnect ${tool.name}?`)) {
+                setConnecting(true);
+                try {
+                    const provider = (tool.name === 'Gmail' || tool.name === 'Calendar') ? 'google' : 'slack';
+                    await apiFetch(`/integrations/${provider}/disconnect`, { method: 'POST' });
+                    setPreference(tool.key, false);
+                    if (provider === 'google') {
+                        setPreference('gmailSync', false);
+                        setPreference('calendarSync', false);
+                    }
+                } catch (e) {
+                    console.error("Disconnect failed", e);
+                } finally {
+                    setConnecting(false);
+                }
+            }
             return;
         }
 
         if (tool.name === "Telegram") {
-            window.open('https://telegram.org/', '_blank');
+            window.open('https://t.me/aitwin_assistant_bot', '_blank');
             togglePreference(tool.key);
+            return;
+        }
+
+        if (tool.name === "Slack") {
+            setConnecting(true);
+            try {
+                const data = await apiFetch(`/oauth/slack/start`);
+                window.location.href = data.auth_url;
+            } catch (e) {
+                console.error("Slack connection failed", e);
+                alert("Slack connection failed: " + e.message);
+            } finally {
+                setConnecting(false);
+            }
             return;
         }
 
         setConnecting(true);
         try {
-            const accessToken = storeAuth.user?.accessToken;
-            if (!accessToken) throw new Error('Missing backend access token');
-
             const scopes = tool.name === 'Gmail' ? 'gmail' : tool.name === 'Calendar' ? 'calendar' : 'gmail,calendar';
-            const res = await fetch(`${API_BASE}/oauth/google/start?scopes=${encodeURIComponent(scopes)}&frontend_url=${encodeURIComponent(window.location.origin)}`, {
-                headers: { Authorization: `Bearer ${accessToken}` },
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Failed to start OAuth');
+            const data = await apiFetch(`/oauth/google/start?scopes=${encodeURIComponent(scopes)}&frontend_url=${encodeURIComponent(window.location.origin)}`);
 
             window.location.href = data.auth_url;
         } catch (e) {
@@ -69,7 +91,8 @@ const Workspace = () => {
                 {[
                     { name: "Gmail", icon: Mail, key: 'gmailSync', active: preferences.gmailSync, desc: "Allows twin to draft, reply, and send messages on your behalf." },
                     { name: "Calendar", icon: Calendar, key: 'calendarSync', active: preferences.calendarSync, desc: "Allows twin to negotiate times and automatically schedule events." },
-                    { name: "Telegram", icon: MessageSquare, key: 'telegramSync', active: preferences.telegramSync, desc: "Acts as a rapid push notification and communication channel." }
+                    { name: "Telegram", icon: MessageSquare, key: 'telegramSync', active: preferences.telegramSync, desc: "Acts as a rapid push notification and communication channel." },
+                    { name: "Slack", icon: MessageSquare, key: 'slackSync', active: preferences.slackSync, desc: "Connect your workspaces for real-time team collaboration and updates." }
                 ].map((tool, i) => (
                     <motion.div
                         initial={{ opacity: 0, y: 10 }}

@@ -9,8 +9,11 @@
   
   /* Light Theme — clean white premium SaaS */
   --primary: 79 70 229;           /* indigo-600 — buttons, accents */
+  --primary-rgb: 79, 70, 229;
   --secondary: 99 102 241;        /* indigo-500 */
+  --secondary-rgb: 99, 102, 241;
   --tertiary: 234 88 12;          /* orange-600 */
+  --tertiary-rgb: 234, 88, 12;
   --neutral: 107 114 128;         /* gray-500 — muted labels */
   --surface: 255 255 255;         /* pure white */
   --surface-base: 249 250 251;    /* gray-50 — page background */
@@ -30,8 +33,11 @@
   
   /* Dark Theme Colors */
   --primary: 103 96 253;
+  --primary-rgb: 103, 96, 253;
   --secondary: 195 192 255;
+  --secondary-rgb: 195, 192, 255;
   --tertiary: 255 182 149;
+  --tertiary-rgb: 255, 182, 149;
   --neutral: 119 118 129;
   --surface: 19 18 27;
   --surface-base: 19 18 27;

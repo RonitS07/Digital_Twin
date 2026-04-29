@@ -22,6 +22,7 @@ export const useStore = create(
                     gmailSync: false,
                     calendarSync: false,
                     telegramSync: false,
+                    slackSync: false,
                 },
                 tasks: []
             }),
@@ -43,7 +44,9 @@ export const useStore = create(
                 gmailSync: false,
                 calendarSync: false,
                 telegramSync: false,
+                slackSync: false,
             },
+            setPreferences: (newPrefs) => set({ preferences: newPrefs }),
             setPreference: (key, value) => set((state) => ({
                 preferences: { ...state.preferences, [key]: value }
             })),
@@ -58,6 +61,12 @@ export const useStore = create(
             tasks: [],
             addTask: (task) => set((state) => ({ tasks: [{id: Date.now().toString(), createdAt: new Date().toISOString(), ...task}, ...state.tasks] })),
             removeTask: (id) => set((state) => ({ tasks: state.tasks.filter(t => t.id !== id) })),
+
+            // Detailed Navigation / Spotlight
+            highlightedActivityId: null,
+            setHighlightedActivityId: (id) => set({ highlightedActivityId: id }),
+            activityFilter: 'All Activity',
+            setActivityFilter: (filter) => set({ activityFilter: filter }),
         }),
         {
             name: 'ai-twin-storage', // key in localStorage

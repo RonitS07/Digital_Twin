@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE } from '../config'
+import { apiFetch } from '../utils/apiClient'
 import { motion } from 'framer-motion'
 import {
     Mail,
@@ -32,10 +33,12 @@ const TimelineItem = ({ log }) => {
     const status = log.approved ? 'Automated' : 'Needs Review';
     const time = new Date(log.timestamp).toLocaleTimeString([], {timeStyle: 'short'});
 
+    const isHighlighted = useStore(state => state.highlightedActivityId === log.id);
+
     return (
-    <div className="relative">
-        <div className={`absolute -left-[51px] top-0 w-5 h-5 rounded-full bg-surface-base border-4 ${color === 'primary' ? 'border-primary' : color === 'tertiary' ? 'border-tertiary' : 'border-neutral'}`}></div>
-        <div className="glass-panel p-8 rounded-xl border border-neutral/10 ai-glow group hover:bg-surface-container transition-colors">
+    <div className={`relative ${isHighlighted ? 'z-10' : ''}`} id={`activity-${log.id}`}>
+        <div className={`absolute -left-[51px] top-0 w-5 h-5 rounded-full bg-surface-base border-4 ${color === 'primary' ? 'border-primary' : color === 'tertiary' ? 'border-tertiary' : 'border-neutral'} ${isHighlighted ? 'scale-150 animate-pulse border-primary shadow-[0_0_15px_rgba(var(--primary-rgb),0.5)]' : ''}`}></div>
+        <div className={`glass-panel p-8 rounded-xl border transition-all duration-500 ${isHighlighted ? 'border-primary/50 bg-primary/5 shadow-2xl scale-[1.02] ai-glow' : 'border-neutral/10 group hover:bg-surface-container'}`}>
             <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6">
                 <div className="flex items-start gap-4">
                     <div className={`p-3 rounded-xl ${color === 'primary' ? 'bg-primary/10 text-primary' : color === 'tertiary' ? 'bg-tertiary/10 text-tertiary' : 'bg-neutral/10 text-neutral'}`}>
@@ -66,11 +69,24 @@ const TimelineItem = ({ log }) => {
 }
 
 const Activity = () => {
-    const { auth } = useStore()
+    const { auth, highlightedActivityId, setHighlightedActivityId, activityFilter, setActivityFilter } = useStore()
     const accessToken = auth?.user?.accessToken
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [activeFilter, setActiveFilter] = useState('All Activity');
+
+    useEffect(() => {
+        if (highlightedActivityId && !loading) {
+            const element = document.getElementById(`activity-${highlightedActivityId}`);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // We keep the highlight for 3 seconds then clear it to allow re-triggering
+                const timer = setTimeout(() => {
+                    // setHighlightedActivityId(null);
+                }, 5000);
+                return () => clearTimeout(timer);
+            }
+        }
+    }, [highlightedActivityId, loading]);
 
     const handleExportCsv = () => {
         if (!history || history.length === 0) return;
@@ -101,31 +117,29 @@ const Activity = () => {
     };
 
     const getFilteredHistory = () => {
-        if (activeFilter === 'All Activity') return history;
-        if (activeFilter === 'Needs Review') return history.filter(log => !log.approved);
-        if (activeFilter === 'Emails') return history.filter(log => log.intent === 'email');
-        if (activeFilter === 'Meetings') return history.filter(log => log.intent === 'calendar');
-        if (activeFilter === 'Research') return history.filter(log => log.intent === 'search');
+        if (activityFilter === 'All Activity') return history;
+        if (activityFilter === 'Needs Review') return history.filter(log => !log.approved);
+        if (activityFilter === 'Emails') return history.filter(log => log.intent === 'email');
+        if (activityFilter === 'Meetings') return history.filter(log => log.intent === 'calendar');
+        if (activityFilter === 'Research') return history.filter(log => log.intent === 'search');
         return history;
     };
 
     const filteredLogs = getFilteredHistory();
 
     useEffect(() => {
-        if (!accessToken) return;
+        if (!auth?.user?.uid) {
+            setLoading(false);
+            return;
+        }
         setLoading(true);
-        fetch(`${API_BASE}/history`, {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-            },
-        })
-            .then(res => res.json())
+        apiFetch(`/history`)
             .then(data => {
                 if (data.history) setHistory(data.history);
             })
-            .catch(console.error)
+            .catch(err => console.error("Activity fetch failure:", err))
             .finally(() => setLoading(false));
-    }, [accessToken]);
+    }, [auth?.user?.uid]);
     return (
         <div className="p-12 max-w-6xl mx-auto">
             <header className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
@@ -133,8 +147,8 @@ const Activity = () => {
                     {['All Activity', 'Emails', 'Meetings', 'Research'].map(f => (
                         <button 
                             key={f}
-                            onClick={() => setActiveFilter(f)}
-                            className={`px-5 py-2 rounded-full text-sm transition-all border ${activeFilter === f 
+                            onClick={() => setActivityFilter(f)}
+                            className={`px-5 py-2 rounded-full text-sm transition-all border ${activityFilter === f 
                                 ? 'bg-primary text-surface-base font-semibold shadow-lg shadow-primary/20 border-primary' 
                                 : 'bg-surface-container text-on-surface-variant font-medium hover:bg-neutral/20 border-neutral/5'}`}
                         >
@@ -142,13 +156,13 @@ const Activity = () => {
                         </button>
                     ))}
                     <button 
-                        onClick={() => setActiveFilter('Needs Review')}
-                        className={`px-5 py-2 rounded-full text-sm transition-all border flex items-center gap-2 ${activeFilter === 'Needs Review'
+                        onClick={() => setActivityFilter('Needs Review')}
+                        className={`px-5 py-2 rounded-full text-sm transition-all border flex items-center gap-2 ${activityFilter === 'Needs Review'
                             ? 'bg-tertiary text-surface-base font-semibold shadow-lg shadow-tertiary/20 border-tertiary'
                             : 'bg-surface-container text-on-surface-variant font-medium hover:bg-neutral/20 border-neutral/5'}`}
                     >
                         Needs Review
-                        <span className={`w-2 h-2 rounded-full ${activeFilter === 'Needs Review' ? 'bg-surface-base shadow-none' : 'bg-tertiary shadow-[0_0_8px_#ffb695]'}`}></span>
+                        <span className={`w-2 h-2 rounded-full ${activityFilter === 'Needs Review' ? 'bg-surface-base shadow-none' : 'bg-tertiary shadow-[0_0_8px_#ffb695]'}`}></span>
                     </button>
                 </div>
                 <button onClick={handleExportCsv} className="flex items-center gap-2 px-6 py-2.5 rounded-full border border-neutral/20 text-on-surface-variant text-sm font-bold tracking-tight hover:border-primary/40 hover:text-on-surface transition-all bg-surface-container/30">

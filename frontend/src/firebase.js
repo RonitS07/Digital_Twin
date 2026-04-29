@@ -1,7 +1,11 @@
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { 
+    initializeFirestore, 
+    persistentLocalCache,
+    persistentMultipleTabManager 
+} from "firebase/firestore";
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,7 +20,16 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
 const auth = getAuth(app);
+
 const googleProvider = new GoogleAuthProvider();
-const db = getFirestore(app);
+// Always show account picker — avoids silent failures on shared machines
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+// Standardizing Firestore with the new persistent cache API to fix console warnings
+const db = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+    })
+});
 
 export { app, analytics, auth, googleProvider, db };

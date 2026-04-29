@@ -1,20 +1,19 @@
-import React, { useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { API_BASE } from './config'
 import { AnimatePresence, motion } from 'framer-motion'
 
 
 import { Login, Signup, ForgotPassword } from './components/Auth'
-import { auth, db } from './firebase'
-import { onAuthStateChanged, signOut } from 'firebase/auth'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { auth } from './firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 import {
     Welcome,
     ChooseRole,
     ConnectTools,
     ControlPreferences,
     PrivacyPermissions,
-    Initializing,
-    Success
+    ConnectProtocol,
+    Initializing
 } from './components/Onboarding'
 import Layout from './components/Layout'
 import Dashboard from './components/Dashboard'
@@ -22,6 +21,7 @@ import Chat from './components/Chat'
 import Activity from './components/Activity'
 import Workspace from './components/Workspace'
 import Settings from './components/Settings'
+import AgentInbox from './components/AgentInbox'
 
 
 export { useStore } from './store/useStore'
@@ -29,111 +29,85 @@ import { useStore } from './store/useStore'
 
 function App() {
     const { currentScreen, setCurrentScreen, view, setView, theme, auth: storeAuth, login, logout, updateUser, setPreference } = useStore()
-    const [initializing, setInitializing] = React.useState(true);
+    const [initializing, setInitializing] = useState(true);
 
     // Setup global auth listener
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
             if (firebaseUser) {
-                // Preserve onboardingCompleted from persisted local store (same user)
-                const existingAuth = useStore.getState().auth;
-                const isSameUser = existingAuth.user?.uid === firebaseUser.uid;
-                const locallyOnboarded = isSameUser ? (existingAuth.user?.onboardingCompleted ?? false) : false;
-
-                const profileInfo = {
-                    uid: firebaseUser.uid,
-                    name: firebaseUser.displayName || 'User',
-                    email: firebaseUser.email || '',
-                    photoURL: firebaseUser.photoURL || '',
-                    role: isSameUser ? (existingAuth.user?.role || 'Executive') : 'Executive',
-                    company: isSameUser ? (existingAuth.user?.company || '') : '',
-                    onboardingCompleted: locallyOnboarded,
-                    accessToken: isSameUser ? (existingAuth.user?.accessToken || '') : ''
-                };
-
-                // --- Navigate instantly using local knowledge ---
-                login(profileInfo);
-                const latestScreen = useStore.getState().currentScreen;
-                
-                // If we have a cached positive signal, skip onboarding.
-                // Otherwise, we wait for the Firestore sync in the next block.
-                if (['login', 'signup', 'forgot-password'].includes(latestScreen) || initializing) {
-                    if (locallyOnboarded) {
-                        setCurrentScreen('main');
-                    } else if (initializing) {
-                        // Stay on initializing or go to welcome briefly
-                        setCurrentScreen('welcome');
-                    }
-                }
-
-                // --- Handle OAuth Redirects ---
-                const params = new URLSearchParams(window.location.search)
-                if (params.get('google') === 'connected') {
-                    // Force navigation to workspace to see the result
-                    setView('workspace');
-                    setCurrentScreen('main');
-                }
-
-                setInitializing(false);
-
-                // --- Sync Firestore in background ---
-                ; (async () => {
-                    // Mint/refresh backend JWT
-                    try {
-                        const res = await fetch(`${API_BASE}/auth/firebase`, {
+                // User is authenticated — Auth.jsx already handles login() + navigation.
+                // Here we just ensure the store token is always fresh on tab/reload.
+                try {
+                    const existingUser = useStore.getState().auth.user
+                    // Only re-hydrate if the store is empty (e.g. hard refresh with Firebase session persisted)
+                    if (!existingUser || existingUser.uid !== firebaseUser.uid) {
+                        const idToken = await firebaseUser.getIdToken()
+                        // Try to get a backend JWT, sending idToken for optional server-side verification
+                        const backendRes = await fetch(`${API_BASE}/auth/firebase`, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: { 
+                                'Content-Type': 'application/json',
+                                'X-Firebase-Token': idToken,
+                            },
                             body: JSON.stringify({
-                                uid: firebaseUser.uid,
-                                email: firebaseUser.email || '',
-                                name: firebaseUser.displayName || (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'Twin User'),
+                                uid:   firebaseUser.uid,
+                                email: firebaseUser.email   || '',
+                                name:  firebaseUser.displayName || '',
                             }),
+                        }).catch(() => null)
+
+                        const backendData = backendRes?.ok ? await backendRes.json() : {}
+
+                        login({
+                            uid:         firebaseUser.uid,
+                            email:       firebaseUser.email || '',
+                            name:        firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+                            photoURL:    firebaseUser.photoURL || '',
+                            accessToken: backendData.access_token || idToken,
                         })
-                        if (res.ok) {
-                            const data = await res.json()
-                            if (data?.access_token) {
-                                updateUser({ accessToken: data.access_token })
-
-                                // Now that we have the backend token, if we just came from OAuth, refresh sync status
-                                if (params.get('google') === 'connected') {
-                                    fetch(`${API_BASE}/integrations/google/status`, {
-                                        headers: { Authorization: `Bearer ${data.access_token}` },
-                                    })
-                                        .then(r => r.json())
-                                        .then(statusData => {
-                                            if (statusData?.connected) {
-                                                setPreference('gmailSync', true)
-                                                setPreference('calendarSync', true)
-                                                window.history.replaceState({}, document.title, window.location.pathname)
-                                            }
-                                        })
-                                }
-                            }
-                        }
-                    } catch (e) { }
-
-                    try {
-                        const userRef = doc(db, 'users', firebaseUser.uid);
-                        const userSnap = await getDoc(userRef);
-                        if (userSnap.exists()) {
-                            const firestoreData = userSnap.data();
-                            login({ ...useStore.getState().auth.user, ...firestoreData });
-                            // Force redirect if they are already onboarded, even if previous logic chose 'welcome'
-                            if (firestoreData.onboardingCompleted && useStore.getState().currentScreen !== 'main') {
-                                setCurrentScreen('main');
-                            }
-                        }
-                    } catch (e) { }
-                })();
-            } else {
-                if (!initializing) {
-                    logout();
+                        setCurrentScreen('main')
+                    }
+                } catch (err) {
+                    console.warn('onAuthStateChanged rehydration error:', err)
                 }
-                setInitializing(false);
+            } else {
+                // User signed out — clean up store
+                logout()
             }
-        });
-        return () => unsubscribe();
-    }, [login, logout, setCurrentScreen, initializing, setView]);
+            setInitializing(false)
+        })
+
+        // Proactive token refresh every 45 minutes (Firebase tokens expire at 60min)
+        const refreshInterval = setInterval(async () => {
+            if (auth.currentUser) {
+                try {
+                    const newToken = await auth.currentUser.getIdToken(true)
+                    // Refresh backend JWT too
+                    const backendRes = await fetch(`${API_BASE}/auth/firebase`, {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'X-Firebase-Token': newToken,
+                        },
+                        body: JSON.stringify({
+                            uid:   auth.currentUser.uid,
+                            email: auth.currentUser.email   || '',
+                            name:  auth.currentUser.displayName || '',
+                        }),
+                    }).catch(() => null)
+                    const backendData = backendRes?.ok ? await backendRes.json() : {}
+                    updateUser({ accessToken: backendData.access_token || newToken })
+                } catch (err) {
+                    console.warn('Token refresh error:', err)
+                }
+            }
+        }, 45 * 60 * 1000)
+
+        return () => {
+            unsubscribe()
+            clearInterval(refreshInterval)
+        }
+    }, [login, logout, setCurrentScreen, updateUser])
 
     // Theme effect
     useEffect(() => {
@@ -148,15 +122,10 @@ function App() {
         }
     }, [theme])
 
-    const handleFlow = async (screen) => {
+    const handleFlow = (screen) => {
         setCurrentScreen(screen)
         if (screen === 'main') {
             updateUser({ onboardingCompleted: true })
-            if (storeAuth.user?.uid) {
-                await setDoc(doc(db, 'users', storeAuth.user.uid), {
-                    onboardingCompleted: true
-                }, { merge: true })
-            }
         }
     }
 
@@ -196,7 +165,12 @@ function App() {
                 )}
                 {currentScreen === 'tools' && (
                     <motion.div key="tools" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                        <ConnectTools onNext={() => handleFlow('preferences')} />
+                        <ConnectTools onNext={() => handleFlow('protocol')} />
+                    </motion.div>
+                )}
+                {currentScreen === 'protocol' && (
+                    <motion.div key="protocol" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+                        <ConnectProtocol onNext={() => handleFlow('preferences')} />
                     </motion.div>
                 )}
                 {currentScreen === 'preferences' && (
@@ -211,12 +185,7 @@ function App() {
                 )}
                 {currentScreen === 'initializing' && (
                     <motion.div key="init" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                        <Initializing onComplete={() => handleFlow('success')} />
-                    </motion.div>
-                )}
-                {currentScreen === 'success' && (
-                    <motion.div key="success" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
-                        <Success onFinish={() => handleFlow('main')} />
+                        <Initializing onComplete={() => handleFlow('main')} />
                     </motion.div>
                 )}
 
@@ -224,22 +193,30 @@ function App() {
                 {currentScreen === 'main' && (
                     <motion.div key="main" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-screen w-full overflow-hidden">
                         <Layout currentView={view} setView={setView}>
-                            <AnimatePresence mode="wait">
-                                <motion.div
-                                    key={view}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, y: -10 }}
-                                    transition={{ duration: 0.3 }}
-                                    className="h-full"
-                                >
-                                    {view === 'home' && <Dashboard />}
-                                    {view === 'chat' && <Chat />}
-                                    {view === 'workspace' && <Workspace />}
-                                    {view === 'activity' && <Activity />}
-                                    {view === 'settings' && <Settings />}
-                                </motion.div>
-                            </AnimatePresence>
+                            <>
+                                {/* Keep Dashboard always mounted but hide visually so it persists data and polls seamlessly */}
+                                <div className={`h-full ${view === 'home' ? 'block' : 'hidden'}`}>
+                                    <Dashboard />
+                                </div>
+                                <AnimatePresence mode="wait">
+                                    {view !== 'home' && (
+                                        <motion.div
+                                            key={view}
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -10 }}
+                                            transition={{ duration: 0.3 }}
+                                            className="h-full"
+                                        >
+                                            {view === 'chat' && <Chat />}
+                                            {view === 'workspace' && <Workspace />}
+                                            {view === 'activity' && <Activity />}
+                                            {view === 'settings' && <Settings />}
+                                            {view === 'agents' && <AgentInbox />}
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </>
                         </Layout>
                     </motion.div>
                 )}

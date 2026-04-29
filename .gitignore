@@ -5,29 +5,18 @@
 **/credentials.json
 **/token_gmail.json
 **/token_calendar.json
-credentials.json
-token_gmail.json
-token_calendar.json
 
 # Python
 **/__pycache__/
 **/*.pyc
 **/venv/
 **/*.egg-info/
-venv/
-__pycache__/
-*.pyc
-*.egg-info/
 
 # Database
 **/chroma_db/
 **/chroma_store/
 **/*.bin
 **/*.sqlite3
-chroma_db/
-chroma_store/
-*.bin
-*.sqlite3
 
 # Node
 **/node_modules/
@@ -36,7 +25,6 @@ chroma_store/
 .DS_Store
 **/*.db
 **/scratch/
-**/ .DS_Store
 .vscode/
 *.log
 lint_output.txt

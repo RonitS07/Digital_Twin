@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { API_BASE } from '../config'
+import { apiFetch } from '../utils/apiClient'
 import { motion } from 'framer-motion'
 import {
     Home,
@@ -8,22 +9,22 @@ import {
     Activity as ActivityIcon,
     Settings,
     Plus,
-    Search,
     Bell,
     Sparkles,
     ShieldCheck,
     HelpCircle,
-    X
+    X,
+    Users,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 
 const TaskModal = ({ onClose }) => {
     const { auth: storeAuth, addTask } = useStore();
-    const [title, setTitle] = React.useState('');
-    const [desc, setDesc] = React.useState('');
-    const [priority, setPriority] = React.useState('Medium');
-    const [auto, setAuto] = React.useState(false);
-    const [isDelegating, setIsDelegating] = React.useState(false);
+    const [title, setTitle] = useState('');
+    const [desc, setDesc] = useState('');
+    const [priority, setPriority] = useState('Medium');
+    const [auto, setAuto] = useState(false);
+    const [isDelegating, setIsDelegating] = useState(false);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -32,12 +33,8 @@ const TaskModal = ({ onClose }) => {
         if (auto) {
             setIsDelegating(true);
             try {
-                await fetch(`${API_BASE}/ai/process`, {
+                await apiFetch(`/ai/process`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(storeAuth.user?.accessToken ? { Authorization: `Bearer ${storeAuth.user.accessToken}` } : {}),
-                    },
                     body: JSON.stringify({
                         input: `Task: ${title}\nDescription: ${desc}\nPriority: ${priority}`,
                         user_id: storeAuth.user?.uid || 'default_user'
@@ -114,37 +111,28 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }) => (
 const Layout = ({ children, currentView, setView }) => {
     const { auth } = useStore();
     const user = auth.user || {};
-    const [isTaskModalOpen, setTaskModalOpen] = React.useState(false);
-    const [history, setHistory] = React.useState([]);
-    const [loadingHistory, setLoadingHistory] = React.useState(false);
+    const [isTaskModalOpen, setTaskModalOpen] = useState(false);
+    const [agentUnread, setAgentUnread] = useState(0);
 
+    // Poll for unread agent inbox messages every 30s
     React.useEffect(() => {
-        if (user.uid) {
-            setLoadingHistory(true);
-            fetch(`${API_BASE}/history`, {
-                headers: {
-                    ...(user?.accessToken ? { Authorization: `Bearer ${user.accessToken}` } : {}),
-                },
-            })
-                .then(res => res.json())
-                .then(data => {
-                    setHistory(data.history || []);
-                    setLoadingHistory(false);
-                })
-                .catch(err => {
-                    console.error("History fetch failed", err);
-                    setLoadingHistory(false);
-                });
-        }
-    }, [user.uid]);
+        if (!auth.user?.accessToken) return;
+        const checkInbox = async () => {
+            try {
+                const { apiFetch } = await import('../utils/apiClient');
+                const data = await apiFetch('/agent/inbox');
+                const pending = (data.messages || []).filter(m =>
+                    ['pending', 'delivered'].includes(m.status) &&
+                    ['scheduling_proposal', 'scheduling_confirm'].includes(m.msg_type)
+                ).length;
+                setAgentUnread(pending);
+            } catch {}
+        };
+        checkInbox();
+        const id = setInterval(checkInbox, 30000);
+        return () => clearInterval(id);
+    }, [auth.user?.accessToken]);
 
-    // Group history by date
-    const groupedHistory = history.reduce((groups, item) => {
-        const date = new Date(item.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-        if (!groups[date]) groups[date] = [];
-        groups[date].push(item);
-        return groups;
-    }, {});
 
     return (
         <div className="flex h-screen overflow-hidden bg-surface-base text-on-surface font-inter">
@@ -166,36 +154,19 @@ const Layout = ({ children, currentView, setView }) => {
                     <SidebarItem icon={MessageSquare} label="AI Twin Chat" active={currentView === 'chat'} onClick={() => setView('chat')} />
                     <SidebarItem icon={LayoutGrid} label="Workspace" active={currentView === 'workspace'} onClick={() => setView('workspace')} />
                     <SidebarItem icon={ActivityIcon} label="Activity" active={currentView === 'activity'} onClick={() => setView('activity')} />
+                    {/* Agent Network nav with unread badge */}
+                    <div className="relative">
+                        <SidebarItem icon={Users} label="Agent Network" active={currentView === 'agents'} onClick={() => setView('agents')} />
+                        {agentUnread > 0 && (
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 bg-primary rounded-full flex items-center justify-center text-[9px] font-black text-surface-base ai-glow">
+                                {agentUnread}
+                            </span>
+                        )}
+                    </div>
                     <SidebarItem icon={Settings} label="Settings" active={currentView === 'settings'} onClick={() => setView('settings')} />
                 </nav>
 
-                {/* Previous Chats Section */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
-                    <h3 className="text-[10px] font-bold text-neutral uppercase tracking-widest mb-4 px-4 flex items-center justify-between">
-                        Recent History
-                        {loadingHistory && <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>}
-                    </h3>
-                    <div className="space-y-6">
-                        {Object.entries(groupedHistory).slice(0, 3).map(([date, items]) => (
-                            <div key={date} className="space-y-2">
-                                <p className="text-[9px] text-neutral font-medium px-4 opacity-50">{date}</p>
-                                {items.slice(0, 3).map((item, idx) => (
-                                    <div 
-                                        key={idx} 
-                                        onClick={() => setView('chat')}
-                                        className="mx-2 px-3 py-2 rounded-lg text-xs text-on-surface-variant hover:bg-primary/5 hover:text-on-surface transition-all cursor-pointer group flex items-center gap-2"
-                                    >
-                                        <div className="w-1.5 h-1.5 rounded-full bg-tertiary/40 group-hover:bg-tertiary transition-colors"></div>
-                                        <span className="truncate">{item.input}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        ))}
-                        {history.length === 0 && !loadingHistory && (
-                            <p className="px-4 text-[10px] text-neutral italic">No sessions yet</p>
-                        )}
-                    </div>
-                </div>
+                <div className="flex-1" />
 
                 <div className="mt-4 pt-4 border-t border-neutral/10 space-y-2">
                     <button onClick={() => setTaskModalOpen(true)} className="w-full bg-primary text-surface-base rounded-xl py-2.5 font-bold ai-glow hover:brightness-110 active:scale-95 transition-transform flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest">
@@ -212,13 +183,18 @@ const Layout = ({ children, currentView, setView }) => {
             <div className="ml-64 flex-1 flex flex-col">
                 {/* Header */}
                 <header className="h-16 flex items-center justify-between px-8 bg-surface-base/80 backdrop-blur-3xl sticky top-0 z-30 border-b border-neutral/5">
-                    <div className="relative w-64">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" size={16} />
-                        <input
-                            type="text"
-                            placeholder="Ask AI Twin..."
-                            className="w-full bg-surface-container/50 border-none rounded-full pl-10 pr-4 py-2 text-xs focus:ring-1 focus:ring-primary/30 transition-all outline-none"
-                        />
+                    <div className="flex flex-col">
+                        {currentView !== 'home' ? (
+                            <>
+                                <h2 className="text-sm font-manrope font-bold text-on-surface">Welcome back, {user.name?.split(' ')[0] || 'User'}</h2>
+                                <p className="text-[10px] text-neutral font-medium">Your digital twin is ready to assist you.</p>
+                            </>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <Sparkles size={16} className="text-primary animate-pulse" />
+                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral/70">System Oversight Active</span>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-6">
@@ -234,12 +210,19 @@ const Layout = ({ children, currentView, setView }) => {
                         </button>
                         <div className="h-8 w-8 rounded-full overflow-hidden border border-primary/20 bg-primary/10 flex items-center justify-center">
                             {user.photoURL ? (
-                                <img src={user.photoURL} alt="Avatar" className="h-full w-full object-cover" />
-                            ) : (
-                                <span className="text-primary text-[11px] font-bold">
-                                    {user.name?.split(' ').map(n=>n[0]).join('').toUpperCase() || user.email?.slice(0,2).toUpperCase() || 'U'}
-                                </span>
-                            )}
+                                <img 
+                                    src={user.photoURL} 
+                                    alt="Avatar" 
+                                    className="h-full w-full object-cover" 
+                                    onError={(e) => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }}
+                                />
+                            ) : null}
+                            <span 
+                                className="text-primary text-[11px] font-bold"
+                                style={{ display: user.photoURL ? 'none' : 'flex' }}
+                            >
+                                {user.name?.split(' ').map(n=>n[0]).join('').toUpperCase() || user.email?.slice(0,2).toUpperCase() || 'U'}
+                            </span>
                         </div>
                     </div>
                 </header>

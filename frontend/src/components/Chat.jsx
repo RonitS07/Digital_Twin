@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { API_BASE } from '../config'
+import { apiFetch } from '../utils/apiClient'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     Send,
@@ -18,7 +19,10 @@ import {
     CheckCircle2,
     XCircle,
     Loader2,
-    ShieldCheck
+    ShieldCheck,
+    MessageSquare,
+    Trash2,
+    Zap
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 
@@ -82,7 +86,8 @@ const SimpleMarkdown = ({ children }) => {
         } else if (line.trim() === '---' || line.trim() === '***') {
             elements.push(<hr key={i} className="border-white/10 my-4" />)
         } else if (line.trim() !== '') {
-            elements.push(<p key={i} className="text-sm leading-relaxed mb-2 last:mb-0">{formatInline(line)}</p>)
+            const lineId = `p-${i}-${line.slice(0, 5)}`;
+            elements.push(<p key={lineId} className="text-sm leading-relaxed mb-2 last:mb-0">{formatInline(line)}</p>)
         }
         i++
     }
@@ -100,24 +105,37 @@ const ImageLoader = ({ src }) => {
     )
 }
 
-const ChatMessage = ({ msg, onAction }) => {
+const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
     const isAi = msg.role === 'assistant' || msg.role === 'ai'
     const [actionData, setActionData] = useState(null)
-    const [cleanText, setCleanText] = useState(msg.text)
+    const [cleanText, setCleanText] = useState(msg.text || '')
     const [isProcessing, setIsProcessing] = useState(false)
+    const [autoCompleted, setAutoCompleted] = useState(false)
 
     useEffect(() => {
+        if (!msg.text) return
         const actionMatch = msg.text.match(/<action>([\s\S]*?)<\/action>/)
         if (actionMatch) {
             try {
                 const parsed = JSON.parse(actionMatch[1].trim())
                 setActionData(parsed)
                 setCleanText(msg.text.replace(/<action>[\s\S]*?<\/action>/, '').trim())
+
+                // Safety guardrail: autonomous mode only auto-executes safe intents.
+                // Email is ALWAYS manual to prevent accidental sends.
+                const AUTO_APPROVE_ALLOWLIST = new Set(['calendar', 'scheduling', 'telegram', 'slack'])
+                const isSafe = AUTO_APPROVE_ALLOWLIST.has(parsed.intent)
+
+                if (autoApprove && !autoCompleted && isSafe) {
+                    setAutoCompleted(true)
+                    // Short delay lets the message render before executing
+                    setTimeout(() => handleActionClick('approve', parsed), 2500);
+                }
             } catch (e) {
                 console.error("Action parse failed", e)
             }
         }
-    }, [msg.text])
+    }, [msg.text, autoApprove, autoCompleted])
 
     const handleActionClick = async (type, data) => {
         setIsProcessing(true)
@@ -134,20 +152,28 @@ const ChatMessage = ({ msg, onAction }) => {
             animate={{ opacity: 1, y: 0 }}
             className={`flex gap-6 ${isAi ? '' : 'flex-row-reverse'}`}
         >
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg ${isAi ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-secondary/10 text-secondary border border-secondary/20'
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg overflow-hidden ${isAi ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-primary/5 text-primary border border-primary/10'
                 }`}>
-                {isAi ? <Sparkles size={20} /> : <AccountCircle size={20} />}
+                {isAi ? <Sparkles size={20} /> : (
+                    user?.photoURL ? (
+                        <img src={user.photoURL} alt="User" className="w-full h-full object-cover" />
+                    ) : (
+                        <span className="text-[12px] font-bold">
+                            {user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || user?.email?.slice(0, 2).toUpperCase() || 'U'}
+                        </span>
+                    )
+                )}
             </div>
 
-            <div className={`flex flex-col gap-3 max-w-2xl ${isAi ? '' : 'items-end'}`}>
-                <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral">
+            <div className={`flex flex-col gap-2 max-w-2xl ${isAi ? '' : 'items-end'}`}>
+                <div className={`flex items-center gap-3 ${isAi ? '' : 'flex-row-reverse'}`}>
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral/70">
                         {isAi ? 'Twin Assistant' : 'Executive User'}
                     </span>
                     {msg.status && (
                         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20">
                             <span className="w-1 h-1 rounded-full bg-primary animate-pulse" />
-                            <span className="text-[9px] font-bold text-primary uppercase">{msg.status}</span>
+                            <span className="text-[9px] font-black text-primary uppercase">{msg.status}</span>
                         </div>
                     )}
                 </div>
@@ -168,34 +194,76 @@ const ChatMessage = ({ msg, onAction }) => {
                     )}
 
                     {actionData && (
-                        <div className="mt-6 p-5 rounded-2xl bg-black/20 border border-white/5 space-y-4">
+                        <div className={`mt-6 p-5 rounded-2xl border space-y-4 transition-all ${actionData.is_conflict
+                            ? 'bg-amber-900/20 border-amber-500/30 ring-1 ring-amber-500/10'
+                            : 'bg-black/20 border-white/5'
+                            }`}>
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                    {actionData.intent === 'email' ? <Mail size={16} className="text-primary" /> : <Calendar size={16} className="text-secondary" />}
-                                    <span className="text-[10px] font-bold uppercase tracking-widest text-white/60">Pending {actionData.intent} Authorization</span>
+                                    {actionData.intent === 'email' ? <Mail size={16} className={`${actionData.is_conflict ? 'text-amber-500' : 'text-primary'}`} /> : 
+                                     actionData.intent === 'slack' ? <Zap size={16} className="text-[#36C5F0]" /> :
+                                     actionData.intent === 'telegram' ? <MessageSquare size={16} className="text-secondary" /> : 
+                                     <Calendar size={16} className={`${actionData.is_conflict ? 'text-amber-500' : 'text-secondary'}`} />}
+                                    <span className={`text-[10px] font-bold uppercase tracking-widest ${actionData.is_conflict ? 'text-amber-500' : 'text-white/60'}`}>
+                                        {actionData.is_conflict ? 'Conflict Detected / Suggestion' : `Pending ${actionData.intent} Authorization`}
+                                    </span>
                                 </div>
+                                {actionData.is_conflict && (
+                                    <div className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40">
+                                        <span className="text-[9px] font-black text-amber-500 uppercase">Warning</span>
+                                    </div>
+                                )}
                             </div>
+
+                            {actionData.is_conflict && (
+                                <div className="bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
+                                    <p className="text-xs text-amber-200/90 leading-relaxed font-medium">
+                                        ⚠️ You have a conflict with <span className="text-white font-bold underline">"{actionData.conflict_with}"</span>.
+                                        I've found a free slot and updated the suggestion below.
+                                    </p>
+                                </div>
+                            )}
+
                             <div className="space-y-1">
                                 <h4 className="text-sm font-bold text-white">{actionData.subject || actionData.title || 'Untitled Action'}</h4>
                                 {actionData.intent === 'email' && <p className="text-xs text-white/80">To: <span className="font-mono text-tertiary">{actionData.to}</span></p>}
-                                {actionData.intent === 'calendar' && <p className="text-xs text-white/80">Time: <span className="font-mono text-secondary">{actionData.start_datetime}</span></p>}
-                                <p className="text-xs text-white/50 line-clamp-2 mt-2">{actionData.body || actionData.description}</p>
+                                {actionData.intent === 'slack' && <p className="text-xs text-white/80">Channel: <span className="font-mono text-tertiary">#{actionData.channel_name || actionData.channel_id}</span></p>}
+                                {actionData.intent === 'telegram' && <p className="text-xs text-white/80">Action: <span className="font-mono text-tertiary">Push Notification</span></p>}
+                                {actionData.intent === 'calendar' && (
+                                    <div className="flex items-center gap-2">
+                                        <Clock size={12} className="text-white/40" />
+                                        <p className="text-xs text-white/80 font-mono">
+                                            {new Date(actionData.start_datetime).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                                        </p>
+                                    </div>
+                                )}
+                                <p className="text-xs text-white/50 line-clamp-2 mt-2 italic">{actionData.body || actionData.description}</p>
                             </div>
+
                             <div className="flex gap-2 pt-2">
-                                <button
-                                    disabled={isProcessing}
-                                    onClick={() => handleActionClick('approve', actionData)}
-                                    className="flex-1 py-2 bg-primary text-white text-xs font-bold rounded-xl hover:brightness-110 shadow-lg shadow-primary/20 flex items-center justify-center gap-2 disabled:opacity-50"
-                                >
-                                    {isProcessing ? <><Loader2 size={14} className="animate-spin" /> Processing...</> : 'Approve & Execute'}
-                                </button>
-                                <button
-                                    disabled={isProcessing}
-                                    onClick={() => handleActionClick('reject')}
-                                    className="px-4 py-2 bg-white/5 text-white/70 text-xs font-bold rounded-xl hover:bg-white/10 transition-all disabled:opacity-50"
-                                >
-                                    Reject
-                                </button>
+                                {autoApprove ? (
+                                    <div className="flex-1 py-2 text-primary text-xs font-bold rounded-xl bg-primary/10 flex items-center justify-center gap-2">
+                                        <Zap size={14} fill="currentColor" className="animate-pulse" /> Executing Autonomously...
+                                    </div>
+                                ) : (
+                                    <>
+                                        <button
+                                            disabled={isProcessing}
+                                            onClick={() => handleActionClick('approve', actionData)}
+                                            className={`flex-1 py-2 text-white text-xs font-bold rounded-xl hover:brightness-110 shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all ${actionData.is_conflict ? 'bg-amber-600 shadow-amber-900/20' : 'bg-primary shadow-primary/20'
+                                                }`}
+                                        >
+                                            {isProcessing ? <><Loader2 size={14} className="animate-spin" /> Processing...</> : (actionData.is_conflict ? 'Accept Suggestion & Book' : 'Approve & Execute')}
+                                        </button>
+                                        <button
+                                            disabled={isProcessing}
+                                            onClick={() => handleActionClick('reject')}
+                                            className="px-4 py-2 bg-white/5 text-white/70 text-xs font-bold rounded-xl hover:bg-white/10 transition-all disabled:opacity-50"
+                                        >
+                                            Reject
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}
@@ -210,69 +278,118 @@ const ChatMessage = ({ msg, onAction }) => {
 }
 
 const Chat = () => {
-    const { auth } = useStore()
+    const { auth, preferences } = useStore()
     const user = auth.user || {}
     const [messages, setMessages] = useState([])
     const [input, setInput] = useState('')
     const [loading, setLoading] = useState(false)
     const endRef = useRef(null)
+
+    const [sessions, setSessions] = useState(() => {
+        const saved = localStorage.getItem(`chat_sessions_${user.uid}`)
+        return saved ? JSON.parse(saved) : []
+    })
     const [sessionId, setSessionId] = useState('')
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+
+    // Fallback variable for standalone autonomous mode retrieval
+    const [autoMode, setAutoMode] = useState(false)
 
     const newSessionId = () => `${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`
 
     useEffect(() => {
         if (!user.uid) return
-        try {
-            const savedSession = localStorage.getItem(`session_id_${user.uid}`)
-            if (savedSession) setSessionId(savedSession)
-            else {
-                const sid = newSessionId()
-                setSessionId(sid)
-                localStorage.setItem(`session_id_${user.uid}`, sid)
+
+        const memoryRetention = preferences.memoryRetention !== false;
+        const autoM = localStorage.getItem(`autonomous_mode_${user.uid}`) === 'true';
+        setAutoMode(autoM);
+
+        if (!sessionId) {
+            // Find active or create new
+            if (sessions.length > 0) {
+                setSessionId(sessions[0].id)
+            } else {
+                handleNewChat()
             }
-            const saved = localStorage.getItem(`chat_history_${user.uid}`)
-            if (saved) {
-                const parsed = JSON.parse(saved)
-                if (Array.isArray(parsed)) setMessages(parsed)
+            return
+        }
+
+        // Load specific session messages
+        const saved = memoryRetention ? localStorage.getItem(`chat_history_${user.uid}_${sessionId}`) : null;
+        if (saved) {
+            const parsed = JSON.parse(saved)
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                setMessages(parsed)
             } else {
                 setMessages([{
                     id: 'init', role: 'ai', sender: 'Twin Assistant',
-                    text: `Hello ${user.name?.split(' ')[0] || 'there'}. I'm your AI Twin. How can I assist you?`,
+                    text: `Hello ${user.name?.split(' ')[0] || 'there'}. I'm your AI Twin${autoM ? ' (Autonomous Mode ✅)' : ''}. How can I assist you?`,
                     time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
                 }])
             }
-        } catch (e) { localStorage.removeItem(`chat_history_${user.uid}`) }
-    }, [user.uid])
-
-    useEffect(() => {
-        if (user.uid && messages.length > 0) {
-            localStorage.setItem(`chat_history_${user.uid}`, JSON.stringify(messages))
-        }
-        endRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, [messages, user.uid])
-
-    const handleNewChat = () => {
-        if (window.confirm("Start a new session?")) {
-            const sid = newSessionId()
-            setSessionId(sid)
-            localStorage.setItem(`session_id_${user.uid}`, sid)
+        } else {
             setMessages([{
                 id: 'init', role: 'ai', sender: 'Twin Assistant',
-                text: `Hello. I'm your AI Twin. Session reset.`,
+                text: `Hello ${user.name?.split(' ')[0] || 'there'}. I'm your AI Twin${autoM ? ' (Autonomous Mode ✅)' : ''}. How can I assist you?`,
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
             }])
-            localStorage.removeItem(`chat_history_${user.uid}`)
+        }
+    }, [user.uid, preferences.memoryRetention, sessionId])
+
+    useEffect(() => {
+        if (user.uid && messages.length > 0 && preferences.memoryRetention !== false && sessionId) {
+            localStorage.setItem(`chat_history_${user.uid}_${sessionId}`, JSON.stringify(messages))
+        }
+        endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, [messages, user.uid, preferences.memoryRetention, sessionId])
+
+    useEffect(() => {
+        if (user.uid) {
+            localStorage.setItem(`chat_sessions_${user.uid}`, JSON.stringify(sessions))
+        }
+    }, [sessions, user.uid])
+
+    const handleNewChat = () => {
+        const sid = newSessionId()
+        setSessionId(sid)
+        const initMsg = [{
+            id: 'init', role: 'ai', sender: 'Twin Assistant',
+            text: `Hello. I'm your AI Twin. Start New Session.`,
+            time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
+        }]
+        setMessages(initMsg)
+        setSessions(prev => [{ id: sid, title: 'New Chat', updatedAt: Date.now() }, ...prev])
+        if (preferences.memoryRetention !== false) {
+            localStorage.setItem(`chat_history_${user.uid}_${sid}`, JSON.stringify(initMsg))
+        }
+    }
+
+    const handleDeleteSession = (e, id) => {
+        e.stopPropagation()
+        setSessions(prev => prev.filter(s => s.id !== id))
+        localStorage.removeItem(`chat_history_${user.uid}_${id}`)
+        if (sessionId === id) {
+            const rem = sessions.filter(s => s.id !== id)
+            if (rem.length > 0) setSessionId(rem[0].id)
+            else handleNewChat()
         }
     }
 
     const handleSend = async (e) => {
-        e.preventDefault()
-        const token = useStore.getState().auth?.user?.accessToken;
+        if (e) e.preventDefault()
         
-        if (!input.trim() || loading || !user.uid) return
+        console.log("Chat: Send requested", { input, loading, uid: user.uid });
 
+        if (!input.trim() || loading) return
+        
+        if (!user.uid) {
+            console.error("Chat: Cannot send, user UID missing from store.");
+            return;
+        }
+
+        const msgId = `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const userMsg = {
-            id: Date.now().toString(), role: 'user', sender: user.name || 'You',
+            id: msgId, role: 'user', sender: user.name || 'You',
             text: input.trim(), time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'Web'
         }
 
@@ -280,27 +397,37 @@ const Chat = () => {
         setInput('')
         setLoading(true)
 
+        // Try to update session title if it's "New Chat"
+        setSessions(prev => prev.map(s => {
+            if (s.id === sessionId && s.title === 'New Chat') {
+                return { ...s, title: input.trim().slice(0, 30) + (input.length > 30 ? '...' : ''), updatedAt: Date.now() }
+            }
+            if (s.id === sessionId) return { ...s, updatedAt: Date.now() }
+            return s
+        }).sort((a, b) => b.updatedAt - a.updatedAt))
+
         try {
-            const chat_history = [...messages, userMsg]
-                .slice(-5)
-                .map(m => ({ role: m.role, text: m.text }))
-            const response = await fetch(`${API_BASE}/ai/process`, {
+            const memoryRetention = preferences.memoryRetention !== false;
+            const chat_history = memoryRetention
+                ? [...messages, userMsg].slice(-5).map(m => ({ 
+                    role: m.role === 'ai' ? 'assistant' : m.role,
+                    text: m.text 
+                  }))
+                : [{ role: 'user', text: userMsg.text }];
+
+            const data = await apiFetch(`/ai/process`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
                 body: JSON.stringify({
                     input: userMsg.text, user_id: user.uid,
                     user_name: user.name || 'User',
                     chat_history,
-                    session_id: sessionId
+                    session_id: sessionId,
+                    gmail_sync: preferences.gmailSync !== false,
+                    calendar_sync: preferences.calendarSync !== false
                 })
             })
-
-            const data = await response.json()
             const aiMsg = {
-                id: (Date.now() + 1).toString(), role: 'ai', sender: 'Twin Assistant',
+                id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: 'ai', sender: 'Twin Assistant',
                 text: data.output, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
                 source: data.intent?.toUpperCase() || 'AI', responseType: data.response_type, imageUrl: data.image_url
             }
@@ -315,79 +442,133 @@ const Chat = () => {
         const token = useStore.getState().auth?.user?.accessToken;
 
         if (!token) {
-            alert("Backend session expired. Please refresh or sign in again.");
+            setMessages(prev => [...prev, {
+                role: 'ai', sender: 'Twin Assistant',
+                text: '⚠️ **Session expired.** Please refresh the page and sign in again.',
+                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
+            }]);
             return;
         }
 
         try {
-            const endpoint = actionData.intent === 'email' ? 'gmail/send' : 'calendar/create'
+            const endpoint = 
+                actionData.intent === 'email' ? '/gmail/send' : 
+                actionData.intent === 'telegram' ? '/telegram/send' : 
+                actionData.intent === 'slack' ? '/slack/send' : 
+                '/calendar/create'
+            
             const payload = { ...actionData, user_id: user.uid }
 
-            const res = await fetch(`${API_BASE}/${endpoint}`, {
+            const data = await apiFetch(endpoint, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
                 body: JSON.stringify(payload)
             })
-            const data = await res.json()
-            const errorMsg =
-                data?.detail?.message ||
-                data?.detail?.error?.message ||
-                data?.detail ||
-                data?.error?.message ||
-                data?.error
 
-            if (!res.ok || errorMsg) {
-                alert(`Action Failed: ${typeof errorMsg === 'string' ? errorMsg : 'Request failed'}`)
-                return
-            }
-            if (res.ok) {
-                setMessages(prev => [...prev, {
-                    role: 'ai', sender: 'Twin Assistant', text: `✅ **Task Completed Successfully.**\n\n*Action: ${actionData.intent === 'email' ? 'Email sent to ' + actionData.to : 'Event scheduled '}*`,
-                    time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
-                }])
-            }
-        } catch (err) { alert(`Execution failed: ${err.message}`) }
+            setMessages(prev => [...prev, {
+                role: 'ai', sender: 'Twin Assistant', 
+                text: `✅ **Task Completed Successfully.**\n\n*Action: ${
+                    actionData.intent === 'email' ? 'Email sent to ' + actionData.to : 
+                    actionData.intent === 'slack' ? 'Slack message posted to #' + (actionData.channel_name || actionData.channel_id) :
+                    actionData.intent === 'telegram' ? 'Telegram message pushed to connected device' : 
+                    'Event scheduled'
+                }*`,
+                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
+            }])
+        } catch (err) {
+            setMessages(prev => [...prev, {
+                role: 'ai', sender: 'Twin Assistant',
+                text: `❌ **Execution Failed:** ${err.message}`,
+                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
+            }])
+        }
     }
 
     return (
-        <div className="flex flex-col h-screen bg-surface-base relative overflow-hidden font-inter text-on-surface">
-            <header className="h-20 flex items-center justify-between px-10 bg-surface-base/80 backdrop-blur-3xl sticky top-0 z-40 border-b border-neutral/5">
-                <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center font-bold text-white shadow-lg"><Sparkles size={20} /></div>
-                    <div>
-                        <h2 className="font-manrope font-extrabold text-lg tracking-tight">AI Twin Chat</h2>
-                        <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span><span className="text-[10px] text-neutral font-bold uppercase tracking-widest">Active</span></div>
-                    </div>
-                </div>
-                <div className="flex items-center gap-4">
-                    <button onClick={handleNewChat} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface-container hover:bg-surface-container-high text-xs font-bold transition-all border border-neutral/5"><RotateCcw size={14} />New Session</button>
-                    <div className="h-10 w-10 rounded-2xl bg-surface-container flex items-center justify-center transition-colors border border-neutral/5 cursor-pointer"><MoreVertical size={18} /></div>
-                </div>
-            </header>
+        <div className="flex h-full bg-surface-base relative overflow-hidden font-inter text-on-surface">
 
-            <div className="flex-1 overflow-y-auto px-12 py-10 space-y-12 pb-32 custom-scrollbar">
-                {messages.map(msg => <ChatMessage key={msg.id} msg={msg} onAction={handleAction} />)}
-                {loading && <div className="flex gap-6 animate-pulse"><div className="w-12 h-12 rounded-2xl bg-primary/10" /><div className="bg-surface-container-low px-6 py-4 rounded-3xl text-sm italic opacity-50 flex items-center gap-2"><Loader2 className="animate-spin" size={14} />Twin is thinking...</div></div>}
-                <div ref={endRef} />
-            </div>
+            {/* Sidebar (Thread History) */}
+            <AnimatePresence>
+                {isSidebarOpen && (
+                    <motion.div
+                        initial={{ width: 0, opacity: 0 }}
+                        animate={{ width: 280, opacity: 1 }}
+                        exit={{ width: 0, opacity: 0 }}
+                        className="bg-surface-container-low border-r border-neutral/5 flex flex-col z-20"
+                    >
+                        <div className="p-4 border-b border-white/5">
+                            <button onClick={handleNewChat} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary hover:brightness-110 text-white text-sm font-bold transition-all shadow-lg shadow-primary/20">
+                                <Plus size={16} /> New Chat
+                            </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto w-full custom-scrollbar p-2 space-y-1">
+                            {sessions.map(s => (
+                                <div
+                                    key={s.id}
+                                    onClick={() => setSessionId(s.id)}
+                                    className={`group flex items-center justify-between w-full p-3 rounded-xl cursor-pointer transition-all ${sessionId === s.id ? 'bg-primary/20 text-white' : 'hover:bg-white/5 text-neutral'}`}
+                                >
+                                    <div className="flex flex-col truncate w-full pr-2">
+                                        <div className="flex items-center gap-2">
+                                            <MessageSquare size={14} className={sessionId === s.id ? 'text-primary' : 'text-neutral/70'} />
+                                            <span className="text-sm font-medium truncate">{s.title || 'New Chat'}</span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={(e) => handleDeleteSession(e, s.id)}
+                                        className="text-neutral/50 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all p-1"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
-            <div className="p-8 absolute bottom-0 left-0 right-0 bg-gradient-to-t from-surface-base via-surface-base to-transparent pt-20">
-                <form onSubmit={handleSend} className="max-w-4xl mx-auto relative group">
-                    <div className="bg-surface-container/80 backdrop-blur-3xl rounded-[2rem] flex items-center p-3 pl-8 shadow-2xl border border-neutral/10 focus-within:border-primary/30 transition-all">
-                        <input value={input} onChange={e => setInput(e.target.value)} disabled={loading} placeholder="Instruct your Twin... (ex: Schedule a 30m sync for tomorrow)" className="bg-transparent flex-grow py-3 outline-none text-sm placeholder:text-neutral/50" />
-                        <div className="flex items-center gap-2 pr-2">
-                            <button type="button" className="p-2 text-neutral hover:text-primary transition-colors"><Paperclip size={18} /></button>
-                            <button type="button" className="p-2 text-neutral hover:text-primary transition-colors"><MicIcon size={18} /></button>
-                            <button type="submit" disabled={!input.trim() || loading} className="bg-primary text-white h-11 w-11 rounded-2xl flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 disabled:opacity-30 disabled:scale-100 transition-all"><Send size={18} /></button>
+            {/* Main Chat Area */}
+            <div className="flex-1 flex flex-col relative h-full overflow-hidden">
+                <header className="h-20 flex items-center justify-between px-10 bg-surface-base/80 backdrop-blur-3xl sticky top-0 z-40 border-b border-neutral/5 shrink-0">
+                    <div className="flex items-center gap-4">
+                        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-white/5 rounded-xl text-neutral transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                        </button>
+                        <div className="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center font-bold text-white shadow-lg"><Sparkles size={20} /></div>
+                        <div>
+                            <h2 className="font-manrope font-extrabold text-lg tracking-tight">AI Twin Chat</h2>
+                            <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span><span className="text-[10px] text-neutral font-bold uppercase tracking-widest">Active • {sessions.find(s => s.id === sessionId)?.title || 'Discussion'}</span></div>
                         </div>
                     </div>
-                </form>
+                    <div className="flex items-center gap-4">
+                        <div className="h-10 w-10 rounded-2xl bg-surface-container flex items-center justify-center transition-colors border border-neutral/5 cursor-pointer"><MoreVertical size={18} /></div>
+                    </div>
+                </header>
+
+                <div className="flex-1 overflow-y-auto px-12 py-10 space-y-12 pb-32 custom-scrollbar">
+                    {messages.map(msg => <ChatMessage key={msg.id} msg={msg} onAction={handleAction} autoApprove={autoMode} user={user} />)}
+                    {loading && <div className="flex gap-6 animate-pulse"><div className="w-12 h-12 rounded-2xl bg-primary/10" /><div className="bg-surface-container-low px-6 py-4 rounded-3xl text-sm italic opacity-50 flex items-center gap-2"><Loader2 className="animate-spin" size={14} />Twin is thinking...</div></div>}
+                    <div ref={endRef} />
+                </div>
+
+                <div className="p-8 absolute bottom-0 left-0 right-0 bg-gradient-to-t from-surface-base via-surface-base to-transparent pt-20">
+                    <form onSubmit={handleSend} className="max-w-4xl mx-auto relative group">
+                        <div className="bg-surface-container/80 backdrop-blur-3xl rounded-[2rem] flex items-center p-3 pl-8 shadow-2xl border border-neutral/10 focus-within:border-primary/30 transition-all">
+                            <input value={input} onChange={e => setInput(e.target.value)} disabled={loading} placeholder="Instruct your Twin... (ex: Schedule a 30m sync for tomorrow)" className="bg-transparent flex-grow py-3 outline-none text-sm placeholder:text-neutral/50" />
+                            <div className="flex items-center gap-2 pr-2">
+                                <button type="button" title="Attach file (coming soon)" disabled className="p-2 text-neutral/30 cursor-not-allowed" aria-label="Attach file">
+                                    <Paperclip size={18} />
+                                </button>
+                                <button type="button" title="Voice input (coming soon)" disabled className="p-2 text-neutral/30 cursor-not-allowed" aria-label="Voice input">
+                                    <MicIcon size={18} />
+                                </button>
+                                <button type="submit" disabled={!input.trim() || loading} className="bg-primary text-white h-11 w-11 rounded-2xl flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 disabled:opacity-30 disabled:scale-100 transition-all"><Send size={18} /></button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
     )
 }
 
-export default Chat
+export default Chat;

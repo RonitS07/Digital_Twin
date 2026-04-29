@@ -4,9 +4,11 @@ import uuid
 import asyncio
 import secrets
 import logging
-import traceback
+import httpx
 from typing import Optional, List, Union
 from datetime import datetime, timedelta
+import json
+import requests
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -20,28 +22,41 @@ from pydantic import BaseModel, Field, EmailStr, validator
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from googleapiclient.errors import HttpError
 
 from db.database import get_db, engine
-from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken
+from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory
 from db.auth import hash_password, verify_password, create_access_token, decode_token
-from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email, get_email_details
+from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email, get_email_details, send_styled_invite
 from tools.calendar_tool import get_upcoming_events, create_event, normalize_datetime
+from utils.email_templates import get_invite_html
 from tools.google_oauth import (
     build_flow,
     upsert_google_tokens,
     is_connected,
+    is_scope_sufficient,
     GMAIL_SCOPES,
     CALENDAR_SCOPES,
 )
+from tools.slack_tool import upsert_slack_tokens, is_slack_connected, list_slack_channels, send_slack_message, SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_REDIRECT_URI
 from graph.graph import twin_graph
 from memory.chroma import store_memory
-from memory.learning import learn_from_interaction, get_structured_memories_text
+from memory.learning import learn_from_interaction
+from tools.telegram_tool import send_telegram_message, get_telegram_updates, send_telegram_photo
+from utils.briefing import generate_daily_briefing
+
+# ── Multi-agent / A2A imports ──────────────────────────────────────────────
+from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory, AgentRegistry, A2AMessageLog
+from routers.agent_broker import router as agent_broker_router, set_auth_dependency
+from services.agent_registry import register_agent
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Global background task registry for clean shutdown
+background_tasks = set()
 
 Base.metadata.create_all(bind=engine)
 
@@ -49,25 +64,65 @@ security = HTTPBearer(auto_error=False)
 
 app = FastAPI(title="AI Twin API")
 
+def _get_allowed_origins() -> list:
+    """Build CORS allowed origins from env so ngrok/prod domains are always included."""
+    origins = {
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:8000",
+    }
+    for env_var in ("FRONTEND_URL", "NGROK_URL"):
+        val = os.getenv(env_var)
+        if val:
+            origins.add(val.rstrip("/"))
+    return list(origins)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add COOP and COEP headers to allow popups to communicate back to the main window."""
+    response = await call_next(request)
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+    # COEP: credentialless or require-corp? require-corp is safer but stricter.
+    # For now same-origin-allow-popups is primarily what solves the blocking issue.
+    return response
+
+# Mount multi-agent broker router
+app.include_router(agent_broker_router)
+
 def extract_reply(text: str) -> str:
-    """Extracts only the content within <reply> tags, or returns original text if tags not found."""
-    match = re.search(r'<reply>(.*?)</reply>', text, re.DOTALL)
+    """Extracts reply content and strips away hidden action tags."""
+    # First priority: <reply> tags
+    match = re.search(r'<reply>(.*?)</reply>', text, re.DOTALL | re.IGNORECASE)
     if match:
-        return match.group(1).strip()
-    return text.strip()
+        content = match.group(1).strip()
+    else:
+        content = text.strip()
+    
+    # Strip well-formed AND malformed action tags (e.g. /action> Instead of <action>)
+    content = re.sub(r'<?/?action>.*?(?:</action>|$)', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Strip markdown JSON blocks if the LLM adds them
+    content = re.sub(r'```json.*?```', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Strip any dangling JSON payload that might have leaked at the end of the text
+    content = re.sub(r'\s*\{\s*"intent"\s*:.*$', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    return content.strip()
 
 # Setup Background Task
 AUTO_SEND = os.getenv("AUTO_SEND", "false").lower() == "true"
 
-async def process_new_emails():
+def process_new_emails():
     """Shared logic to check and process new emails for all connected users."""
     processed_count = 0
     try:
@@ -86,33 +141,54 @@ async def process_new_emails():
                 try:
                     if not is_connected(db=db, user_id=uid):
                         continue
+                    # Skip users who only connected Calendar (no Gmail scopes)
+                    if not is_scope_sufficient(db=db, user_id=uid, scopes=GMAIL_SCOPES):
+                        logger.debug(f"[EmailMonitor] Skipping user {uid}: no Gmail scopes granted.")
+                        continue
+                    user = db.query(User).filter(User.id == uid).first()
                     emails = read_recent_emails(db=db, user_id=uid, max_results=5)
-                    for mail in emails:
-                        existing = db.query(ProcessedEmail).filter(ProcessedEmail.id == mail["id"]).first()
+
+                    for email in emails:
+                        existing = db.query(ProcessedEmail).filter(ProcessedEmail.id == email["id"]).first()
                         if existing:
                             continue
-
+                            
+                        # Mark as processed immediately to prevent duplicate loops
+                        entry = ProcessedEmail(
+                            id=email["id"], 
+                            user_id=uid,
+                            thread_id=email.get("threadId", ""), 
+                            action_taken="init"
+                        )
+                        db.add(entry)
+                        db.commit()
+                        
+                        # Notify on Telegram if enabled
+                        if user and user.telegram_enabled and user.telegram_chat_id:
+                            msg = f"📩 *New Email Detected*\n\n*From:* {email['from']}\n*Subject:* {email['subject']}\n\n_{email['snippet']}_"
+                            send_telegram_message(user.telegram_chat_id, msg)
+                        
+                        # Ingest into memory/graph
                         initial_state = {
                             "user_id": uid,
-                            "input": f"Read email {mail['id']} and suggest a suitable reply.",
+                            "input": f"Read email {email['id']} and suggest a suitable reply.",
                             "intent": "",
                             "task_plan": [],
                             "output": "",
+                            "chat_history": [],
                             "approval_required": False
                         }
                         res = twin_graph.invoke(initial_state)
                         clean_body = extract_reply(res["output"])
 
                         if AUTO_SEND:
-                            reply_to_email(db=db, user_id=uid, message_id=mail["id"], body=clean_body)
-                            action = "sent"
+                            reply_to_email(db=db, user_id=uid, message_id=email["id"], body=clean_body)
+                            entry.action_taken = "sent"
                         else:
-                            info = get_email_details(db=db, user_id=uid, message_id=mail["id"])
+                            info = get_email_details(db=db, user_id=uid, message_id=email["id"])
                             draft_email(db=db, user_id=uid, to=info["from"], subject=f"Re: {info['subject']}", body=clean_body)
-                            action = "drafted"
+                            entry.action_taken = "drafted"
 
-                        entry = ProcessedEmail(id=mail["id"], thread_id=mail.get("threadId", ""), action_taken=action)
-                        db.add(entry)
                         db.commit()
                         processed_count += 1
                 except Exception as user_err:
@@ -123,13 +199,287 @@ async def process_new_emails():
     return processed_count > 0
 
 async def monitor_emails():
-    while True:
-        await process_new_emails()
-        await asyncio.sleep(600)
+    try:
+        while True:
+            # Run the heavy sync processing in a thread to keep event loop free
+            await asyncio.to_thread(process_new_emails)
+            await asyncio.sleep(600)
+    except asyncio.CancelledError:
+        logger.info("[Monitor] Email monitor stopping...")
+        raise
+
+async def monitor_telegram():
+    """Polls Telegram for new messages and processes them."""
+    try:
+        offset = None
+        while True:
+            try:
+                updates = await get_telegram_updates(offset=offset)
+                for update in updates:
+                    offset = update["update_id"] + 1
+                    msg = update.get("message")
+                    if not msg:
+                        continue
+                    
+                    chat_id = str(msg["chat"]["id"])
+                    text = msg.get("text", "")
+                    
+                    with next(get_db()) as db:
+                        user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
+                        if not user:
+                            if text.startswith("/start"):
+                                send_telegram_message(chat_id, "Welcome to AI Twin! Please connect your account in the dashboard settings to start using Telegram features.")
+                            continue
+                        
+                        if text == "/help":
+                            help_msg = """
+🤖 *AI Twin Telegram Commands*
+
+📅 *Intelligence*
+/briefing \- Get your 24\-hour executive report
+/schedule \- View today's full agenda
+/unread \- See your most recent unread emails
+
+✍️ *Automation (Send any message)*
+• "Draft an email to ronit@example.com about the project"
+• "What meetings do I have tomorrow afternoon?"
+• "Create a 3D render of a futuristic office"
+• "Search the web for latest AI news"
+
+💡 *Tip*: You can speak to your AI Twin naturally just like you do on the dashboard!
+"""
+                            send_telegram_message(chat_id, help_msg)
+                            continue
+
+                        if text == "/unread":
+                            emails = read_recent_emails(db, user.id, max_results=5)
+                            if not emails:
+                                send_telegram_message(chat_id, "No new unread emails in the last 24 hours.")
+                            else:
+                                msg = "📩 *Recent Unread Emails*\n\n"
+                                for e in emails:
+                                    msg += f"• *{e['subject']}*\n  From: {e['from']}\n\n"
+                                send_telegram_message(chat_id, msg)
+                            continue
+
+                        if text == "/schedule":
+                            events = get_upcoming_events(db, user.id, max_results=5)
+                            if not events:
+                                send_telegram_message(chat_id, "Your schedule is clear for the next 24 hours.")
+                            else:
+                                m = "📅 *Your Agenda*\n\n"
+                                for e in events:
+                                    try:
+                                        dt = datetime.fromisoformat(e["start"].replace("Z", "+00:00"))
+                                        ts = dt.strftime("%B %d, %I:%M %p")
+                                    except Exception:
+                                        ts = e["start"]
+                                    m += f"• *{e['title']}*\n  Time: {ts}\n\n"
+                                send_telegram_message(chat_id, m)
+                            continue
+
+                        if text == "/briefing":
+                            briefing = generate_daily_briefing(db, user.id, user.name)
+                            send_telegram_message(chat_id, briefing)
+                            continue
+
+                        # Process general message via AI Graph
+                        prefs = {}
+                        try:
+                            prefs = json.loads(user.preferences_json or "{}")
+                        except Exception:
+                            pass
+                        
+                        initial_state = {
+                            "user_id": user.id,
+                            "user_name": user.name,
+                            "input": text,
+                            "chat_history": [],
+                            "intent": "other",
+                            "output": "",
+                            "task_plan": [],
+                            "approval_required": False,
+                            "gmail_sync": prefs.get("gmailSync", True),
+                            "calendar_sync": prefs.get("calendarSync", True)
+                        }
+                        res = twin_graph.invoke(initial_state)
+                        clean_res = extract_reply(res["output"])
+                        
+                        if res.get("response_type") == "visual" and res.get("image_url"):
+                            send_telegram_photo(chat_id, res["image_url"], clean_res)
+                        else:
+                            send_telegram_message(chat_id, clean_res)
+                            
+                        # Action Execution
+                        if "<action>" in res["output"]:
+                            try:
+                                match = re.search(r"<action>(.*?)</action>", res["output"], re.DOTALL)
+                                if match:
+                                    action_data = json.loads(match.group(1))
+                                    intent = action_data.get("intent")
+                                    if intent == "email":
+                                        if prefs.get("gmailSync") is not False:
+                                            send_email(db, user.id, action_data["to"], action_data["subject"], action_data["body"])
+                                            send_telegram_message(chat_id, "✅ *Email Sent Successfully*")
+                                    elif intent == "calendar":
+                                        if prefs.get("calendarSync") is not False:
+                                            e_title = action_data.get("title") or action_data.get("summary") or "Untitled"
+                                            # Support both field name conventions from LLM
+                                            start_dt = action_data.get("start_datetime") or action_data.get("start")
+                                            end_dt = action_data.get("end_datetime") or action_data.get("end")
+                                            c_res = create_event(db=db, user_id=user.id, title=e_title, 
+                                                               start_datetime=start_dt, 
+                                                               end_datetime=end_dt)
+                                            send_telegram_message(chat_id, f"📅 *Scheduled:* {e_title}")
+                            except Exception as act_err:
+                                logger.error(f"Telegram Action Error: {act_err}")
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Telegram Monitor Error: {e}")
+            await asyncio.sleep(5)
+    except asyncio.CancelledError:
+        logger.info("[Monitor] Telegram monitor stopping...")
+        raise
+
+# TTL-based notified_events: {event_id: timestamp_notified}
+# Entries expire after 24 hours so events are notifiable again on next occurrence
+_NOTIFIED_EVENTS: dict = {}
+_NOTIFIED_TTL_SECONDS = 86400  # 24 hours
+
+def _is_already_notified(event_id: str) -> bool:
+    ts = _NOTIFIED_EVENTS.get(event_id)
+    if ts is None:
+        return False
+    if (datetime.now() - ts).total_seconds() > _NOTIFIED_TTL_SECONDS:
+        _NOTIFIED_EVENTS.pop(event_id, None)
+        return False
+    return True
+
+def _mark_notified(event_id: str):
+    _NOTIFIED_EVENTS[event_id] = datetime.now()
+
+def process_calendar_monitor():
+    """Shared logic for checking calendar events."""
+    try:
+        with next(get_db()) as db:
+            users = db.query(User).filter(User.telegram_enabled == True, User.telegram_chat_id.isnot(None)).all()
+            for user in users:
+                # Skip users without Google connection OR without calendar scopes
+                if not is_connected(db=db, user_id=user.id):
+                    continue
+                if not is_scope_sufficient(db=db, user_id=user.id, scopes=CALENDAR_SCOPES):
+                    logger.debug(f"[CalMonitor] Skipping user {user.id}: no calendar scopes granted.")
+                    continue
+                
+                events = get_upcoming_events(db=db, user_id=user.id, max_results=10)
+                now = datetime.now()
+                
+                for event in events:
+                    event_id = event.get("id") or event.get("summary")
+                    if _is_already_notified(event_id):
+                        continue
+                    
+                    try:
+                        start_str = event.get("start")
+                        if not start_str:
+                            continue
+                        
+                        # Parse start time
+                        event_start = datetime.fromisoformat(start_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                        
+                        # If meeting starts in the next 15 minutes
+                        diff = event_start - now
+                        if timedelta(minutes=0) < diff <= timedelta(minutes=15):
+                            msg = f"⏰ *Upcoming Meeting Reminder*\n\n*What:* {event['summary']}\n*When:* {event_start.strftime('%I:%M %p')}\n"
+                            if event.get('meet_link'):
+                                msg += f"🔗 *Joint Meet:* {event['meet_link']}"
+                            
+                            send_telegram_message(user.telegram_chat_id, msg)
+                            _mark_notified(event_id)
+                    except Exception as e:
+                        logger.error(f"Error checking event timing: {e}")
+                        
+    except Exception as e:
+        err_msg = str(e)
+        if "unable to find the server" in err_msg.lower() or "name resolution" in err_msg.lower():
+            logger.warning("🌐 Calendar Monitor: Connectivity issue. Retrying later...")
+        else:
+            logger.error(f"Monitor Calendar Error: {e}")
+
+async def monitor_calendar():
+    """Polls for upcoming meetings and notifies the user on Telegram."""
+    try:
+        while True:
+            await asyncio.to_thread(process_calendar_monitor)
+            await asyncio.sleep(60) # Check every minute
+    except asyncio.CancelledError:
+        logger.info("[Monitor] Calendar monitor stopping...")
+        raise
+
+def process_daily_briefing():
+    """Logic for daily briefing checks."""
+    try:
+        now = datetime.utcnow()
+        # For simplicity, if it's been > 20 hours since last briefing, send a new one
+        with next(get_db()) as db:
+            users = db.query(User).filter(User.telegram_enabled == True, User.telegram_chat_id.isnot(None)).all()
+            for user in users:
+                should_send = False
+                if not user.last_briefing_at:
+                    should_send = True
+                elif now - user.last_briefing_at > timedelta(hours=20):
+                    should_send = True
+                
+                if should_send:
+                    logger.info(f"Generating scheduled briefing for {user.id}")
+                    briefing = generate_daily_briefing(db, user.id, user.name)
+                    # This will push a text message via Telegram
+                    send_telegram_message(user.telegram_chat_id, briefing)
+                    user.last_briefing_at = now
+                    db.commit()
+    except Exception as e:
+        logger.error(f"Daily Briefing Task Error: {e}")
+
+async def daily_briefing_task():
+    """Checks every hour if a briefing needs to be sent."""
+    try:
+        while True:
+            await asyncio.to_thread(process_daily_briefing)
+            await asyncio.sleep(3600) # Check every hour
+    except asyncio.CancelledError:
+        logger.info("[Monitor] Briefing task stopping...")
+        raise
 
 @app.on_event("startup")
 async def startup_event():
-    asyncio.create_task(monitor_emails())
+    logger.info("Initializing AI Twin Background services...")
+    
+    # Track tasks for clean shutdown
+    t1 = asyncio.create_task(monitor_emails())
+    t2 = asyncio.create_task(monitor_telegram())
+    t3 = asyncio.create_task(monitor_calendar())
+    t4 = asyncio.create_task(daily_briefing_task())
+    
+    background_tasks.add(t1)
+    background_tasks.add(t2)
+    background_tasks.add(t3)
+    background_tasks.add(t4)
+    
+    # Inject auth dependency into agent broker (avoids circular import)
+    set_auth_dependency(get_current_user)
+    logger.info("Startup complete.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("Gracefully shutting down background tasks...")
+    for task in background_tasks:
+        task.cancel()
+    
+    await asyncio.gather(*background_tasks, return_exceptions=True)
+    background_tasks.clear()
+    logger.info("Shutdown complete.")
 
 # Pydantic Schemas
 class ProcessRequest(BaseModel):
@@ -138,6 +488,9 @@ class ProcessRequest(BaseModel):
     user_name: Optional[str] = None
     chat_history: List[dict] = Field(default_factory=list)
     session_id: Optional[str] = None
+    gmail_sync: bool = True
+    calendar_sync: bool = True
+    slack_sync: bool = True
 
 class MemoryRequest(BaseModel):
     user_id: str
@@ -150,9 +503,15 @@ class EmailDraftRequest(BaseModel):
     body: str
 
 class EmailSendRequest(BaseModel):
-    to: EmailStr
+    user_id: str
+    to: str
     subject: str
     body: str
+
+class TelegramSendRequest(BaseModel):
+    user_id: str
+    message: str
+    image_url: Optional[str] = None
 
     class Config:
         extra = "ignore"
@@ -197,6 +556,12 @@ def _map_google_http_error(e: HttpError) -> tuple[int, dict]:
         return 429, {"code": "GOOGLE_QUOTA", "message": "Google quota/rate limit hit. Please try again in a few minutes."}
     if 500 <= status < 600:
         return 502, {"code": "GOOGLE_UPSTREAM", "message": "Google service is temporarily unavailable. Please retry shortly."}
+    
+    # Check for connection/DNS issues
+    error_str = str(e).lower()
+    if "unable to find the server" in error_str or "temporary failure in name resolution" in error_str:
+        return 503, {"code": "NETWORK_ERROR", "message": "Backend DNS/Network failure. Cannot reach Google services."}
+
     return 400, {"code": "GOOGLE_API_ERROR", "message": reason}
 
 class RegisterRequest(BaseModel):
@@ -213,22 +578,29 @@ class FirebaseAuthRequest(BaseModel):
     email: Optional[str] = None
     name: Optional[str] = None
 
-@app.get("/")
-def root():
-    return {"message": "AI Twin API Active"}
 
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
     if not credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+        
     payload = decode_token(credentials.credentials)
+    
+    # Check for specific expiration error
+    if payload and payload.get("error") == "ExpiredIdTokenError":
+        raise HTTPException(
+            status_code=401, 
+            detail={"code": "REFRESH_REQUIRED", "message": "Token expired"}
+        )
+        
     if not payload or "sub" not in payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        raise HTTPException(status_code=401, detail="Invalid token")
+        
     user = db.query(User).filter(User.id == payload["sub"]).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found for token")
+        raise HTTPException(status_code=401, detail="User not found for token")
     return user
 
 @app.get("/auth/gmail/status")
@@ -316,6 +688,13 @@ def google_oauth_start(
     return {"auth_url": auth_url}
 
 
+@app.post("/integrations/google/disconnect")
+def google_disconnect(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.query(IntegrationToken).filter(IntegrationToken.user_id == current_user.id, IntegrationToken.provider == "google").delete()
+    db.commit()
+    return {"status": "success"}
+
+
 @app.get("/oauth/google/callback")
 def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
     # 1. Retrieve the OAuth record by state
@@ -349,6 +728,9 @@ def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=400, detail=f"Failed to retrieve Google token: {str(e)}")
 
+    # Capture before deletion
+    frontend_url = oauth_record.frontend_origin or os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
+
     if oauth_record:
         db.delete(oauth_record)
         db.commit()
@@ -365,7 +747,6 @@ def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
         token_type=getattr(creds, "token_type", None),
     )
 
-    frontend_url = oauth_record.frontend_origin or os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
     return RedirectResponse(url=f"{frontend_url}/?google=connected")
 
 
@@ -417,7 +798,10 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
         "task_plan": [],
         "approval_required": False,
         "response_type": "text",
-        "image_url": None
+        "image_url": None,
+        "gmail_sync": req.gmail_sync,
+        "calendar_sync": req.calendar_sync,
+        "slack_sync": req.slack_sync
     }
     
     try:
@@ -478,7 +862,8 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
             )
             db.add(new_log)
             db.commit()
-        except:
+        except Exception as log_err:
+            logger.warning(f"Task log write failed: {log_err}")
             db.rollback()
 
         return {
@@ -492,7 +877,7 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
         raise
     except Exception as e:
         logger.exception(f"Graph Error: {e}")
-        return {"error": str(e)}
+        return {"output": f"❌ **Intelligence Error:** {str(e)}", "error": str(e)}
 
 @app.get("/history")
 def get_history(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -536,7 +921,11 @@ def list_calendar(max_results: int = 20, current_user: User = Depends(get_curren
         sc, payload = _map_google_http_error(e)
         raise HTTPException(status_code=sc, detail=payload)
     except Exception as e:
-        logger.exception(e)
+        err_msg = str(e)
+        if "unable to find the server" in err_msg.lower() or "temporary failure in name resolution" in err_msg.lower():
+            logger.warning(f"🌐 Calendar Connectivity issue: {err_msg}")
+        else:
+            logger.exception(e)
         return {"events": [], "count": 0}
 
 @app.get("/gmail/inbox")
@@ -550,7 +939,11 @@ def inbox(max_results: int = 5, current_user: User = Depends(get_current_user), 
         sc, payload = _map_google_http_error(e)
         raise HTTPException(status_code=sc, detail=payload)
     except Exception as e:
-        logger.exception(e)
+        err_msg = str(e)
+        if "unable to find the server" in err_msg.lower() or "temporary failure in name resolution" in err_msg.lower():
+            logger.warning(f"🌐 Gmail Connectivity issue: {err_msg}")
+        else:
+            logger.exception(e)
         return {"emails": []}
 
 @app.post("/calendar/create")
@@ -584,8 +977,32 @@ def create_calendar(req: CreateEventRequest, current_user: User = Depends(get_cu
                 output=f"Event created successfully at {req.start_datetime}",
                 approved=True
             )
-            db.add(log); db.commit()
-        except: db.rollback()
+            db.add(log)
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        # 🟢 Send Styled Invitations
+        try:
+            invite_html = get_invite_html(
+                title=req.title,
+                start_time=res.get("start"),
+                end_time=res.get("end"),
+                meet_link=res.get("meet_link"),
+                description=req.description,
+                user_name=current_user.name,
+                attendees=attendees
+            )
+            for guest in attendees:
+                send_styled_invite(
+                    db=db, 
+                    user_id=current_user.id, 
+                    to=guest, 
+                    subject=f"Meeting Invitation: {req.title}", 
+                    html_content=invite_html
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send styled invites: {e}")
 
         return {"status": "success", "details": res}
     except ValueError as e:
@@ -598,6 +1015,52 @@ def create_calendar(req: CreateEventRequest, current_user: User = Depends(get_cu
     except Exception as e:
         logger.exception(e)
         _tool_error("Calendar execution failed. Please try again.", "CALENDAR_FAILED", status_code=500)
+
+@app.post("/telegram/send")
+def api_send_telegram(req: TelegramSendRequest, db: Session = Depends(get_db)):
+    try:
+        user = db.query(User).filter(User.id == req.user_id).first()
+        if not user or not user.telegram_chat_id:
+            raise HTTPException(status_code=400, detail="Telegram not connected or unavailable.")
+        
+        # 🟢 Safety: Strip placeholders hallucinated by AI
+        img_url = req.image_url
+        if img_url:
+            hallucinated_patterns = ["example.com", "[", "logo.png", "image.jpg", ".webp", ".jpeg"]
+            # If it's a generic looking name without a full http path, it's likely a hallucination
+            if not img_url.startswith("http") and not img_url.startswith("data:"):
+                img_url = None
+            elif any(p in img_url.lower() for p in hallucinated_patterns) and "http" in img_url.lower() and "example.com" in img_url.lower():
+                img_url = None
+            
+        success = False
+        if img_url:
+            success = send_telegram_photo(str(user.telegram_chat_id), img_url, caption=req.message)
+            # 🟢 Robust Fallback: If photo failed (e.g. broken URL), try sending as text
+            if not success:
+                logger.warning(f"Telegram photo push failed for {img_url}. Falling back to text message.")
+                success = send_telegram_message(str(user.telegram_chat_id), f"📸 (Image failed to load)\n\n{req.message}")
+        else:
+            success = send_telegram_message(str(user.telegram_chat_id), req.message)
+            
+        if success:
+            try:
+                log = TaskLog(
+                    user_id=user.id,
+                    kind="execution",
+                    input=f"Pushed notification to Telegram{' with image' if req.image_url else ''}",
+                    intent="telegram",
+                    output=req.message if not req.image_url else f"Image: {req.image_url}\nCaption: {req.message}",
+                    approved=True
+                )
+                db.add(log)
+                db.commit()
+            except Exception:
+                db.rollback()
+            return {"status": "success", "message": "Telegram message pushed"}
+        raise HTTPException(status_code=500, detail="Failed to send Telegram message")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/gmail/send")
 def send_mail(req: EmailSendRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -618,8 +1081,10 @@ def send_mail(req: EmailSendRequest, current_user: User = Depends(get_current_us
                 output=f"Subject: {req.subject}",
                 approved=True
             )
-            db.add(log); db.commit()
-        except: db.rollback()
+            db.add(log)
+            db.commit()
+        except Exception:
+            db.rollback()
 
         return {"details": res}
     except RuntimeError as e:
@@ -649,6 +1114,13 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Email already registered")
+
+    # Auto-register in agent registry
+    try:
+        register_agent(db, user)
+    except Exception as e:
+        logger.warning(f"Agent registry registration failed for {user.id}: {e}")
+
     return {"user_id": str(user.id), "email": user.email, "name": user.name}
 
 @app.post("/auth/login")
@@ -666,11 +1138,30 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     }
 
 @app.post("/auth/firebase")
-def firebase_auth(req: FirebaseAuthRequest, db: Session = Depends(get_db)):
-    # Note: this endpoint assumes the caller is already authenticated with Firebase.
-    # In production, verify a Firebase ID token server-side and only then mint backend JWTs.
+def firebase_auth(request: Request, req: FirebaseAuthRequest, db: Session = Depends(get_db)):
+    """
+    Exchange Firebase UID for a backend JWT.
+    The client has already authenticated with Firebase; we trust the UID.
+    
+    TODO: Enable server-side verification by uncommenting the block below
+    once firebase-admin SDK service account JSON is configured in the environment.
+    
+    import firebase_admin.auth as fb_auth
+    id_token = request.headers.get("X-Firebase-Token")
+    if id_token:
+        try:
+            decoded = fb_auth.verify_id_token(id_token)
+            if decoded["uid"] != req.uid:
+                raise HTTPException(status_code=403, detail="Token UID mismatch")
+        except Exception as e:
+            raise HTTPException(status_code=401, detail=f"Invalid Firebase token: {e}")
+    """
     if not req.uid:
         raise HTTPException(status_code=400, detail="uid is required")
+    
+    # Log the presence of the Firebase token for audit trail
+    fb_token_present = bool(request.headers.get("X-Firebase-Token"))
+    logger.debug(f"[Auth] Firebase auth for uid={req.uid}, token_header={'yes' if fb_token_present else 'no'}")
 
     user = db.query(User).filter(User.id == req.uid).first()
     if not user:
@@ -685,12 +1176,30 @@ def firebase_auth(req: FirebaseAuthRequest, db: Session = Depends(get_db)):
             db.add(user)
             db.commit()
             db.refresh(user)
-        except IntegrityError:
+        except IntegrityError as ie:
             db.rollback()
-            # If email collided, fall back to UID email and try once more
-            user = db.query(User).filter(User.id == req.uid).first()
-            if not user:
-                raise HTTPException(status_code=409, detail="User creation failed")
+            logger.warning(f"[Auth] IntegrityError on user creation for {req.uid}: {ie}")
+            # If email collided, fall back to UID-based pseudo-email to allow login
+            user_by_id = db.query(User).filter(User.id == req.uid).first()
+            if user_by_id:
+                user = user_by_id
+                logger.info(f"[Auth] User {req.uid} already exists despite lookup failure, proceeding.")
+            else:
+                user = User(
+                    id=req.uid,
+                    email=f"{req.uid}@firebase.twin", # Fallback email to avoid collision
+                    name=req.name or "User",
+                    hashed_password=None,
+                )
+                try:
+                    db.add(user)
+                    db.commit()
+                    db.refresh(user)
+                    logger.info(f"[Auth] Created user {req.uid} with fallback email.")
+                except Exception as e2:
+                    db.rollback()
+                    logger.error(f"[Auth] Critical failure creating user {req.uid}: {e2}")
+                    raise HTTPException(status_code=409, detail="User creation conflict. This email may be registered to another account.")
     else:
         # Keep basic profile up to date (best-effort)
         updates = {}
@@ -708,6 +1217,12 @@ def firebase_auth(req: FirebaseAuthRequest, db: Session = Depends(get_db)):
             except IntegrityError:
                 db.rollback()
 
+    # Auto-register in agent registry (idempotent upsert)
+    try:
+        register_agent(db, user)
+    except Exception as e:
+        logger.warning(f"Agent registry registration failed for {user.id}: {e}")
+
     return {
         "access_token": create_access_token({"sub": str(user.id)}),
         "user_id": str(user.id),
@@ -715,6 +1230,287 @@ def firebase_auth(req: FirebaseAuthRequest, db: Session = Depends(get_db)):
         "name": user.name,
     }
 
+
 @app.get("/auth/me")
 def me(current_user: User = Depends(get_current_user)):
     return {"user_id": str(current_user.id), "email": current_user.email, "name": current_user.name}
+@app.post("/settings/telegram")
+def update_telegram(req: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    chat_id = req.get("chat_id")
+    if chat_id is not None:
+        chat_id = str(chat_id).strip()
+    else:
+        chat_id = ""
+    if chat_id:
+        existing_user = db.query(User).filter(User.telegram_chat_id == chat_id, User.id != current_user.id).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="This Telegram Chat ID is already linked to another AI Twin account.")
+    
+    enabled = bool(req.get("enabled", False))
+    current_user.telegram_chat_id = chat_id
+    current_user.telegram_enabled = enabled
+    db.commit()
+    return {"status": "success", "chat_id": chat_id, "enabled": enabled}
+
+@app.get("/oauth/slack/start")
+def slack_oauth_start(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not SLACK_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Slack client ID not configured")
+    
+    state = _encode_oauth_state(current_user.id)
+    # Save state to DB
+    db.add(OAuthState(state=state, user_id=current_user.id, code_verifier="none")) # code_verifier not used for Slack standard OAuth but model requires it
+    db.commit()
+    
+    scopes = "channels:history,channels:read,chat:write,groups:read,im:read,mpim:read"
+    auth_url = f"https://slack.com/oauth/v2/authorize?client_id={SLACK_CLIENT_ID}&scope={scopes}&user_scope=&redirect_uri={SLACK_REDIRECT_URI}&state={state}"
+    return {"auth_url": auth_url}
+
+@app.get("/oauth/slack/callback")
+def slack_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
+    oauth_record = db.query(OAuthState).filter(OAuthState.state == state).first()
+    if not oauth_record:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+    
+    user_id = oauth_record.user_id
+    db.delete(oauth_record)
+    db.commit()
+    
+    # Exchange code for token
+    url = "https://slack.com/api/oauth.v2.access"
+    data = {
+        "client_id": SLACK_CLIENT_ID,
+        "client_secret": SLACK_CLIENT_SECRET,
+        "code": code,
+        "redirect_uri": SLACK_REDIRECT_URI
+    }
+    res = requests.post(url, data=data).json()
+    if not res.get("ok"):
+        logger.error(f"Slack OAuth Error: {res.get('error')}")
+        raise HTTPException(status_code=400, detail=f"Slack OAuth failed: {res.get('error')}")
+    
+    access_token = res["access_token"]
+    upsert_slack_tokens(db, user_id, access_token, scope=res.get("scope"), bot_user_id=res.get("bot_user_id"))
+    
+    frontend_url = os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
+    return RedirectResponse(url=f"{frontend_url}/workspace?slack=connected")
+
+@app.get("/integrations/slack/status")
+def slack_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return {"connected": is_slack_connected(db, current_user.id)}
+
+@app.post("/integrations/slack/disconnect")
+def slack_disconnect(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.query(IntegrationToken).filter(IntegrationToken.user_id == current_user.id, IntegrationToken.provider == "slack").delete()
+    db.commit()
+    return {"status": "success"}
+
+@app.get("/slack/channels")
+def list_channels(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        channels = list_slack_channels(db, current_user.id)
+        return {"channels": channels}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/slack/send")
+def send_msg(req: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    channel_id = req.get("channel_id")
+    text = req.get("text")
+    if not channel_id or not text:
+        raise HTTPException(status_code=400, detail="Missing channel_id or text")
+    try:
+        res = send_slack_message(db, current_user.id, channel_id, text)
+        return {"status": "success", "details": res}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/gmail/webhook")
+@app.post("/telegram/webhook")
+async def webhooks_receiver(request: Request):
+    """Explicitly catch webhooks to prevent them from being proxied to the frontend (404)"""
+    logger.info(f"Webhook received at {request.url.path}")
+    return {"status": "received"}
+
+@app.get("/settings/telegram")
+def get_telegram(current_user: User = Depends(get_current_user)):
+    return {
+        "chat_id": current_user.telegram_chat_id,
+        "enabled": current_user.telegram_enabled
+    }
+
+@app.put("/settings/preferences")
+def update_preferences(req: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    import json
+    current_user.preferences_json = json.dumps(req, ensure_ascii=False)
+    db.commit()
+    return {"status": "success"}
+
+@app.get("/settings/preferences")
+def get_preferences(current_user: User = Depends(get_current_user)):
+    try:
+        return json.loads(current_user.preferences_json or "{}")
+    except Exception:
+        return {}
+
+@app.get("/test-telegram")
+def test_telegram(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not current_user.telegram_chat_id:
+        return {"status": "error", "message": "No Telegram chat ID set"}
+    
+    briefing = generate_daily_briefing(db, current_user.id, current_user.name)
+    success = send_telegram_message(current_user.telegram_chat_id, f"🧪 *Manual Test Briefing*\n\n{briefing}")
+    return {"status": "success" if success else "error", "message": "Briefing sent" if success else "Failed to send"}
+
+@app.delete("/memory/reset")
+def reset_memory(user_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Unauthorized memory reset request")
+        
+    try:
+        # Delete task logs
+        db.query(TaskLog).filter(TaskLog.user_id == current_user.id).delete()
+        # Delete structured memories
+        db.query(StructuredMemory).filter(StructuredMemory.user_id == current_user.id).delete()
+        db.commit()
+        return {"status": "success", "message": "Memory cleared completely."}
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"Memory reset error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to reset memory")
+
+@app.get("/analytics")
+def get_analytics(
+    gmail_sync: bool = True,
+    calendar_sync: bool = True,
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """Fetches real-time productivity metrics for the dashboard."""
+    now = datetime.utcnow()
+    one_week_ago = now - timedelta(days=7)
+    
+    # 1. Emails Monitored (Last 7 days)
+    email_count = 0
+    if gmail_sync:
+        email_count = db.query(ProcessedEmail).filter(
+            ProcessedEmail.user_id == current_user.id,
+            ProcessedEmail.processed_at >= one_week_ago
+        ).count()
+    
+    # 2. Tasks Executed (Total)
+    task_count = db.query(TaskLog).filter(TaskLog.user_id == current_user.id).count()
+    
+    # 3. Meetings (Current Week)
+    meetings = []
+    if calendar_sync:
+        try:
+            meetings = get_upcoming_events(db, current_user.id, max_results=50)
+        except Exception as e:
+            logger.error(f"Analytics Meeting Fetch Error: {e}")
+    
+    # 4. Weekly Distribution (Heatmap Data)
+    days_map = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    today_idx = now.weekday()
+    days = [days_map[(today_idx + i) % 7] for i in range(7)]
+    recent_tasks = db.query(TaskLog).filter(
+        TaskLog.user_id == current_user.id,
+        TaskLog.created_at >= one_week_ago
+    ).all()
+    
+    recent_emails = db.query(ProcessedEmail).filter(
+        ProcessedEmail.user_id == current_user.id,
+        ProcessedEmail.processed_at >= one_week_ago
+    ).all()
+    
+    distribution = {day: 0 for day in days}
+    
+    for t in recent_tasks:
+        day_name = t.created_at.strftime('%a')
+        if day_name in distribution:
+            distribution[day_name] += 1
+        
+    for e in recent_emails:
+        day_name = e.processed_at.strftime('%a')
+        if day_name in distribution:
+            distribution[day_name] += 1
+    
+    for m in meetings:
+        try:
+            m_date = datetime.fromisoformat(m["start"].replace("Z", "+00:00"))
+            m_day = m_date.strftime('%a')
+            if m_day in distribution:
+                distribution[m_day] += 1
+        except Exception:
+            continue
+
+    max_val = max(distribution.values()) if distribution.values() else 1
+    if max_val == 0:
+        max_val = 1
+    
+    heatmap = []
+    for d in days:
+        val = distribution[d]
+        intensity = min(4, int((val / max_val) * 4)) if val > 0 else 0
+        heatmap.append({
+            "day": d,
+            "tasks": val,
+            "intensity": intensity
+        })
+
+    # Determine dynamic priority based on stats
+    priority = "Roadmap Alignment"
+    if len(meetings) > 3:
+        priority = "Schedule Management"
+    elif email_count > 100:
+        priority = "Inbox Zero Cleanup"
+    elif task_count > 10:
+        priority = "Execution Protocol"
+        
+    return {
+        "emails_total": email_count,
+        "meetings_total": len(meetings),
+        "tasks_total": task_count,
+        "efficiency": f"{min(99.9, round(100 * task_count / max(1, task_count + 1), 1))}%",
+        "heatmap": heatmap,
+        "priority": priority
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Smart Proxy: Route everything else to the Frontend Dev Server (port 5173)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def catch_all_proxy(request: Request, path: str):
+    """
+    Forward any unmatched request to the Vite dev server.
+    Ensures that / and all frontend routes work through port 8000.
+    """
+    target_url = f"http://127.0.0.1:5173/{path}"
+    if request.query_params:
+        target_url += f"?{request.query_params}"
+
+    async with httpx.AsyncClient() as client:
+        # Map headers and force Host to localhost:5173 so Vite security allows it
+        headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
+        headers["host"] = "127.0.0.1:5173"
+        try:
+            body = await request.body()
+            proxy_res = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                data=body,
+                follow_redirects=True,
+                timeout=10.0
+            )
+            return StreamingResponse(
+                proxy_res.aiter_bytes(),
+                status_code=proxy_res.status_code,
+                headers=dict(proxy_res.headers)
+            )
+        except Exception as e:
+            return {
+                "error": "Frontend unreachable",
+                "message": "Make sure 'npm run dev' is running on port 5173",
+                "details": str(e)
+            }

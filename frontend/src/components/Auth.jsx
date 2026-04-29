@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     Sparkles, Eye, EyeOff, ArrowLeft, CheckCircle2,
@@ -9,11 +9,82 @@ import {
     createUserWithEmailAndPassword,
     signInWithPopup,
     sendPasswordResetEmail,
-    updateProfile
+    updateProfile,
 } from 'firebase/auth'
 import { auth, googleProvider } from '../firebase'
+import { useStore } from '../store/useStore'
+import { API_BASE } from '../config'
 
-// ─── Shared Primitives ──────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const firebaseErrorMessage = (code) => {
+    const map = {
+        'auth/user-not-found':          'No account found with this email.',
+        'auth/wrong-password':           'Incorrect password. Try again.',
+        'auth/invalid-credential':       'Invalid email or password.',
+        'auth/email-already-in-use':     'An account with this email already exists.',
+        'auth/weak-password':            'Password must be at least 6 characters.',
+        'auth/invalid-email':            'Please enter a valid email address.',
+        'auth/popup-closed-by-user':     'Google sign-in was cancelled.',
+        'auth/popup-blocked':            'Pop-up blocked. Please allow pop-ups and try again.',
+        'auth/cancelled-popup-request':  'Another sign-in is already in progress.',
+        'auth/network-request-failed':   'Network error. Check your connection.',
+        'auth/too-many-requests':        'Too many attempts. Please wait a moment.',
+        'auth/user-disabled':            'This account has been disabled.',
+        // ngrok / custom domain specific
+        'auth/unauthorized-domain':      'This domain is not authorized for Google sign-in. Ask the admin to add it in Firebase Console → Authentication → Authorized domains.',
+        'auth/invalid-action-code':      'This sign-in link is invalid or expired. Please try again.',
+    }
+    return map[code] || 'Something went wrong. Please try again.'
+}
+
+const passwordStrength = (pw) => {
+    if (!pw) return null
+    if (pw.length < 6)  return { level: 'weak',   label: 'Too short', color: 'bg-red-500',   width: '25%' }
+    if (pw.length < 8 || !/[A-Z]/.test(pw) || !/\d/.test(pw))
+                        return { level: 'fair',   label: 'Fair',      color: 'bg-amber-400', width: '50%' }
+    if (!/[^A-Za-z0-9]/.test(pw))
+                        return { level: 'good',   label: 'Good',      color: 'bg-blue-400',  width: '75%' }
+    return              { level: 'strong', label: 'Strong',    color: 'bg-emerald-500',width: '100%' }
+}
+
+/**
+ * After any successful Firebase auth, sync with backend and store the backend JWT.
+ * Returns the backend access_token or null on failure.
+ */
+const syncWithBackend = async (firebaseUser, updateUser) => {
+    try {
+        const idToken = await firebaseUser.getIdToken(true)
+        const res = await fetch(`${API_BASE}/auth/firebase`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'X-Firebase-Token': idToken,
+            },
+            body: JSON.stringify({
+                uid:   firebaseUser.uid,
+                email: firebaseUser.email   || '',
+                name:  firebaseUser.displayName || '',
+            }),
+        })
+        if (!res.ok) throw new Error('Backend sync failed')
+        const data = await res.json()
+        // Store both Firebase idToken AND backend JWT
+        updateUser({
+            uid:         data.user_id || firebaseUser.uid,
+            email:       data.email   || firebaseUser.email,
+            name:        data.name    || firebaseUser.displayName,
+            accessToken: data.access_token,   // ← backend JWT used for all API calls
+            photoURL:    firebaseUser.photoURL || '',
+        })
+        return data.access_token
+    } catch (err) {
+        console.warn('Backend sync failed (non-fatal):', err)
+        return null
+    }
+}
+
+// ─── Shared Primitives ────────────────────────────────────────────────────────
 
 const GoogleIcon = () => (
     <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
@@ -36,7 +107,7 @@ const FormField = ({ label, icon: Icon, type = 'text', placeholder, value, onCha
             }`}>
             {Icon && (
                 <div className="pl-4 pointer-events-none">
-                    <Icon size={16} className={`${error ? 'text-red-400' : 'text-neutral'}`} />
+                    <Icon size={16} className={error ? 'text-red-400' : 'text-neutral'} />
                 </div>
             )}
             <input
@@ -47,11 +118,7 @@ const FormField = ({ label, icon: Icon, type = 'text', placeholder, value, onCha
                 autoComplete={autoComplete}
                 className="flex-1 bg-transparent px-3 py-3.5 text-sm text-on-surface placeholder:text-neutral/40 focus:outline-none"
             />
-            {rightElement && (
-                <div className="pr-3">
-                    {rightElement}
-                </div>
-            )}
+            {rightElement && <div className="pr-3">{rightElement}</div>}
         </div>
         <AnimatePresence>
             {error && (
@@ -105,17 +172,32 @@ const Divider = ({ text = 'or' }) => (
     </div>
 )
 
-// ─── Branding Panel (Left side on desktop) ───────────────────────────────────
+const GlobalError = ({ message }) => (
+    <AnimatePresence>
+        {message && (
+            <motion.div
+                key="global-err"
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                className="flex items-start gap-2.5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+            >
+                <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                <span>{message}</span>
+            </motion.div>
+        )}
+    </AnimatePresence>
+)
+
+// ─── Brand Panel ─────────────────────────────────────────────────────────────
 
 const BrandPanel = ({ quote, author }) => (
     <div className="hidden lg:flex lg:w-[46%] xl:w-[42%] flex-col justify-between p-12 xl:p-16 relative overflow-hidden
         bg-gradient-to-br from-surface-container via-surface-container-low to-surface-base
         border-r border-outline-variant/20">
-        {/* Ambient glows */}
         <div className="absolute -top-32 -left-32 w-80 h-80 bg-primary/10 rounded-full blur-[100px] pointer-events-none" />
         <div className="absolute bottom-0 right-0 w-64 h-64 bg-secondary/5 rounded-full blur-[80px] pointer-events-none" />
 
-        {/* Logo */}
         <div className="relative z-10 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/30">
                 <Sparkles size={20} className="text-white" fill="currentColor" />
@@ -126,7 +208,6 @@ const BrandPanel = ({ quote, author }) => (
             </div>
         </div>
 
-        {/* Center visual */}
         <div className="relative z-10 flex flex-col items-center justify-center flex-1 py-16">
             <div className="relative">
                 <div className="w-40 h-40 rounded-full border border-primary/20 flex items-center justify-center animate-[spin_20s_linear_infinite]">
@@ -139,7 +220,6 @@ const BrandPanel = ({ quote, author }) => (
                     <Sparkles size={28} className="text-white" fill="currentColor" />
                 </div>
             </div>
-
             <div className="mt-12 text-center max-w-xs space-y-2">
                 <p className="text-lg font-manrope font-bold text-on-surface leading-snug">
                     Your digital executive<br />working while you sleep.
@@ -150,7 +230,6 @@ const BrandPanel = ({ quote, author }) => (
             </div>
         </div>
 
-        {/* Bottom quote */}
         {quote && (
             <div className="relative z-10 glass-panel rounded-2xl p-5 border border-primary/10">
                 <p className="text-sm text-on-surface-variant italic leading-relaxed">"{quote}"</p>
@@ -165,8 +244,6 @@ const BrandPanel = ({ quote, author }) => (
 const AuthShell = ({ children, title, subtitle, branding }) => (
     <div className="min-h-screen flex bg-surface-base">
         <BrandPanel {...(branding || {})} />
-
-        {/* Right: form area */}
         <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-10 overflow-y-auto">
             {/* Mobile logo */}
             <div className="lg:hidden flex items-center gap-2 mb-10">
@@ -177,15 +254,11 @@ const AuthShell = ({ children, title, subtitle, branding }) => (
             </div>
 
             <div className="w-full max-w-[400px] space-y-7">
-                {/* Heading */}
                 <div>
                     <h1 className="text-2xl sm:text-3xl font-manrope font-extrabold text-on-surface tracking-tight">{title}</h1>
                     {subtitle && <p className="text-sm text-on-surface-variant mt-1.5">{subtitle}</p>}
                 </div>
-
                 {children}
-
-                {/* Footer */}
                 <p className="text-center text-[11px] text-neutral/50 font-medium">
                     © 2025 AI Twin · <a href="#" className="hover:text-primary transition-colors">Privacy</a> · <a href="#" className="hover:text-primary transition-colors">Terms</a>
                 </p>
@@ -194,43 +267,17 @@ const AuthShell = ({ children, title, subtitle, branding }) => (
     </div>
 )
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-const firebaseErrorMessage = (code) => {
-    const map = {
-        'auth/user-not-found': 'No account found with this email.',
-        'auth/wrong-password': 'Incorrect password. Try again.',
-        'auth/invalid-credential': 'Invalid email or password.',
-        'auth/email-already-in-use': 'An account with this email already exists.',
-        'auth/weak-password': 'Password must be at least 6 characters.',
-        'auth/invalid-email': 'Please enter a valid email address.',
-        'auth/popup-closed-by-user': 'Sign-in cancelled. Please try again.',
-        'auth/network-request-failed': 'Network error. Check your connection.',
-        'auth/too-many-requests': 'Too many attempts. Please wait a moment.',
-    }
-    return map[code] || 'Something went wrong. Please try again.'
-}
-
-const passwordStrength = (pw) => {
-    if (!pw) return null
-    if (pw.length < 6) return { level: 'weak', label: 'Too short', color: 'bg-red-500', width: 'w-1/4' }
-    if (pw.length < 8 || !/[A-Z]/.test(pw) || !/\d/.test(pw))
-        return { level: 'fair', label: 'Fair', color: 'bg-amber-400', width: 'w-2/4' }
-    if (!/[^A-Za-z0-9]/.test(pw))
-        return { level: 'good', label: 'Good', color: 'bg-blue-400', width: 'w-3/4' }
-    return { level: 'strong', label: 'Strong', color: 'bg-green-500', width: 'w-full' }
-}
-
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
 
 export const Login = ({ onSignup, onForgotPassword }) => {
-    const [email, setEmail] = useState('')
-    const [password, setPassword] = useState('')
-    const [showPw, setShowPw] = useState(false)
+    const { login, updateUser, setCurrentScreen } = useStore()
+    const [email, setEmail]         = useState('')
+    const [password, setPassword]   = useState('')
+    const [showPw, setShowPw]       = useState(false)
     const [rememberMe, setRememberMe] = useState(false)
-    const [errors, setErrors] = useState({})
+    const [errors, setErrors]       = useState({})
     const [globalError, setGlobalError] = useState('')
-    const [loading, setLoading] = useState(false)
+    const [loading, setLoading]     = useState(false)
     const [googleLoading, setGoogleLoading] = useState(false)
 
     const validate = () => {
@@ -242,14 +289,30 @@ export const Login = ({ onSignup, onForgotPassword }) => {
         return Object.keys(e).length === 0
     }
 
+    /** Shared post-auth handler: sync backend, update store, navigate */
+    const finishAuth = async (firebaseUser) => {
+        // Optimistic login with Firebase profile
+        login({
+            uid:         firebaseUser.uid,
+            email:       firebaseUser.email || '',
+            name:        firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+            photoURL:    firebaseUser.photoURL || '',
+            accessToken: await firebaseUser.getIdToken(),
+        })
+        // Navigate immediately — don't block on backend
+        setCurrentScreen('main')
+        // Background backend sync — updates accessToken with real JWT
+        syncWithBackend(firebaseUser, updateUser)
+    }
+
     const handleEmailLogin = async (ev) => {
         ev.preventDefault()
         setGlobalError('')
         if (!validate()) return
         setLoading(true)
         try {
-            await signInWithEmailAndPassword(auth, email, password)
-            // onAuthStateChanged in App.jsx will handle navigation
+            const cred = await signInWithEmailAndPassword(auth, email, password)
+            await finishAuth(cred.user)
         } catch (err) {
             setGlobalError(firebaseErrorMessage(err.code))
         } finally {
@@ -261,9 +324,11 @@ export const Login = ({ onSignup, onForgotPassword }) => {
         setGoogleLoading(true)
         setGlobalError('')
         try {
-            await signInWithPopup(auth, googleProvider)
+            const result = await signInWithPopup(auth, googleProvider)
+            await finishAuth(result.user)
         } catch (err) {
-            if (err.code !== 'auth/popup-closed-by-user') {
+            // Don't show error if user just closed the popup
+            if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
                 setGlobalError(firebaseErrorMessage(err.code))
             }
         } finally {
@@ -277,22 +342,12 @@ export const Login = ({ onSignup, onForgotPassword }) => {
             subtitle="Sign in to your AI Twin workspace."
             branding={{ quote: "The bottleneck is always time. AI Twin reclaims it.", author: "AI Twin Product Team" }}
         >
-            {/* Google first (most common) */}
             <GoogleButton onClick={handleGoogleLogin} loading={googleLoading} />
 
             <Divider text="or sign in with email" />
 
             <form onSubmit={handleEmailLogin} className="space-y-4" noValidate>
-                {globalError && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="flex items-start gap-2.5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
-                    >
-                        <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-                        <span>{globalError}</span>
-                    </motion.div>
-                )}
+                <GlobalError message={globalError} />
 
                 <FormField
                     label="Email address"
@@ -329,7 +384,7 @@ export const Login = ({ onSignup, onForgotPassword }) => {
                             className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all cursor-pointer
                                 ${rememberMe ? 'bg-primary border-primary' : 'border-outline-variant/50 hover:border-primary/50'}`}
                         >
-                            {rememberMe && <svg viewBox="0 0 10 8" className="w-2.5 h-2.5 fill-white"><path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                            {rememberMe && <svg viewBox="0 0 10 8" className="w-2.5 h-2.5"><path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
                         </div>
                         <span className="text-sm text-on-surface-variant">Remember me</span>
                     </label>
@@ -357,32 +412,46 @@ export const Login = ({ onSignup, onForgotPassword }) => {
 // ─── SIGN UP ──────────────────────────────────────────────────────────────────
 
 export const Signup = ({ onBack }) => {
-    const [name, setName] = useState('')
-    const [email, setEmail] = useState('')
-    const [password, setPassword] = useState('')
+    const { login, updateUser, setCurrentScreen } = useStore()
+    const [name, setName]           = useState('')
+    const [email, setEmail]         = useState('')
+    const [password, setPassword]   = useState('')
     const [confirmPw, setConfirmPw] = useState('')
-    const [showPw, setShowPw] = useState(false)
+    const [showPw, setShowPw]       = useState(false)
     const [showConfirm, setShowConfirm] = useState(false)
-    const [agreed, setAgreed] = useState(false)
-    const [errors, setErrors] = useState({})
+    const [agreed, setAgreed]       = useState(false)
+    const [errors, setErrors]       = useState({})
     const [globalError, setGlobalError] = useState('')
-    const [loading, setLoading] = useState(false)
+    const [loading, setLoading]     = useState(false)
     const [googleLoading, setGoogleLoading] = useState(false)
 
     const strength = passwordStrength(password)
 
     const validate = () => {
         const e = {}
-        if (!name.trim()) e.name = 'Full name is required'
-        if (!email) e.email = 'Email is required'
+        if (!name.trim())  e.name      = 'Full name is required'
+        if (!email)        e.email     = 'Email is required'
         else if (!/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email'
-        if (!password) e.password = 'Password is required'
-        else if (password.length < 6) e.password = 'Minimum 6 characters'
-        if (!confirmPw) e.confirmPw = 'Please confirm your password'
+        if (!password)     e.password  = 'Password is required'
+        else if (password.length < 6)  e.password = 'Minimum 6 characters'
+        if (!confirmPw)    e.confirmPw = 'Please confirm your password'
         else if (password !== confirmPw) e.confirmPw = 'Passwords do not match'
-        if (!agreed) e.terms = 'You must agree to the terms to continue'
+        if (!agreed)       e.terms     = 'You must agree to the terms to continue'
         setErrors(e)
         return Object.keys(e).length === 0
+    }
+
+    /** Shared post-auth handler */
+    const finishAuth = async (firebaseUser) => {
+        login({
+            uid:         firebaseUser.uid,
+            email:       firebaseUser.email || '',
+            name:        firebaseUser.displayName || name.trim() || firebaseUser.email?.split('@')[0] || 'User',
+            photoURL:    firebaseUser.photoURL || '',
+            accessToken: await firebaseUser.getIdToken(),
+        })
+        setCurrentScreen('main')
+        syncWithBackend(firebaseUser, updateUser)
     }
 
     const handleSignup = async (ev) => {
@@ -392,8 +461,9 @@ export const Signup = ({ onBack }) => {
         setLoading(true)
         try {
             const cred = await createUserWithEmailAndPassword(auth, email, password)
+            // Set display name before backend sync so it propagates correctly
             await updateProfile(cred.user, { displayName: name.trim() })
-            // onAuthStateChanged handles navigation
+            await finishAuth(cred.user)
         } catch (err) {
             setGlobalError(firebaseErrorMessage(err.code))
         } finally {
@@ -405,9 +475,10 @@ export const Signup = ({ onBack }) => {
         setGoogleLoading(true)
         setGlobalError('')
         try {
-            await signInWithPopup(auth, googleProvider)
+            const result = await signInWithPopup(auth, googleProvider)
+            await finishAuth(result.user)
         } catch (err) {
-            if (err.code !== 'auth/popup-closed-by-user') {
+            if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') {
                 setGlobalError(firebaseErrorMessage(err.code))
             }
         } finally {
@@ -426,16 +497,7 @@ export const Signup = ({ onBack }) => {
             <Divider text="or sign up with email" />
 
             <form onSubmit={handleSignup} className="space-y-4" noValidate>
-                {globalError && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="flex items-start gap-2.5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
-                    >
-                        <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-                        <span>{globalError}</span>
-                    </motion.div>
-                )}
+                <GlobalError message={globalError} />
 
                 <FormField
                     label="Full name"
@@ -463,7 +525,7 @@ export const Signup = ({ onBack }) => {
                         label="Password"
                         icon={Lock}
                         type={showPw ? 'text' : 'password'}
-                        placeholder="Min. 8 characters"
+                        placeholder="Min. 6 characters"
                         value={password}
                         onChange={e => { setPassword(e.target.value); setErrors(p => ({ ...p, password: '' })) }}
                         error={errors.password}
@@ -481,13 +543,15 @@ export const Signup = ({ onBack }) => {
                             <div className="h-1 w-full bg-surface-container-highest rounded-full overflow-hidden">
                                 <motion.div
                                     initial={{ width: 0 }}
-                                    animate={{ width: '100%' }}
-                                    className={`h-full ${strength.color} ${strength.width} rounded-full transition-all duration-500`}
+                                    animate={{ width: strength.width }}
+                                    className={`h-full ${strength.color} rounded-full transition-all duration-500`}
                                 />
                             </div>
-                            <p className={`text-[11px] font-semibold ${strength.level === 'strong' ? 'text-green-400' : strength.level === 'good' ? 'text-blue-400' : strength.level === 'fair' ? 'text-amber-400' : 'text-red-400'}`}>
-                                {strength.label}
-                            </p>
+                            <p className={`text-[11px] font-semibold ${
+                                strength.level === 'strong' ? 'text-emerald-400' :
+                                strength.level === 'good'   ? 'text-blue-400'    :
+                                strength.level === 'fair'   ? 'text-amber-400'   : 'text-red-400'
+                            }`}>{strength.label}</p>
                         </div>
                     )}
                 </div>
@@ -517,7 +581,7 @@ export const Signup = ({ onBack }) => {
                             className={`mt-0.5 w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center transition-all cursor-pointer
                                 ${agreed ? 'bg-primary border-primary' : errors.terms ? 'border-red-500/60' : 'border-outline-variant/50 hover:border-primary/50'}`}
                         >
-                            {agreed && <svg viewBox="0 0 10 8" className="w-2.5 h-2.5 fill-white"><path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                            {agreed && <svg viewBox="0 0 10 8" className="w-2.5 h-2.5"><path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
                         </div>
                         <span className="text-sm text-on-surface-variant leading-relaxed">
                             I agree to the{' '}
@@ -554,24 +618,30 @@ export const Signup = ({ onBack }) => {
 // ─── FORGOT PASSWORD ──────────────────────────────────────────────────────────
 
 export const ForgotPassword = ({ onBack }) => {
-    const [email, setEmail] = useState('')
-    const [emailError, setEmailError] = useState('')
+    const [email, setEmail]             = useState('')
+    const [emailError, setEmailError]   = useState('')
     const [globalError, setGlobalError] = useState('')
-    const [loading, setLoading] = useState(false)
-    const [sent, setSent] = useState(false)
+    const [loading, setLoading]         = useState(false)
+    const [sent, setSent]               = useState(false)
 
     const handleSubmit = async (ev) => {
         ev.preventDefault()
         setGlobalError('')
-        if (!email) { setEmailError('Email is required'); return }
-        if (!/\S+@\S+\.\S+/.test(email)) { setEmailError('Enter a valid email'); return }
+        setEmailError('')
+        if (!email)                          { setEmailError('Email is required'); return }
+        if (!/\S+@\S+\.\S+/.test(email))    { setEmailError('Enter a valid email'); return }
 
         setLoading(true)
         try {
             await sendPasswordResetEmail(auth, email)
             setSent(true)
         } catch (err) {
-            setGlobalError(firebaseErrorMessage(err.code))
+            // Firebase returns user-not-found but for security we still show success
+            if (err.code === 'auth/user-not-found') {
+                setSent(true) // Don't reveal whether email exists
+            } else {
+                setGlobalError(firebaseErrorMessage(err.code))
+            }
         } finally {
             setLoading(false)
         }
@@ -580,7 +650,7 @@ export const ForgotPassword = ({ onBack }) => {
     return (
         <AuthShell
             title={sent ? 'Check your inbox' : 'Reset your password'}
-            subtitle={sent ? `We sent a reset link to ${email}` : "Enter your email and we'll send a reset link."}
+            subtitle={sent ? `We sent a reset link to ${email}` : "Enter your email and we'll send you a reset link."}
             branding={{}}
         >
             {sent ? (
@@ -590,15 +660,17 @@ export const ForgotPassword = ({ onBack }) => {
                             initial={{ scale: 0 }}
                             animate={{ scale: 1 }}
                             transition={{ type: 'spring', stiffness: 200 }}
-                            className="w-20 h-20 rounded-full bg-green-500/15 border border-green-500/30 flex items-center justify-center"
+                            className="w-20 h-20 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center"
                         >
-                            <CheckCircle2 size={40} className="text-green-400" />
+                            <CheckCircle2 size={40} className="text-emerald-400" />
                         </motion.div>
                         <div className="text-center space-y-1">
-                            <p className="text-sm text-on-surface font-semibold">Password reset link sent</p>
+                            <p className="text-sm text-on-surface font-semibold">Password reset email sent</p>
                             <p className="text-sm text-on-surface-variant">
-                                Didn't receive it? Check spam or{' '}
-                                <button onClick={() => setSent(false)} className="text-primary font-semibold hover:underline">try again</button>.
+                                Didn't receive it? Check your spam folder or{' '}
+                                <button onClick={() => setSent(false)} className="text-primary font-semibold hover:underline">
+                                    try again
+                                </button>.
                             </p>
                         </div>
                     </div>
@@ -606,13 +678,7 @@ export const ForgotPassword = ({ onBack }) => {
                 </div>
             ) : (
                 <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-                    {globalError && (
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                            className="flex items-start gap-2.5 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-                            <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-                            <span>{globalError}</span>
-                        </motion.div>
-                    )}
+                    <GlobalError message={globalError} />
 
                     <FormField
                         label="Email address"

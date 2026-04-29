@@ -1,9 +1,17 @@
+import os
+import logging
 import chromadb
 from chromadb.utils import embedding_functions
-import os
+
+# Suppress tokenizer warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Suppress transformers 'UNEXPECTED' warnings for specific model keys
+logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
 
 client = chromadb.PersistentClient(path="./chroma_store")
 
+# Use a specific embedder and handle potential warnings
 embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
     model_name="all-MiniLM-L6-v2"
 )

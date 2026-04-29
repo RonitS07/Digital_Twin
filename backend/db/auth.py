@@ -28,5 +28,7 @@ def decode_token(token: str) -> dict:
         if not SECRET_KEY:
             raise RuntimeError("SECRET_KEY is not set")
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        return {"error": "ExpiredIdTokenError"}
     except JWTError:
         return None

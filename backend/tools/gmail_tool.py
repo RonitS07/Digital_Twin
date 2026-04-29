@@ -1,5 +1,7 @@
 import base64
+import threading
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from googleapiclient.discovery import build
 
 from sqlalchemy.orm import Session
@@ -12,9 +14,27 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose"
 ]
 
+
+_GMAIL_CACHE = threading.local()
+
 def get_gmail_service(db: Session, user_id: str):
+    # Caching the service object per thread avoids the slow build() process on every poll
+    # and prevents httplib2 concurrency issues (which cause memory corruption).
+    if not hasattr(_GMAIL_CACHE, 'services'):
+        _GMAIL_CACHE.services = {}
+
+    if user_id in _GMAIL_CACHE.services:
+        service, creds = _GMAIL_CACHE.services[user_id]
+        if creds.valid:
+            return service
+        else:
+            _GMAIL_CACHE.services.pop(user_id)
+            
     creds = get_google_credentials(db=db, user_id=user_id, scopes=GMAIL_SCOPES)
-    return build("gmail", "v1", credentials=creds)
+    # cache_discovery=False fixes the 'file_cache is only supported with oauth2client<4.0.0' warning
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    _GMAIL_CACHE.services[user_id] = (service, creds)
+    return service
 
 def read_recent_emails(db: Session, user_id: str, max_results: int = 5) -> list:
     service = get_gmail_service(db=db, user_id=user_id)
@@ -47,6 +67,44 @@ def read_recent_emails(db: Session, user_id: str, max_results: int = 5) -> list:
             "date":    date,
             "snippet": snippet
         })
+
+    return emails
+
+def search_emails(db: Session, user_id: str, query: str, max_results: int = 10) -> list:
+    """Search for emails matching a specific query (q parameter)."""
+    service = get_gmail_service(db=db, user_id=user_id)
+    result = service.users().messages().list(
+        userId="me",
+        q=query,
+        maxResults=max_results
+    ).execute()
+
+    messages = result.get("messages", [])
+    emails = []
+
+    for msg in messages:
+        try:
+            full = service.users().messages().get(
+                userId="me",
+                id=msg["id"],
+                format="full"
+            ).execute()
+
+            headers = full["payload"].get("headers", [])
+            subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
+            sender  = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
+            date    = next((h["value"] for h in headers if h["name"] == "Date"), "")
+            snippet = full.get("snippet", "")
+
+            emails.append({
+                "id":      msg["id"],
+                "subject": subject,
+                "from":    sender,
+                "date":    date,
+                "snippet": snippet
+            })
+        except Exception:
+            continue
 
     return emails
 
@@ -147,3 +205,20 @@ def watch_gmail(db: Session, user_id: str, topic_name: str) -> dict:
 def stop_gmail_watch(db: Session, user_id: str):
     service = get_gmail_service(db=db, user_id=user_id)
     return service.users().stop(userId='me').execute()
+
+def send_styled_invite(db: Session, user_id: str, to: str, subject: str, html_content: str) -> dict:
+    service = get_gmail_service(db=db, user_id=user_id)
+    message = MIMEMultipart("alternative")
+    message["to"] = to
+    message["subject"] = subject
+    
+    # Add plain text fallback if needed, but for now just HTML
+    html_part = MIMEText(html_content, "html")
+    message.attach(html_part)
+    
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    sent = service.users().messages().send(
+        userId="me",
+        body={"raw": raw}
+    ).execute()
+    return {"message_id": sent["id"], "status": "sent_styled"}

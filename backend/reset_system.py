@@ -1,7 +1,7 @@
 
 import os
 import shutil
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from db.database import DATABASE_URL
 from db.models import Base
