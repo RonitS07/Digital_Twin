@@ -1,0 +1,8 @@
+{
+  "name": "digital-twin",
+  "framework": "vite",
+  "rootDirectory": "frontend",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist"
+}
