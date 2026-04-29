@@ -1,63 +1,141 @@
 import React, { useState, useEffect } from 'react'
+import { API_BASE } from './config'
 import { AnimatePresence, motion } from 'framer-motion'
 
-// Components
+
 import { Login, Signup, ForgotPassword } from './components/Auth'
+import { auth } from './firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 import {
     Welcome,
     ChooseRole,
     ConnectTools,
     ControlPreferences,
     PrivacyPermissions,
-    Initializing,
-    Success
+    ConnectProtocol,
+    Initializing
 } from './components/Onboarding'
 import Layout from './components/Layout'
 import Dashboard from './components/Dashboard'
 import Chat from './components/Chat'
 import Activity from './components/Activity'
+import Workspace from './components/Workspace'
+import Settings from './components/Settings'
+import AgentInbox from './components/AgentInbox'
 
-const SettingsPanel = () => (
-    <div className="p-12 max-w-4xl mx-auto space-y-12">
-        <div>
-            <h2 className="text-4xl font-manrope font-extrabold text-white mb-4">Twin Settings</h2>
-            <p className="text-on-surface-variant">Configure how your digital double interacts with your workspace.</p>
-        </div>
-        <div className="grid grid-cols-1 gap-6">
-            <div className="p-8 rounded-3xl bg-surface-container border border-neutral/10 flex justify-between items-center group hover:border-primary/20 transition-all">
-                <div>
-                    <h3 className="text-lg font-bold text-white mb-1">Autonomous Mode</h3>
-                    <p className="text-sm text-on-surface-variant opacity-70">Allow the Twin to draft responses automatically without prompting.</p>
-                </div>
-                <div className="w-12 h-6 bg-primary rounded-full relative p-1 cursor-pointer">
-                    <div className="w-4 h-4 bg-surface-base rounded-full absolute right-1"></div>
-                </div>
-            </div>
-            <div className="p-8 rounded-3xl bg-surface-container border border-neutral/10 flex justify-between items-center group hover:border-primary/20 transition-all">
-                <div>
-                    <h3 className="text-lg font-bold text-white mb-1">Gmail Synchronization</h3>
-                    <p className="text-sm text-on-surface-variant opacity-70">Automated monitoring and instant push notifications.</p>
-                </div>
-                <span className="text-primary font-bold text-xs uppercase tracking-widest bg-primary/10 px-4 py-2 rounded-full border border-primary/20">Connected</span>
-            </div>
-        </div>
-    </div>
-)
+
+export { useStore } from './store/useStore'
+import { useStore } from './store/useStore'
 
 function App() {
-    const [currentScreen, setCurrentScreen] = useState('login')
-    const [view, setView] = useState('home')
+    const { currentScreen, setCurrentScreen, view, setView, theme, auth: storeAuth, login, logout, updateUser, setPreference } = useStore()
+    const [initializing, setInitializing] = useState(true);
 
-    const handleFlow = (next) => setCurrentScreen(next)
+    // Setup global auth listener
+    useEffect(() => {
+        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+            if (firebaseUser) {
+                // User is authenticated — Auth.jsx already handles login() + navigation.
+                // Here we just ensure the store token is always fresh on tab/reload.
+                try {
+                    const existingUser = useStore.getState().auth.user
+                    // Only re-hydrate if the store is empty (e.g. hard refresh with Firebase session persisted)
+                    if (!existingUser || existingUser.uid !== firebaseUser.uid) {
+                        const idToken = await firebaseUser.getIdToken()
+                        // Try to get a backend JWT, sending idToken for optional server-side verification
+                        const backendRes = await fetch(`${API_BASE}/auth/firebase`, {
+                            method: 'POST',
+                            headers: { 
+                                'Content-Type': 'application/json',
+                                'X-Firebase-Token': idToken,
+                            },
+                            body: JSON.stringify({
+                                uid:   firebaseUser.uid,
+                                email: firebaseUser.email   || '',
+                                name:  firebaseUser.displayName || '',
+                            }),
+                        }).catch(() => null)
+
+                        const backendData = backendRes?.ok ? await backendRes.json() : {}
+
+                        login({
+                            uid:         firebaseUser.uid,
+                            email:       firebaseUser.email || '',
+                            name:        firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+                            photoURL:    firebaseUser.photoURL || '',
+                            accessToken: backendData.access_token || idToken,
+                        })
+                        setCurrentScreen('main')
+                    }
+                } catch (err) {
+                    console.warn('onAuthStateChanged rehydration error:', err)
+                }
+            } else {
+                // User signed out — clean up store
+                logout()
+            }
+            setInitializing(false)
+        })
+
+        // Proactive token refresh every 45 minutes (Firebase tokens expire at 60min)
+        const refreshInterval = setInterval(async () => {
+            if (auth.currentUser) {
+                try {
+                    const newToken = await auth.currentUser.getIdToken(true)
+                    // Refresh backend JWT too
+                    const backendRes = await fetch(`${API_BASE}/auth/firebase`, {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'X-Firebase-Token': newToken,
+                        },
+                        body: JSON.stringify({
+                            uid:   auth.currentUser.uid,
+                            email: auth.currentUser.email   || '',
+                            name:  auth.currentUser.displayName || '',
+                        }),
+                    }).catch(() => null)
+                    const backendData = backendRes?.ok ? await backendRes.json() : {}
+                    updateUser({ accessToken: backendData.access_token || newToken })
+                } catch (err) {
+                    console.warn('Token refresh error:', err)
+                }
+            }
+        }, 45 * 60 * 1000)
+
+        return () => {
+            unsubscribe()
+            clearInterval(refreshInterval)
+        }
+    }, [login, logout, setCurrentScreen, updateUser])
+
+    // Theme effect
+    useEffect(() => {
+        const root = window.document.documentElement
+        root.classList.remove('light', 'dark')
+
+        if (theme === 'system') {
+            const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+            root.classList.add(systemTheme)
+        } else {
+            root.classList.add(theme)
+        }
+    }, [theme])
+
+    const handleFlow = (screen) => {
+        setCurrentScreen(screen)
+        if (screen === 'main') {
+            updateUser({ onboardingCompleted: true })
+        }
+    }
 
     return (
-        <div className="bg-surface-base min-h-screen text-on-surface selection:bg-primary/30 antialiased overflow-hidden">
+        <div className="bg-surface-base min-h-screen text-on-surface selection:bg-primary/30 antialiased">
             <AnimatePresence mode="wait">
                 {/* Authentication */}
                 {currentScreen === 'login' && (
                     <motion.div key="login" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                         <Login
-                            onLogin={() => handleFlow('welcome')}
                             onSignup={() => handleFlow('signup')}
                             onForgotPassword={() => handleFlow('forgot-password')}
                         />
@@ -70,7 +148,7 @@ function App() {
                 )}
                 {currentScreen === 'signup' && (
                     <motion.div key="signup" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                        <Signup onBack={() => handleFlow('login')} onComplete={() => handleFlow('welcome')} />
+                        <Signup onBack={() => handleFlow('login')} />
                     </motion.div>
                 )}
 
@@ -87,7 +165,12 @@ function App() {
                 )}
                 {currentScreen === 'tools' && (
                     <motion.div key="tools" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-                        <ConnectTools onNext={() => handleFlow('preferences')} />
+                        <ConnectTools onNext={() => handleFlow('protocol')} />
+                    </motion.div>
+                )}
+                {currentScreen === 'protocol' && (
+                    <motion.div key="protocol" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+                        <ConnectProtocol onNext={() => handleFlow('preferences')} />
                     </motion.div>
                 )}
                 {currentScreen === 'preferences' && (
@@ -102,34 +185,38 @@ function App() {
                 )}
                 {currentScreen === 'initializing' && (
                     <motion.div key="init" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                        <Initializing onComplete={() => handleFlow('success')} />
-                    </motion.div>
-                )}
-                {currentScreen === 'success' && (
-                    <motion.div key="success" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}>
-                        <Success onFinish={() => handleFlow('main')} />
+                        <Initializing onComplete={() => handleFlow('main')} />
                     </motion.div>
                 )}
 
                 {/* Unified Dashboard */}
                 {currentScreen === 'main' && (
-                    <motion.div key="main" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-screen w-full">
+                    <motion.div key="main" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-screen w-full overflow-hidden">
                         <Layout currentView={view} setView={setView}>
-                            <AnimatePresence mode="wait">
-                                <motion.div
-                                    key={view}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, y: -10 }}
-                                    transition={{ duration: 0.3 }}
-                                    className="h-full"
-                                >
-                                    {view === 'home' && <Dashboard />}
-                                    {view === 'chat' && <Chat />}
-                                    {view === 'activity' && <Activity />}
-                                    {view === 'settings' && <SettingsPanel />}
-                                </motion.div>
-                            </AnimatePresence>
+                            <>
+                                {/* Keep Dashboard always mounted but hide visually so it persists data and polls seamlessly */}
+                                <div className={`h-full ${view === 'home' ? 'block' : 'hidden'}`}>
+                                    <Dashboard />
+                                </div>
+                                <AnimatePresence mode="wait">
+                                    {view !== 'home' && (
+                                        <motion.div
+                                            key={view}
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -10 }}
+                                            transition={{ duration: 0.3 }}
+                                            className="h-full"
+                                        >
+                                            {view === 'chat' && <Chat />}
+                                            {view === 'workspace' && <Workspace />}
+                                            {view === 'activity' && <Activity />}
+                                            {view === 'settings' && <Settings />}
+                                            {view === 'agents' && <AgentInbox />}
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </>
                         </Layout>
                     </motion.div>
                 )}

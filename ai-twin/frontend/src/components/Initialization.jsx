@@ -4,12 +4,12 @@ import { Sparkles, CheckCircle, Brain, Database, Terminal, HelpCircle } from 'lu
 
 const StepCard = ({ title, status, icon: Icon, active = false, completed = false, queued = false }) => (
     <div className={`p-6 rounded-lg border transition-all flex items-center gap-4 ${active ? 'bg-surface-container border-primary/30 shadow-[0px_0px_20px_rgba(103,96,253,0.1)]' :
-            completed ? 'bg-surface-container-low border-outline-variant/10' :
-                'bg-surface-container-lowest border-outline-variant/5 opacity-50'
+        completed ? 'bg-surface-container-low border-outline-variant/10' :
+            'bg-surface-container-lowest border-outline-variant/5 opacity-50'
         }`}>
         <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${active ? 'bg-primary text-surface-base animate-pulse' :
-                completed ? 'bg-primary/20 text-primary' :
-                    'bg-surface-container-high text-neutral'
+            completed ? 'bg-primary/20 text-primary' :
+                'bg-surface-container-high text-neutral'
             }`}>
             <Icon size={20} fill={active || completed ? "currentColor" : "none"} />
         </div>

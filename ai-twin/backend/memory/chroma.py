@@ -1,29 +1,43 @@
+import os
+import logging
 import chromadb
 from chromadb.utils import embedding_functions
 
+# Suppress tokenizer warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Suppress transformers 'UNEXPECTED' warnings for specific model keys
+logging.getLogger("transformers.modeling_utils").setLevel(logging.ERROR)
+
 client = chromadb.PersistentClient(path="./chroma_store")
 
+# Use a specific embedder and handle potential warnings
 embedder = embedding_functions.SentenceTransformerEmbeddingFunction(
     model_name="all-MiniLM-L6-v2"
 )
 
-def get_collection(user_id: str):
-    return client.get_or_create_collection(
-        name=f"user_{user_id}",
-        embedding_function=embedder
-    )
+USE_PER_USER_COLLECTION = os.getenv("CHROMA_PER_USER_COLLECTION", "true").lower() == "true"
+SHARED_COLLECTION_NAME = os.getenv("CHROMA_SHARED_COLLECTION", "twin_memory")
 
-def store_memory(user_id: str, doc_id: str, text: str, metadata: dict = None):
+def get_collection(user_id: str):
+    name = f"user_{user_id}_memory" if USE_PER_USER_COLLECTION else SHARED_COLLECTION_NAME
+    return client.get_or_create_collection(name=name, embedding_function=embedder)
+
+def store_memory(user_id: str, doc_id: str, content: str, type: str = "chat", metadata: dict | None = None):
     col = get_collection(user_id)
-    kwargs = dict(documents=[text], ids=[doc_id])
-    if metadata:  # only include metadatas if non-empty
-        kwargs["metadatas"] = [metadata]
+    meta = {"user_id": user_id, "type": type}
+    if metadata:
+        meta.update(metadata)
+    kwargs = dict(documents=[content], ids=[doc_id], metadatas=[meta])
     col.upsert(**kwargs)
 
-def retrieve_memory(user_id: str, query: str, n: int = 3) -> str:
+def retrieve_memory(user_id: str, query: str, n: int = 3, type: str | None = None) -> str:
     col = get_collection(user_id)
     try:
-        results = col.query(query_texts=[query], n_results=n)
+        where = {"user_id": user_id}
+        if type:
+            where["type"] = type
+        results = col.query(query_texts=[query], n_results=n, where=where)
         docs = results.get("documents", [[]])[0]
         return "\n".join(docs) if docs else ""
     except Exception:

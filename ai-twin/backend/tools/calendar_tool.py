@@ -1,34 +1,39 @@
-import os
 import time
 import uuid
-
+import threading
 from datetime import datetime, timezone
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+
+from sqlalchemy.orm import Session
+
+from tools.google_oauth import get_google_credentials, CALENDAR_SCOPES
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events"
 ]
 
-CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token_calendar.json"
 
-def get_calendar_service():
-    creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+_CAL_CACHE = threading.local()
+
+def get_calendar_service(db: Session, user_id: str):
+    # Caching the service object per thread avoids the slow build() process on every poll
+    # and prevents httplib2 concurrency issues (which cause memory corruption).
+    if not hasattr(_CAL_CACHE, 'services'):
+        _CAL_CACHE.services = {}
+
+    if user_id in _CAL_CACHE.services:
+        service, creds = _CAL_CACHE.services[user_id]
+        if creds.valid:
+            return service
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
-    return build("calendar", "v3", credentials=creds)
+            _CAL_CACHE.services.pop(user_id)
+            
+    creds = get_google_credentials(db=db, user_id=user_id, scopes=CALENDAR_SCOPES)
+    # cache_discovery=False fixes the 'file_cache is only supported with oauth2client<4.0.0' warning
+    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+    _CAL_CACHE.services[user_id] = (service, creds)
+    return service
 
 def normalize_datetime(dt_str: str) -> str:
     """
@@ -63,36 +68,98 @@ def normalize_datetime(dt_str: str) -> str:
 
     raise ValueError(f"Cannot parse datetime: '{dt_str}'. Use format: 'YYYY-MM-DD HH:MM'")
 
-def get_upcoming_events(max_results: int = 10) -> list:
-    service = get_calendar_service()
+def get_upcoming_events(db: Session, user_id: str, max_results: int = 20) -> list:
+    service = get_calendar_service(db=db, user_id=user_id)
     now = datetime.now(timezone.utc).isoformat()
-    events_result = service.events().list(
-        calendarId="primary",
-        timeMin=now,
-        maxResults=max_results,
-        singleEvents=True,
-        orderBy="startTime"
-    ).execute()
+    
+    # 1. Fetch all visible calendars from the user's list
+    try:
+        calendar_list = service.calendarList().list().execute().get('items', [])
+    except Exception as e:
+        print(f"Error fetching calendar list: {e}")
+        calendar_list = [{"id": "primary", "selected": True}]
 
-    events = events_result.get("items", [])
+    all_raw_events = []
+    
+    # 2. Loop through each selected calendar and pull events
+    for cal in calendar_list:
+        if not cal.get('selected', True):
+            continue
+            
+        try:
+            events_result = service.events().list(
+                calendarId=cal['id'],
+                timeMin=now,
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy="startTime"
+            ).execute()
+            events = events_result.get("items", [])
+            for e in events:
+                e['_calendar_name'] = cal.get('summaryOverride') or cal.get('summary')
+            all_raw_events.extend(events)
+        except Exception as e:
+            print(f"Error fetching events for calendar {cal['id']}: {e}")
+
+    # 3. Sort by start time and format for AI
+    def get_start(e):
+        return e["start"].get("dateTime") or e["start"].get("date")
+
+    all_raw_events.sort(key=get_start)
+    
     result = []
-    for event in events:
-        start = event["start"].get("dateTime", event["start"].get("date"))
+    # Deduplicate by event ID just in case (though unlikely across different calendars unless shared)
+    seen_ids = set()
+
+    for event in all_raw_events:
+        eid = event.get("id")
+        if eid in seen_ids:
+            continue
+        seen_ids.add(eid)
+
+        # Skip all-day events (holidays, birthdays, observances).
+        # Real meetings always have a dateTime; all-day events only have a date key.
+        start_datetime = event["start"].get("dateTime")
+        if not start_datetime:
+            continue
+
+        start = start_datetime
+        end = event.get("end", {}).get("dateTime", event.get("end", {}).get("date"))
         attendees = [a["email"] for a in event.get("attendees", [])]
+        organizer = event.get("organizer", {}).get("email")
+        if organizer and organizer not in attendees:
+            attendees.insert(0, organizer)
+        
+        meet_link = event.get("hangoutsLink", "")
+        conference = event.get("conferenceData", {})
+        for ep in conference.get("entryPoints", []):
+            if ep.get("entryPointType") == "video":
+                meet_link = ep.get("uri", "")
+                break
+
         result.append({
             "id":          event["id"],
             "title":       event.get("summary", "No Title"),
             "start":       start,
+            "end":         end,
             "location":    event.get("location", ""),
             "description": event.get("description", ""),
-            "attendees":   attendees
+            "meet_link":   meet_link,
+            "attendees":   attendees,
+            "calendar":    event.get("_calendar_name", "Primary")
         })
+        
+        if len(result) >= max_results:
+            break
+
     return result
 
 def create_event(title: str, start_datetime: str, end_datetime: str,
                  attendees: list = [], description: str = "",
-                 location: str = "") -> dict:
-    service = get_calendar_service()
+                 location: str = "", db: Session = None, user_id: str = None) -> dict:
+    if db is None or user_id is None:
+        raise ValueError("db and user_id are required")
+    service = get_calendar_service(db=db, user_id=user_id)
 
     # Normalize datetime strings — accepts flexible formats
     start_fmt = normalize_datetime(start_datetime)
@@ -134,6 +201,7 @@ def create_event(title: str, start_datetime: str, end_datetime: str,
 
     # Retry fetching until Meet link appears (max 5 attempts)
     meet_link = ""
+    fetched = None
     for attempt in range(5):
         time.sleep(1)
         fetched = service.events().get(
@@ -150,12 +218,15 @@ def create_event(title: str, start_datetime: str, end_datetime: str,
         if meet_link:
             break
 
+    if fetched is None:
+        fetched = created
+
     return {
         "event_id":      fetched["id"],
         "title":         fetched.get("summary"),
         "start":         fetched["start"].get("dateTime"),
         "end":           fetched["end"].get("dateTime"),
         "attendees":     [a["email"] for a in fetched.get("attendees", [])],
-        "meet_link":     meet_link if meet_link else "Meet link pending — check Google Calendar",
+        "meet_link":     meet_link if meet_link else None,
         "calendar_link": fetched.get("htmlLink")
     }
