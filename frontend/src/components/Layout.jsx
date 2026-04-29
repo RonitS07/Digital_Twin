@@ -10,6 +10,7 @@ import {
     Plus,
     Bell,
     Sparkles,
+    BrainCircuit,
     HelpCircle,
     X,
     Users,
@@ -183,7 +184,7 @@ const Layout = ({ children, currentView, setView }) => {
             <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-64 bg-surface-container border-r border-neutral/10 flex-col p-5 z-40">
                 <div className="flex items-center gap-3 mb-8 px-2">
                     <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center ai-glow text-surface-base">
-                        <Sparkles size={20} fill="currentColor" />
+                        <BrainCircuit size={20} className="text-white" />
                     </div>
                     <div>
                         <h1 className="text-primary font-manrope font-extrabold tracking-tighter text-base leading-tight uppercase">AI Twin</h1>
@@ -225,7 +226,7 @@ const Layout = ({ children, currentView, setView }) => {
                     {/* Mobile: logo + view title */}
                     <div className="flex items-center gap-3 lg:hidden">
                         <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center ai-glow text-white">
-                            <Sparkles size={16} fill="currentColor" />
+                            <BrainCircuit size={16} className="text-white" />
                         </div>
                         <span className="font-manrope font-extrabold text-sm tracking-tight text-on-surface">{viewLabel}</span>
                     </div>
@@ -239,7 +240,7 @@ const Layout = ({ children, currentView, setView }) => {
                             </>
                         ) : (
                             <div className="flex items-center gap-2">
-                                <Sparkles size={16} className="text-primary animate-pulse" />
+                                <BrainCircuit size={15} className="text-primary animate-pulse" />
                                 <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral/70">System Oversight Active</span>
                             </div>
                         )}

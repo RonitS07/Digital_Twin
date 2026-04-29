@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
     Send,
     User as AccountCircle,
-    Sparkles,
+    BrainCircuit,
     Calendar,
     Mail,
     Plus,
@@ -154,7 +154,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
         >
             <div className={`w-9 h-9 lg:w-12 lg:h-12 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg overflow-hidden ${isAi ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-primary/5 text-primary border border-primary/10'
                 }`}>
-                {isAi ? <Sparkles size={16} /> : (
+                {isAi ? <BrainCircuit size={16} className="text-primary" /> : (
                     user?.photoURL ? (
                         <img src={user.photoURL} alt="User" className="w-full h-full object-cover" />
                     ) : (
@@ -533,7 +533,7 @@ const Chat = () => {
                         <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-white/5 rounded-xl text-neutral transition-colors">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                         </button>
-                        <div className="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center font-bold text-white shadow-lg"><Sparkles size={20} /></div>
+                        <div className="w-10 h-10 rounded-2xl bg-primary flex items-center justify-center font-bold text-white shadow-lg"><BrainCircuit size={20} /></div>
                         <div>
                             <h2 className="font-manrope font-extrabold text-lg tracking-tight">AI Twin Chat</h2>
                             <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span><span className="text-[10px] text-neutral font-bold uppercase tracking-widest">Active • {sessions.find(s => s.id === sessionId)?.title || 'Discussion'}</span></div>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-    Sparkles, Eye, EyeOff, ArrowLeft, CheckCircle2,
+    BrainCircuit, Eye, EyeOff, ArrowLeft, CheckCircle2,
     Mail, Lock, User, AlertCircle, Loader2
 } from 'lucide-react'
 import {
@@ -200,7 +200,7 @@ const BrandPanel = ({ quote, author }) => (
 
         <div className="relative z-10 flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/30">
-                <Sparkles size={20} className="text-white" fill="currentColor" />
+                <BrainCircuit size={20} className="text-white" />
             </div>
             <div>
                 <p className="font-manrope font-extrabold tracking-tighter text-lg text-on-surface leading-none">AI Twin</p>
@@ -217,7 +217,7 @@ const BrandPanel = ({ quote, author }) => (
                     <div className="absolute top-0 left-1/2 w-1.5 h-1.5 rounded-full bg-secondary/70" />
                 </div>
                 <div className="absolute inset-10 rounded-full bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-[0_0_50px_rgba(103,96,253,0.4)]">
-                    <Sparkles size={28} className="text-white" fill="currentColor" />
+                    <BrainCircuit size={28} className="text-white" />
                 </div>
             </div>
             <div className="mt-12 text-center max-w-xs space-y-2">
@@ -248,7 +248,7 @@ const AuthShell = ({ children, title, subtitle, branding }) => (
             {/* Mobile logo */}
             <div className="lg:hidden flex items-center gap-2 mb-10">
                 <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-primary to-secondary flex items-center justify-center">
-                    <Sparkles size={16} className="text-white" fill="currentColor" />
+                    <BrainCircuit size={16} className="text-white" />
                 </div>
                 <span className="font-manrope font-extrabold tracking-tighter text-on-surface">AI Twin</span>
             </div>

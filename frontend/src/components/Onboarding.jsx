@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../config'
 import { motion } from 'framer-motion'
 import {
-    Sparkles,
+    BrainCircuit,
     Clock,
     Zap,
     ShieldCheck,
@@ -33,7 +33,7 @@ const OnboardingLayout = ({ step, title, subtitle, children, totalSteps = 8 }) =
             <div>
                 <div className="flex items-center gap-3 mb-12">
                     <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center ai-glow shadow-primary/30">
-                        <Sparkles size={22} className="text-white" fill="currentColor" />
+                        <BrainCircuit size={22} className="text-white" />
                     </div>
                     <div>
                         <p className="font-manrope font-extrabold tracking-tighter text-on-surface leading-none">AI Twin</p>
@@ -277,7 +277,7 @@ export const ConnectProtocol = ({ onNext }) => (
                 <div className="flex items-center justify-between border-b border-outline-variant/30 pb-6 mb-6">
                     <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                            <Sparkles size={16} className="text-primary" />
+                            <BrainCircuit size={16} className="text-primary" />
                         </div>
                         <span className="text-[10px] font-black uppercase tracking-widest text-neutral">Sample Briefing Output</span>
                     </div>

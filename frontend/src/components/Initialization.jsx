@@ -1,6 +1,6 @@
 import React from 'react'
 import { motion } from 'framer-motion'
-import { Sparkles, CheckCircle, Brain, Database, Terminal, HelpCircle } from 'lucide-react'
+import { BrainCircuit, CheckCircle, Brain, Database, Terminal, HelpCircle } from 'lucide-react'
 
 const StepCard = ({ title, status, icon: Icon, active = false, completed = false, queued = false }) => (
     <div className={`p-6 rounded-lg border transition-all flex items-center gap-4 ${active ? 'bg-surface-container border-primary/30 shadow-[0px_0px_20px_rgba(103,96,253,0.1)]' :
@@ -73,7 +73,7 @@ const Initialization = () => {
                         ></motion.div>
 
                         <div className="w-32 h-32 rounded-full ai-orb-core flex items-center justify-center z-10">
-                            <Sparkles size={40} className="text-surface-base" fill="currentColor" />
+                            <BrainCircuit size={40} className="text-surface-base" />
                         </div>
                     </div>
 

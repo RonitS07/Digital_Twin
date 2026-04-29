@@ -3,7 +3,7 @@ import { API_BASE } from '../config'
 import { apiFetch } from '../utils/apiClient'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-    Sparkles,
+    BrainCircuit,
     Calendar,
     Zap,
     ExternalLink,
@@ -146,7 +146,7 @@ const MeetingDetailModal = ({ event, onClose }) => {
 const ActivityDetailModal = ({ log, onClose }) => {
     if (!log) return null;
 
-    const Icon = log.intent === 'email' ? Zap : log.intent === 'calendar' ? Calendar : Sparkles;
+    const Icon = log.intent === 'email' ? Zap : log.intent === 'calendar' ? Calendar : BrainCircuit;
     const color = log.approved ? 'primary' : 'tertiary';
 
     return (
@@ -481,7 +481,7 @@ const Dashboard = () => {
                                 disabled={loadingBriefing}
                                 className="w-full sm:w-auto bg-surface-container hover:bg-surface-container-highest text-on-surface px-5 py-3 rounded-2xl font-bold transition-all text-sm flex items-center justify-center gap-2 border border-white/5 shadow-xl ai-glow"
                             >
-                                <Sparkles size={16} className={loadingBriefing ? 'animate-spin text-primary' : 'text-primary'} />
+                                <BrainCircuit size={16} className={loadingBriefing ? 'animate-spin text-primary' : 'text-primary'} />
                                 {loadingBriefing ? 'Synthesizing...' : 'Intelligence Brief'}
                             </button>
                         </div>
@@ -592,7 +592,7 @@ const Dashboard = () => {
                                 <div className="absolute -left-20 -bottom-20 w-64 h-64 bg-tertiary/5 rounded-full blur-[100px]" />
                                 <div className="relative z-10">
                                     <div className="flex items-center gap-3 mb-5 lg:mb-8">
-                                        <Sparkles size={18} className="text-primary" />
+                                        <BrainCircuit size={18} className="text-primary" />
                                         <h3 className="font-manrope text-base lg:text-xl font-bold tracking-tight">Recent Inbox Highlights</h3>
                                     </div>
 
