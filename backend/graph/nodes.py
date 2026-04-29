@@ -79,7 +79,7 @@ def classifier_node(state: State):
 
     # Gmail/Email
     if any(k in user_input for k in ["email", "mail", "gmail", "inbox"]):
-        if any(k in user_input for k in ["search", "find", "show me", "read", "unread", "recent", "what did"]):
+        if any(k in user_input for k in ["search", "find", "show me", "read", "unread", "recent", "what did", "check", "promotion", "offer"]):
             return {**state, "intent": "email_search"}
         return {**state, "intent": "email"}
 
@@ -95,7 +95,7 @@ def classifier_node(state: State):
     result = _llm(
         system="""
 You are a strict intent classifier. Return ONLY valid JSON: {"intent":"category", "target_handle": "null_or_handle"}
-Categories: question, visual (image creation), casual, email, calendar, slack, telegram, other.
+Categories: question, visual (image creation), casual, email, email_search, calendar, calendar_lookup, slack, telegram, other.
 """,
         user=state["input"]
     )
@@ -171,7 +171,7 @@ Snippet: {email_info['snippet']}
             logger.error(f"Error fetching specific email {email_id}: {e}")
 
     # 3. Handle Active Email Search — ONLY for email intent
-    if state.get("intent") in ("email", "email_search") and any(k in state["input"].lower() for k in ["search", "find", "show me", "promotion", "offer", "discount", "receipt"]):
+    if state.get("intent") in ("email", "email_search") and any(k in state["input"].lower() for k in ["search", "find", "show me", "check", "promotion", "offer", "discount", "receipt"]):
         try:
             with next(get_db()) as db:
                 # LLM to extract search terms

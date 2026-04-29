@@ -40,7 +40,11 @@ def _llm(system: str, user: str, intent: str = "", force_fast: bool = False) -> 
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
-        logger.error(f"[LLM] {model} call failed: {e}")
+        # If it's a rate limit (429), log as warning instead of error if we can fallback
+        if "429" in str(e) and model == SMART_MODEL:
+            logger.warning(f"[LLM] {model} rate limited, falling back to {FAST_MODEL}")
+        else:
+            logger.error(f"[LLM] {model} call failed: {e}")
         # Fallback to fast model if smart model fails
         if model == SMART_MODEL:
             try:

@@ -196,7 +196,7 @@ const Settings = () => {
                     whileTap={{ scale: 0.95 }}
                     onClick={handleSave}
                     disabled={isSaving}
-                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-lg shadow-primary/20 ${saved ? 'bg-green-500/20 text-green-500 shadow-none' : 'bg-primary text-white hover:brightness-110'} ${isSaving ? 'opacity-80 cursor-wait' : ''}`}
+                    className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-primary/20 w-fit mx-auto lg:mx-0 ${saved ? 'bg-green-500/20 text-green-500 shadow-none' : 'bg-primary text-white hover:brightness-110'} ${isSaving ? 'opacity-80 cursor-wait' : ''}`}
                 >
                     {isSaving ? (
                         <><Loader2 size={16} className="animate-spin" /> Saving...</>

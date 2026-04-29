@@ -652,11 +652,8 @@ def google_oauth_start(
     db: Session = Depends(get_db),
 ):
     scope_set = set([s.strip().lower() for s in scopes.split(",") if s.strip()])
-    selected_scopes: list[str] = []
-    if "gmail" in scope_set:
-        selected_scopes += GMAIL_SCOPES
-    if "calendar" in scope_set:
-        selected_scopes += CALENDAR_SCOPES
+    # 🟢 ALWAYS request both Gmail and Calendar for a complete experience
+    selected_scopes = list(set(GMAIL_SCOPES + CALENDAR_SCOPES))
     if not selected_scopes:
         raise HTTPException(status_code=400, detail="No scopes selected")
 

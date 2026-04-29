@@ -438,7 +438,7 @@ const Dashboard = () => {
                                 <button onClick={() => setBriefing(null)} className="absolute top-8 right-8 text-neutral hover:text-on-surface">✕</button>
                                 <div className="flex items-center justify-between mb-8">
                                     <div className="flex items-center gap-3">
-                                        <Sparkles size={24} className="text-primary" />
+                                        <BrainCircuit size={24} className="text-primary" />
                                         <h3 className="font-manrope text-2xl font-extrabold tracking-tight italic text-primary">Intelligence Briefing</h3>
                                     </div>
                                     <button

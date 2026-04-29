@@ -290,7 +290,7 @@ const Chat = () => {
         return saved ? JSON.parse(saved) : []
     })
     const [sessionId, setSessionId] = useState('')
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+    const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024)
 
     // Fallback variable for standalone autonomous mode retrieval
     const [autoMode, setAutoMode] = useState(false)
@@ -362,6 +362,7 @@ const Chat = () => {
         if (preferences.memoryRetention !== false) {
             localStorage.setItem(`chat_history_${user.uid}_${sid}`, JSON.stringify(initMsg))
         }
+        if (window.innerWidth < 1024) setIsSidebarOpen(false);
     }
 
     const handleDeleteSession = (e, id) => {
@@ -486,14 +487,28 @@ const Chat = () => {
     return (
         <div className="flex h-full bg-surface-base relative overflow-hidden font-inter text-on-surface">
 
+            {/* Sidebar Backdrop (Mobile only) */}
+            <AnimatePresence>
+                {isSidebarOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setIsSidebarOpen(false)}
+                        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 lg:hidden"
+                    />
+                )}
+            </AnimatePresence>
+
             {/* Sidebar (Thread History) - hidden on mobile unless toggled */}
             <AnimatePresence>
                 {isSidebarOpen && (
                     <motion.div
-                        initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: 280, opacity: 1 }}
-                        exit={{ width: 0, opacity: 0 }}
-                        className="bg-surface-container-low border-r border-neutral/5 flex flex-col z-20 absolute lg:relative h-full"
+                        initial={{ x: -280, opacity: 0 }}
+                        animate={{ x: 0, opacity: 1 }}
+                        exit={{ x: -280, opacity: 0 }}
+                        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                        className="bg-surface-container-low border-r border-neutral/5 flex flex-col z-40 fixed lg:relative h-full w-[280px]"
                     >
                         <div className="p-4 border-b border-white/5">
                             <button onClick={handleNewChat} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary hover:brightness-110 text-white text-sm font-bold transition-all shadow-lg shadow-primary/20">
@@ -504,7 +519,10 @@ const Chat = () => {
                             {sessions.map(s => (
                                 <div
                                     key={s.id}
-                                    onClick={() => setSessionId(s.id)}
+                                    onClick={() => {
+                                        setSessionId(s.id);
+                                        if (window.innerWidth < 1024) setIsSidebarOpen(false);
+                                    }}
                                     className={`group flex items-center justify-between w-full p-3 rounded-xl cursor-pointer transition-all ${sessionId === s.id ? 'bg-primary/20 text-white' : 'hover:bg-white/5 text-neutral'}`}
                                 >
                                     <div className="flex flex-col truncate w-full pr-2">
@@ -545,8 +563,8 @@ const Chat = () => {
                 </header>
 
                 <div className="flex-1 overflow-y-auto px-4 lg:px-12 py-6 lg:py-10 space-y-6 lg:space-y-12 pb-32 custom-scrollbar">
-                    {messages.map(msg => <ChatMessage key={msg.id} msg={msg} onAction={handleAction} autoApprove={autoMode} user={user} />)}
-                    {loading && <div className="flex gap-3 lg:gap-6 animate-pulse"><div className="w-9 h-9 lg:w-12 lg:h-12 rounded-2xl bg-primary/10" /><div className="bg-surface-container-low px-4 lg:px-6 py-3 lg:py-4 rounded-3xl text-sm italic opacity-50 flex items-center gap-2"><Loader2 className="animate-spin" size={14} />Twin is thinking...</div></div>}
+                    {messages.map((msg, i) => <ChatMessage key={msg.id || i} msg={msg} onAction={handleAction} autoApprove={autoMode} user={user} />)}
+                    {loading && <div key="loading-indicator" className="flex gap-3 lg:gap-6 animate-pulse"><div className="w-9 h-9 lg:w-12 lg:h-12 rounded-2xl bg-primary/10" /><div className="bg-surface-container-low px-4 lg:px-6 py-3 lg:py-4 rounded-3xl text-sm italic opacity-50 flex items-center gap-2"><Loader2 className="animate-spin" size={14} />Twin is thinking...</div></div>}
                     <div ref={endRef} />
                 </div>
 
