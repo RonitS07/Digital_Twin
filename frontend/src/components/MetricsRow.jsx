@@ -24,9 +24,9 @@ const MetricCard = ({ icon: Icon, label, value, color, delay, onClick }) => (
             </div>
             <div>
                 <p className="text-[9px] lg:text-xs text-neutral font-bold uppercase tracking-widest mb-1">{label}</p>
-                <div className="flex items-end gap-1.5 lg:gap-2">
+                <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 lg:gap-2">
                     <h4 className="text-xl lg:text-2xl font-manrope font-black text-on-surface tracking-tighter">{value}</h4>
-                    <span className="text-[10px] text-primary font-bold mb-1 flex items-center gap-0.5">
+                    <span className="text-[10px] text-primary font-bold flex items-center gap-0.5 whitespace-nowrap">
                         <TrendingUp size={10} /> +12%
                     </span>
                 </div>

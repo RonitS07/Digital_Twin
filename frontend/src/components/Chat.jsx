@@ -329,7 +329,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
 }
 
 const Chat = () => {
-    const { auth, preferences } = useStore()
+    const { auth, preferences, setView } = useStore()
     const user = auth.user || {}
     const [messages, setMessages] = useState([])
     const [input, setInput] = useState('')
@@ -647,7 +647,10 @@ const Chat = () => {
             {/* Main Chat Area */}
             <div className="flex-1 flex flex-col relative h-full overflow-hidden min-w-0">
                 <header className="h-14 lg:h-16 flex items-center justify-between px-4 lg:px-8 bg-surface-base/80 backdrop-blur-3xl sticky top-0 z-40 border-b border-neutral/5 shrink-0">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 lg:gap-3">
+                        <button onClick={() => setView('home')} className="lg:hidden p-2 hover:bg-white/5 rounded-xl text-neutral transition-colors mr-[-4px]">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                        </button>
                         <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-white/5 rounded-xl text-neutral transition-colors">
                             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
                         </button>
