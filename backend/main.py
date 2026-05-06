@@ -287,16 +287,16 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                                     from tools.calendar_tool import get_upcoming_events
                                     events = get_upcoming_events(db=db, user_id=uid, max_results=5)
                                     if events:
-                                        schedule_context = "Upcoming Schedule:\n" + "\n".join([f"- {e['title']} from {e['start']} to {e['end']}" for e in events])
+                                        schedule_context = "CURRENTLY SCHEDULED (BUSY) TIMES:\n" + "\n".join([f"- {e['title']} from {e['start']} to {e['end']}" for e in events]) + "\n\nAll other times are FREE and AVAILABLE."
                                     else:
-                                        schedule_context = "Schedule is fully clear/free. You are available."
+                                        schedule_context = "Schedule is fully clear/free today. You are available at all times."
                                 except Exception as e:
                                     logger.warning(f"Failed to fetch schedule for draft context: {e}")
 
                                 initial_state = {
                                     "user_id": uid,
                                     "user_name": user.name if user else "User",
-                                    "input": "Draft a professional, direct reply to this email. IMPORTANT: Use the SCHEDULE CONTEXT provided below to definitively confirm availability or propose alternatives. DO NOT say you need to check your schedule; act confidently using the data provided.",
+                                    "input": "Draft a professional, direct reply to this email. IMPORTANT: Use the SCHEDULE CONTEXT provided below. The context lists your BUSY times. If the sender's requested time is FREE, confidently accept the meeting. If it conflicts, propose a different time based on when you are free. DO NOT say you need to check your schedule.",
                                     "intent": "email",
                                     "task_plan": [],
                                     "output": "",
@@ -338,7 +338,7 @@ async def monitor_emails():
         while True:
             # Run the heavy sync processing in a thread to keep event loop free
             await asyncio.to_thread(process_new_emails)
-            await asyncio.sleep(600)
+            await asyncio.sleep(60)
     except asyncio.CancelledError:
         logger.info("[Monitor] Email monitor stopping...")
         raise
