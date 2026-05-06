@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../config'
 import { motion } from 'framer-motion'
 import {
-    BrainCircuit,
     Clock,
     Zap,
     ShieldCheck,
@@ -32,8 +31,8 @@ const OnboardingLayout = ({ step, title, subtitle, children, totalSteps = 8 }) =
         <div className="hidden lg:flex w-80 bg-surface-container border-r border-outline-variant/30 flex-col p-10 justify-between">
             <div>
                 <div className="flex items-center gap-3 mb-12">
-                    <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center ai-glow shadow-primary/30">
-                        <BrainCircuit size={22} className="text-white" />
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden ai-glow shadow-primary/30">
+                        <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
                     </div>
                     <div>
                         <p className="font-manrope font-extrabold tracking-tighter text-on-surface leading-none">AI Twin</p>
@@ -276,8 +275,8 @@ export const ConnectProtocol = ({ onNext }) => (
             <div className="bg-surface-base rounded-[2.2rem] p-8 relative overflow-hidden">
                 <div className="flex items-center justify-between border-b border-outline-variant/30 pb-6 mb-6">
                     <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                            <BrainCircuit size={16} className="text-primary" />
+                        <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden">
+                            <img src="/logo.png" alt="AI" className="w-5 h-5 object-cover" />
                         </div>
                         <span className="text-[10px] font-black uppercase tracking-widest text-neutral">Sample Briefing Output</span>
                     </div>

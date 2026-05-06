@@ -1,6 +1,5 @@
 import os
 import re
-import time
 import uuid
 import asyncio
 import secrets
@@ -10,15 +9,11 @@ from typing import Optional, List, Union
 from datetime import datetime, timedelta
 import json
 import requests
-import base64
 
 from dotenv import load_dotenv
 load_dotenv()
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
-
-# Root directory of the backend — used for all file storage paths
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -31,9 +26,9 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from googleapiclient.errors import HttpError
 
 from db.database import get_db, engine
-from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory, FileAsset
+from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory
 from db.auth import hash_password, verify_password, create_access_token, decode_token
-from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email, get_email_details, send_styled_invite, download_attachment
+from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email, get_email_details, send_styled_invite
 from tools.calendar_tool import get_upcoming_events, create_event, normalize_datetime
 from utils.email_templates import get_invite_html
 from tools.google_oauth import (
@@ -46,12 +41,10 @@ from tools.google_oauth import (
 )
 from tools.slack_tool import upsert_slack_tokens, is_slack_connected, list_slack_channels, send_slack_message, SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_REDIRECT_URI
 from graph.graph import twin_graph
-from graph.nodes import triage_email, EMAIL_CATEGORIES_REQUIRING_REPLY
 from memory.chroma import store_memory
 from memory.learning import learn_from_interaction
 from tools.telegram_tool import send_telegram_message, get_telegram_updates, send_telegram_photo
 from utils.briefing import generate_daily_briefing
-from graph.llm_utils import _llm
 
 # ── Multi-agent / A2A imports ──────────────────────────────────────────────
 from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory, AgentRegistry, A2AMessageLog
@@ -160,9 +153,10 @@ def process_new_emails():
                 try:
                     if not is_connected(db=db, user_id=uid):
                         continue
+                    # Skip users who only connected Calendar (no Gmail scopes)
                     if not is_scope_sufficient(db=db, user_id=uid, scopes=GMAIL_SCOPES):
+                        logger.debug(f"[EmailMonitor] Skipping user {uid}: no Gmail scopes granted.")
                         continue
-                    
                     user = db.query(User).filter(User.id == uid).first()
                     emails = read_recent_emails(db=db, user_id=uid, max_results=5)
 
@@ -171,11 +165,7 @@ def process_new_emails():
                         if existing:
                             continue
                             
-                        # 1. Fetch Full Details (for content extraction)
-                        info = get_email_details(db=db, user_id=uid, message_id=email["id"])
-                        body_excerpt = info["body"][:800]  # Keep short to stay under Groq TPM limits
-                        
-                        # 2. Mark as processed
+                        # Mark as processed immediately to prevent duplicate loops
                         entry = ProcessedEmail(
                             id=email["id"], 
                             user_id=uid,
@@ -184,140 +174,38 @@ def process_new_emails():
                         )
                         db.add(entry)
                         db.commit()
-
-                        # 3. Semantic Memory Indexing (Chroma)
-                        store_memory(
-                            user_id=uid,
-                            doc_id=f"email_{email['id']}",
-                            content=f"Email from: {info['from']}\nSubject: {info['subject']}\nBody: {info['body']}",
-                            type="email",
-                            metadata={"from": info["from"], "subject": info["subject"]}
-                        )
-
-                        # 4. Proactive Attachment Handling
-                        if info.get("attachments"):
-                            for att in info["attachments"]:
-                                try:
-                                    content = download_attachment(db=db, user_id=uid, message_id=email["id"], attachment_id=att["id"])
-                                    filename = f"email_{email['id']}_{att['filename']}"
-                                    save_path = os.path.join("uploads", filename)
-                                    full_path = os.path.join(BACKEND_DIR, save_path)
-                                    
-                                    with open(full_path, "wb") as f:
-                                        f.write(content)
-                                    
-                                    asset = FileAsset(
-                                        user_id=uid,
-                                        name=att["filename"],
-                                        file_type=att["mimeType"],
-                                        size=att.get("size", 0),
-                                        storage_path=save_path
-                                    )
-                                    db.add(asset)
-                                except Exception as att_e:
-                                    logger.error(f"Failed to process attachment {att['filename']}: {att_e}")
-
-                        # 5. Advanced Intelligence: Action & Entity Extraction
-                        intel_result = _llm(
-                            system="""Analyze the incoming email. 
-1. Determine if any action is required from the user (e.g. 'Review this', 'Join meeting', 'Pay bill').
-2. Extract important entities like tracking numbers, flight codes, zoom links, or dates.
-Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"tracking_number", "value":"123"}]}""",
-                            user=f"From: {info['from']}\nSubject: {info['subject']}\nBody: {body_excerpt}",
-                            force_fast=True
-                        )
                         
-                        try:
-                            intel = json.loads(intel_result)
-                            action_item = intel.get("action_item")
-                            if action_item and action_item != "null":
-                                task = TaskLog(
-                                    user_id=uid,
-                                    input=f"Action detected from email: {info['subject']}",
-                                    intent="email_action",
-                                    output=f"Pending Task: {action_item}\n\nEmail from: {info['from']}",
-                                    kind="approval",
-                                    metadata_json=json.dumps({"email_id": email["id"], "action": action_item})
-                                )
-                                db.add(task)
-                                if user and user.telegram_enabled:
-                                    send_telegram_message(user.telegram_chat_id, f"⚠️ *Action Required from Email*\n\n{action_item}")
-                            
-                            for entity in intel.get("entities", []):
-                                memory = StructuredMemory(
-                                    user_id=uid,
-                                    category="reference",
-                                    key=entity["key"],
-                                    value=entity["value"],
-                                    source=f"email_{email['id']}"
-                                )
-                                db.merge(memory)
-                        except Exception as intel_e:
-                            logger.error(f"Intelligence extraction failed: {intel_e}")
-
-                        # 6. SMART TRIAGE — only draft replies for emails that need one
-                        triage = triage_email(
-                            subject=info["subject"],
-                            sender=info["from"],
-                            snippet=email.get("snippet", info["body"][:200])
-                        )
-                        category = triage.get("category", "informational")
-                        needs_reply = triage.get("requires_reply", False)
+                        # Notify on Telegram if enabled
+                        if user and user.telegram_enabled and user.telegram_chat_id:
+                            msg = f"📩 *New Email Detected*\n\n*From:* {email['from']}\n*Subject:* {email['subject']}\n\n_{email['snippet']}_"
+                            send_telegram_message(user.telegram_chat_id, msg)
                         
-                        logger.info(f"[EmailTriage] {info['subject'][:50]} → {category} | reply_needed={needs_reply}")
-                        
-                        # Store the category in structured memory for dashboard display
-                        try:
-                            cat_mem = StructuredMemory(
-                                user_id=uid,
-                                category="reference",
-                                key=f"email_category_{email['id'][:8]}",
-                                value=f"{category}: {info['subject'][:60]}",
-                                source=f"email_{email['id']}"
-                            )
-                            db.merge(cat_mem)
-                        except Exception:
-                            pass
+                        # Ingest into memory/graph
+                        initial_state = {
+                            "user_id": uid,
+                            "input": f"Read email {email['id']} and suggest a suitable reply.",
+                            "intent": "",
+                            "task_plan": [],
+                            "output": "",
+                            "chat_history": [],
+                            "approval_required": False
+                        }
+                        res = twin_graph.invoke(initial_state)
+                        clean_body = extract_reply(res["output"])
 
-                        if needs_reply and category in EMAIL_CATEGORIES_REQUIRING_REPLY:
-                            # Auto-draft a reply for the user to review
-                            try:
-                                initial_state = {
-                                    "user_id": uid,
-                                    "user_name": user.name if user else "User",
-                                    "input": f"Draft a professional reply to this email.",
-                                    "intent": "email",
-                                    "task_plan": [],
-                                    "output": "",
-                                    "chat_history": [],
-                                    "approval_required": True,
-                                    "context": f"EMAIL DETAILS:\nFrom: {info['from']}\nSubject: {info['subject']}\nBody: {info['body'][:1000]}"
-                                }
-                                res = twin_graph.invoke(initial_state)
-                                clean_reply = extract_reply(res["output"])
-                                if clean_reply.strip():
-                                    draft_email(db=db, user_id=uid, to=info["from"], subject=f"Re: {info['subject']}", body=clean_reply)
-                                    entry.action_taken = "drafted"
-                                    logger.info(f"[EmailMonitor] Auto-drafted reply for: {info['subject'][:50]}")
-                            except Exception as draft_e:
-                                logger.error(f"Auto-draft failed: {draft_e}")
-                                entry.action_taken = "indexed"
+                        if AUTO_SEND:
+                            reply_to_email(db=db, user_id=uid, message_id=email["id"], body=clean_body)
+                            entry.action_taken = "sent"
                         else:
-                            entry.action_taken = f"indexed:{category}"
-                            logger.info(f"[EmailMonitor] Indexed (no draft): {info['subject'][:50]} [{category}]")
+                            info = get_email_details(db=db, user_id=uid, message_id=email["id"])
+                            draft_email(db=db, user_id=uid, to=info["from"], subject=f"Re: {info['subject']}", body=clean_body)
+                            entry.action_taken = "drafted"
 
                         db.commit()
                         processed_count += 1
-                        
-                        # Synchronous sleep (this is a sync function run in a thread)
-                        time.sleep(1)
-
                 except Exception as user_err:
                     logger.error(f"Email Monitor Error for user {uid}: {user_err}")
                     continue
-                
-                # Sleep between users to reduce LLM rate limit pressure
-                time.sleep(2)
     except Exception as e:
         logger.error(f"Email Monitor Error: {e}")
     return processed_count > 0
@@ -550,10 +438,6 @@ def process_daily_briefing():
         with next(get_db()) as db:
             users = db.query(User).filter(User.telegram_enabled == True, User.telegram_chat_id.isnot(None)).all()
             for user in users:
-                # 🟢 Skip users without any active Google connection
-                if not is_connected(db=db, user_id=user.id):
-                    continue
-
                 should_send = False
                 if not user.last_briefing_at:
                     should_send = True
@@ -567,9 +451,6 @@ def process_daily_briefing():
                     send_telegram_message(user.telegram_chat_id, briefing)
                     user.last_briefing_at = now
                     db.commit()
-                    
-                    # Small sleep between users to avoid Groq rate limits (Synchronous in thread)
-                    time.sleep(2)
     except Exception as e:
         logger.error(f"Daily Briefing Task Error: {e}")
 
@@ -881,14 +762,8 @@ def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
 
 @app.post("/ai/process")
 def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Optional[User] = Depends(get_optional_user)):
-    # Allow image-only messages — if files are attached but no text, use a default prompt
-    has_files = bool(req.files)
-    effective_input = req.input.strip()
-    if not effective_input and not has_files:
+    if not req.input.strip():
         raise HTTPException(status_code=400, detail="Input missing")
-    if not effective_input and has_files:
-        # User sent image(s) without text — default to analysis
-        effective_input = "Please analyze and describe the attached file(s)."
 
     # If a valid bearer token is provided, trust it over any client-supplied user_id
     effective_user_id = token_user.id if token_user else req.user_id
@@ -926,7 +801,7 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
     initial_state = {
         "user_id": effective_user_id,
         "user_name": final_user_name,
-        "input": effective_input,
+        "input": req.input,
         "chat_history": req.chat_history,
         "intent": "other",
         "output": "",
@@ -940,29 +815,30 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
         "files": req.files or []
     }
 
-    # Augment prompt with text file contents (PDFs decoded as text, etc.)
+    # 🟢 Augment prompt with text file contents
     if req.files:
+        import base64
         text_file_context = []
         for f in req.files:
             mime = f.get("type", "")
+            # For non-image files, decode and inject content into prompt
             if not mime.startswith("image/"):
                 try:
                     raw = f.get("data", "")
                     encoded = raw.split(",", 1)[1] if "," in raw else raw
                     content = base64.b64decode(encoded).decode("utf-8", errors="replace")
-                    text_file_context.append(f'--- File: {f["name"]} ---\n{content[:3000]}\n---')
-                except Exception as fe:
-                    logger.warning(f"Could not decode text file {f.get('name')}: {fe}")
+                    text_file_context.append(f'--- File: {f["name"]} ---\n{content}\n---')
+                except Exception as e:
+                    logger.warning(f"Could not decode text file {f.get('name')}: {e}")
         if text_file_context:
-            initial_state["input"] = effective_input + "\n\n" + "\n".join(text_file_context)
-        else:
-            initial_state["input"] = effective_input
-    else:
-        initial_state["input"] = effective_input
+            initial_state["input"] = req.input + "\n\n" + "\n".join(text_file_context)
     
     # 🟢 Multimodal: Save uploaded files to Disk & DB
     if req.files:
         from db.models import FileAsset
+        import base64
+        import os
+        import uuid
         
         for f in req.files:
             try:
@@ -972,7 +848,7 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
                 
                 filename = f"{uuid.uuid4()}_{f['name']}"
                 save_path = os.path.join("uploads", filename)
-                full_path = os.path.join(BACKEND_DIR, save_path)
+                full_path = os.path.join("/home/ronit.shah/digital_twin/backend", save_path)
                 
                 with open(full_path, "wb") as buffer:
                     buffer.write(file_bytes)
@@ -1065,35 +941,6 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
         logger.exception(f"Graph Error: {e}")
         return {"output": f"❌ **Intelligence Error:** {str(e)}", "error": str(e)}
 
-class GenerateTitleRequest(BaseModel):
-    history: List[dict]
-
-@app.post("/ai/generate-title")
-def generate_chat_title(req: GenerateTitleRequest, current_user: User = Depends(get_current_user)):
-    from graph.llm_utils import _llm
-    
-    # Format history for the LLM
-    context = ""
-    # We take the first 3-4 messages to get the 'first 2-3 prompts' context
-    for msg in req.history[:4]: 
-        role = "User" if msg.get("role") == "user" else "AI"
-        text = msg.get("text", "")
-        # Limit text length per message for title generation
-        context += f"{role}: {text[:200]}...\n"
-    
-    system_prompt = "You are a professional assistant. Generate a concise, smart, and professional title (3-5 words) for this chat conversation based on the provided context. Return ONLY the title text, no quotes or punctuation."
-    user_prompt = f"Context:\n{context}\n\nTitle:"
-    
-    try:
-        title = _llm(system=system_prompt, user=user_prompt, force_fast=True)
-        # Clean up title
-        title = title.strip().strip('"').strip("'").split('\n')[0]
-        if len(title) > 50: title = title[:47] + "..."
-        return {"title": title}
-    except Exception as e:
-        logger.error(f"Title generation failed: {e}")
-        return {"title": "New Discussion"}
-
 @app.get("/ai/files")
 def list_files(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from db.models import FileAsset
@@ -1109,60 +956,6 @@ def list_files(current_user: User = Depends(get_current_user), db: Session = Dep
         }
         for f in files
     ]
-
-@app.get("/ai/files/{file_id}/download")
-def download_file(file_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    from db.models import FileAsset
-    from fastapi.responses import FileResponse
-    import os
-
-    asset = db.query(FileAsset).filter(
-        FileAsset.id == file_id,
-        FileAsset.user_id == current_user.id
-    ).first()
-
-    if not asset:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    full_path = os.path.join(BACKEND_DIR, asset.storage_path)
-    if not os.path.exists(full_path):
-        raise HTTPException(status_code=404, detail="File not on disk")
-
-    return FileResponse(
-        path=full_path,
-        filename=asset.name,
-        media_type=asset.file_type or "application/octet-stream"
-    )
-
-@app.delete("/ai/files/{file_id}")
-def delete_file(file_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    from db.models import FileAsset
-    import os
-
-    asset = db.query(FileAsset).filter(
-        FileAsset.id == file_id,
-        FileAsset.user_id == current_user.id
-    ).first()
-
-    if not asset:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    full_path = os.path.join(BACKEND_DIR, asset.storage_path)
-    
-    try:
-        # 1. Delete from disk
-        if os.path.exists(full_path):
-            os.remove(full_path)
-            logger.info(f"🗑️ Deleted file from disk: {full_path}")
-        
-        # 2. Delete from DB
-        db.delete(asset)
-        db.commit()
-        return {"status": "success", "message": "File deleted successfully"}
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Failed to delete file {file_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to delete file")
 
 @app.get("/history")
 def get_history(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1800,24 +1593,6 @@ def get_analytics(
         "heatmap": heatmap,
         "priority": priority
     }
-
-@app.get("/intelligence/insights")
-async def get_insights(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    try:
-        memories = db.query(StructuredMemory).filter(
-            StructuredMemory.user_id == current_user.id,
-            StructuredMemory.category == "reference"
-        ).order_by(StructuredMemory.updated_at.desc()).limit(12).all()
-        
-        return [{
-            "key": m.key, 
-            "value": m.value, 
-            "source": m.source, 
-            "updated_at": m.updated_at.isoformat() if m.updated_at else None
-        } for m in memories]
-    except Exception as e:
-        logger.error(f"Failed to fetch insights: {e}")
-        return []
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Smart Proxy: Route everything else to the Frontend Dev Server (port 5173)

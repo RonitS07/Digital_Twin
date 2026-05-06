@@ -27,12 +27,12 @@ const Section = ({ icon: Icon, title, children }) => (
 );
 
 const Row = ({ label, description, children }) => (
-    <div className="flex items-start sm:items-center justify-between gap-3 px-5 lg:px-7 py-4 lg:py-5 hover:bg-surface-container-high/30 transition-colors">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 px-5 lg:px-7 py-4 lg:py-5 hover:bg-surface-container-high/30 transition-colors">
         <div className="flex-1 min-w-0">
             <p className="font-semibold text-sm text-on-surface">{label}</p>
             {description && <p className="text-xs text-on-surface-variant mt-0.5 opacity-80">{description}</p>}
         </div>
-        <div className="shrink-0">{children}</div>
+        <div className="shrink-0 w-full sm:w-auto">{children}</div>
     </div>
 );
 
@@ -176,7 +176,7 @@ const Settings = () => {
     };
 
     return (
-        <div className="p-4 sm:p-6 lg:p-10 max-w-3xl mx-auto space-y-6 lg:space-y-8 relative">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-3xl mx-auto space-y-6 lg:space-y-8 relative pb-36">
             {toast && (
                 <div className={`fixed top-6 right-6 z-[200] px-5 py-3 rounded-2xl shadow-2xl text-sm font-bold flex items-center gap-3 transition-all ${
                     toast.type === 'error'
@@ -196,7 +196,7 @@ const Settings = () => {
                     whileTap={{ scale: 0.95 }}
                     onClick={handleSave}
                     disabled={isSaving}
-                    className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-primary/20 w-fit mx-auto lg:mx-0 ${saved ? 'bg-green-500/20 text-green-500 shadow-none' : 'bg-primary text-white hover:brightness-110'} ${isSaving ? 'opacity-80 cursor-wait' : ''}`}
+                    className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-primary/20 w-full sm:w-fit ${saved ? 'bg-green-500/20 text-green-500 shadow-none' : 'bg-primary text-white hover:brightness-110'} ${isSaving ? 'opacity-80 cursor-wait' : ''}`}
                 >
                     {isSaving ? (
                         <><Loader2 size={16} className="animate-spin" /> Saving...</>
@@ -214,20 +214,20 @@ const Settings = () => {
                         type="text"
                         value={editName}
                         onChange={(e) => setEditName(e.target.value)}
-                        className="text-on-surface font-semibold text-sm bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-48 text-right"
+                        className="text-on-surface font-semibold text-sm bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-full sm:w-48 sm:text-right"
                     />
                 </Row>
                 <Row label="Profile Image" description="Publicly visible in Agent Network">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
                         {editPhoto && (
-                            <img src={editPhoto} className="w-8 h-8 rounded-full border border-primary/20" alt="Preview" />
+                            <img src={editPhoto} className="w-8 h-8 rounded-full border border-primary/20 shrink-0" alt="Preview" />
                         )}
                         <input
                             type="text"
                             value={editPhoto}
                             onChange={(e) => setEditPhoto(e.target.value)}
                             placeholder="https://..."
-                            className="text-on-surface font-semibold text-xs bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-64 text-right"
+                            className="text-on-surface font-semibold text-xs bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-full sm:w-64 sm:text-right"
                         />
                     </div>
                 </Row>
@@ -236,7 +236,7 @@ const Settings = () => {
                         type="text"
                         value={editEmail}
                         onChange={(e) => setEditEmail(e.target.value)}
-                        className="text-on-surface font-semibold text-sm bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-72 text-right"
+                        className="text-on-surface font-semibold text-sm bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-full sm:w-72 sm:text-right"
                     />
                 </Row>
                 <Row label="Role" description="Determines AI Twin tone and prioritisation">

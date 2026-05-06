@@ -184,14 +184,58 @@ def get_email_details(db: Session, user_id: str, message_id: str) -> dict:
     headers = full["payload"].get("headers", [])
     subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
     sender  = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
-    snippet = full.get("snippet", "")
+    
+    # Helper to extract body and attachments
+    attachments = []
+    def process_parts(parts):
+        body = ""
+        for part in parts:
+            mimeType = part.get('mimeType')
+            filename = part.get('filename')
+            part_id  = part.get('body', {}).get('attachmentId')
+            
+            if filename and part_id:
+                attachments.append({
+                    "id": part_id,
+                    "filename": filename,
+                    "mimeType": mimeType,
+                    "size": part.get('body', {}).get('size')
+                })
+            
+            if mimeType == 'text/plain':
+                data = part['body'].get('data')
+                if data: body += base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
+            elif 'parts' in part:
+                body += process_parts(part['parts'])
+        return body
+
+    payload = full['payload']
+    if 'parts' in payload:
+        body = process_parts(payload['parts'])
+    else:
+        data = payload.get('body', {}).get('data')
+        body = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore') if data else full.get("snippet", "")
     
     return {
         "id": message_id,
         "subject": subject,
         "from": sender,
-        "snippet": snippet
+        "body": body,
+        "attachments": attachments
     }
+
+def download_attachment(db: Session, user_id: str, message_id: str, attachment_id: str) -> bytes:
+    service = get_gmail_service(db=db, user_id=user_id)
+    attachment = service.users().messages().attachments().get(
+        userId="me",
+        messageId=message_id,
+        id=attachment_id
+    ).execute()
+    
+    data = attachment.get("data")
+    if not data:
+        return b""
+    return base64.urlsafe_b64decode(data)
 
 def watch_gmail(db: Session, user_id: str, topic_name: str) -> dict:
     """Tells Google to send push notifications to the specified Pub/Sub topic."""

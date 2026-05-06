@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, Index
+from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from db.database import Base
@@ -153,4 +153,18 @@ class A2AMessageLog(Base):
 
     sender   = relationship("User", foreign_keys=[sender_user_id])
     receiver = relationship("User", foreign_keys=[receiver_user_id])
+
+class FileAsset(Base):
+    __tablename__ = "file_assets"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id    = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name       = Column(String, nullable=False)
+    file_type  = Column(String, nullable=False) # image/png, application/pdf, etc.
+    size       = Column(Integer, nullable=True) # in bytes
+    storage_path = Column(Text, nullable=True) # where it's stored on disk
+    is_processed = Column(Boolean, default=False) # whether AI has analyzed it
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
 

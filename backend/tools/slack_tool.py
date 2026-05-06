@@ -87,3 +87,12 @@ def send_slack_message(db: Session, user_id: str, channel_id: str, text: str) ->
         raise RuntimeError(f"Slack post failed: {data.get('error')}")
     
     return data
+
+def get_user_id_by_slack_bot_id(db: Session, bot_user_id: str) -> Optional[str]:
+    """Finds our internal user_id associated with a Slack bot_user_id."""
+    row = (
+        db.query(IntegrationToken)
+        .filter(IntegrationToken.token_type == bot_user_id, IntegrationToken.provider == "slack")
+        .first()
+    )
+    return row.user_id if row else None

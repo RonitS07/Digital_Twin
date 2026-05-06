@@ -37,15 +37,15 @@ const TimelineItem = ({ log }) => {
 
     return (
     <div className={`relative ${isHighlighted ? 'z-10' : ''}`} id={`activity-${log.id}`}>
-        <div className={`absolute -left-[51px] top-0 w-5 h-5 rounded-full bg-surface-base border-4 ${color === 'primary' ? 'border-primary' : color === 'tertiary' ? 'border-tertiary' : 'border-neutral'} ${isHighlighted ? 'scale-150 animate-pulse border-primary shadow-[0_0_15px_rgba(var(--primary-rgb),0.5)]' : ''}`}></div>
-        <div className={`glass-panel p-8 rounded-xl border transition-all duration-500 ${isHighlighted ? 'border-primary/50 bg-primary/5 shadow-2xl scale-[1.02] ai-glow' : 'border-neutral/10 group hover:bg-surface-container'}`}>
-            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6">
+        <div className={`absolute -left-[33px] sm:-left-[51px] top-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-surface-base border-[3px] sm:border-4 ${color === 'primary' ? 'border-primary' : color === 'tertiary' ? 'border-tertiary' : 'border-neutral'} ${isHighlighted ? 'scale-150 animate-pulse border-primary shadow-[0_0_15px_rgba(var(--primary-rgb),0.5)]' : ''}`}></div>
+        <div className={`glass-panel p-4 sm:p-6 lg:p-8 rounded-xl border transition-all duration-500 ${isHighlighted ? 'border-primary/50 bg-primary/5 shadow-2xl scale-[1.02] ai-glow' : 'border-neutral/10 group hover:bg-surface-container'}`}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start justify-between sm:gap-4 mb-4 sm:mb-6">
                 <div className="flex items-start gap-4">
                     <div className={`p-3 rounded-xl ${color === 'primary' ? 'bg-primary/10 text-primary' : color === 'tertiary' ? 'bg-tertiary/10 text-tertiary' : 'bg-neutral/10 text-neutral'}`}>
                         <Icon size={20} />
                     </div>
                     <div>
-                        <h3 className="font-manrope font-bold text-lg text-on-surface">{log.intent ? log.intent.toUpperCase() : 'TASK EXECUTION'}</h3>
+                        <h3 className="font-manrope font-bold text-base sm:text-lg text-on-surface">{log.intent ? log.intent.toUpperCase() : 'TASK EXECUTION'}</h3>
                         <p className="text-sm text-on-surface-variant mt-1">{log.input}</p>
                     </div>
                 </div>
@@ -59,7 +59,7 @@ const TimelineItem = ({ log }) => {
                     </span>
                 </div>
             </div>
-            <div className={`p-5 rounded-lg bg-surface-bright/50 border-l-4 ${color === 'primary' ? 'border-primary/40' : color === 'tertiary' ? 'border-tertiary/40' : 'border-neutral/40'}`}>
+            <div className={`p-3 sm:p-5 rounded-lg bg-surface-bright/50 border-l-4 ${color === 'primary' ? 'border-primary/40' : color === 'tertiary' ? 'border-tertiary/40' : 'border-neutral/40'}`}>
                 <span className={`text-[10px] font-black uppercase tracking-widest block mb-2 ${color === 'primary' ? 'text-primary/60' : color === 'tertiary' ? 'text-tertiary/60' : 'text-neutral/60'}`}>Output Log</span>
                 <p className="text-on-surface text-sm leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto no-scrollbar">{log.output}</p>
             </div>
@@ -141,8 +141,8 @@ const Activity = () => {
             .finally(() => setLoading(false));
     }, [auth?.user?.uid]);
     return (
-        <div className="p-12 max-w-6xl mx-auto">
-            <header className="flex flex-col md:flex-row md:items-center justify-between mb-12 gap-6">
+        <div className="p-4 sm:p-6 lg:p-12 max-w-6xl mx-auto pb-36">
+            <header className="flex flex-col gap-4 mb-6 sm:mb-12">
                 <div className="flex flex-wrap gap-2">
                     {['All Activity', 'Emails', 'Meetings', 'Research'].map(f => (
                         <button 
@@ -165,19 +165,19 @@ const Activity = () => {
                         <span className={`w-2 h-2 rounded-full ${activityFilter === 'Needs Review' ? 'bg-surface-base shadow-none' : 'bg-tertiary shadow-[0_0_8px_#ffb695]'}`}></span>
                     </button>
                 </div>
-                <button onClick={handleExportCsv} className="flex items-center gap-2 px-6 py-2.5 rounded-full border border-neutral/20 text-on-surface-variant text-sm font-bold tracking-tight hover:border-primary/40 hover:text-on-surface transition-all bg-surface-container/30">
+                <button onClick={handleExportCsv} className="flex items-center gap-2 px-5 py-2 rounded-full border border-neutral/20 text-on-surface-variant text-sm font-bold tracking-tight hover:border-primary/40 hover:text-on-surface transition-all bg-surface-container/30 w-fit">
                     <Download size={14} />
                     Export CSV
                 </button>
             </header>
-            <div className="space-y-16">
+            <div className="space-y-8 sm:space-y-16">
                 <div>
-                    <div className="flex items-center gap-4 mb-8">
+                    <div className="flex items-center gap-4 mb-6 sm:mb-8">
                         <h2 className="font-manrope text-xl font-bold text-on-surface">Recent Log</h2>
                         <div className="h-[1px] flex-1 bg-gradient-to-r from-neutral/20 to-transparent"></div>
                     </div>
 
-                    <div className="relative ml-4 pl-10 border-l-2 border-neutral/10 space-y-10">
+                    <div className="relative ml-2 sm:ml-4 pl-6 sm:pl-10 border-l-2 border-neutral/10 space-y-6 sm:space-y-10">
                         {loading ? (
                             <div className="text-neutral animate-pulse text-sm">Syncing timeline...</div>
                         ) : filteredLogs.length > 0 ? (

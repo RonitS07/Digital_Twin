@@ -3,7 +3,6 @@ import { API_BASE } from '../config'
 import { apiFetch } from '../utils/apiClient'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-    BrainCircuit,
     Calendar,
     Zap,
     ExternalLink,
@@ -12,11 +11,16 @@ import {
     MapPin,
     Users,
     ArrowRight,
-    X
+    X,
+    Mail,
+    Send,
+    User as AccountCircle,
+    BrainCircuit
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import MetricsRow from './MetricsRow'
 import CalendarHeatmap from './CalendarHeatmap'
+import IntelligenceHub from './IntelligenceHub'
 
 const MeetingDetailModal = ({ event, onClose }) => {
     if (!event) return null;
@@ -163,7 +167,7 @@ const ActivityDetailModal = ({ log, onClose }) => {
                 className="bg-surface-container-high border border-white/10 rounded-[2.5rem] w-full max-w-xl overflow-hidden shadow-2xl ai-glow"
                 onClick={e => e.stopPropagation()}
             >
-                <div className="relative p-10">
+                <div className="relative p-6 sm:p-10">
                     <button
                         onClick={onClose}
                         className="absolute top-8 right-8 p-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors"
@@ -280,15 +284,24 @@ const Dashboard = () => {
             const data = await apiFetch(`/ai/process`, {
                 method: 'POST',
                 body: JSON.stringify({
-                    input: `Generate my current daily briefing based on my ${preferences.gmailSync ? 'emails ' : ''}${preferences.calendarSync ? 'and calendar events' : ''}.`,
+                    input: `Summarize my day: list my upcoming calendar events and any important unread emails. Be concise and professional. If there is nothing to report, say "All clear for today." Do NOT ask for more information.`,
                     user_id: user.uid,
                     user_name: user.name || 'User',
                     gmail_sync: preferences.gmailSync !== false,
                     calendar_sync: preferences.calendarSync !== false
                 })
             });
-            briefingCacheRef.current = { data: data.output, ts: Date.now() };
-            setBriefing(data.output);
+            const output = data.output || '';
+            // Suppress confused/empty responses - don't show a popup that asks for more info
+            const isConfused = ['provide', "don't see", "please share", "need more", "could you", "meeting details"].some(
+                phrase => output.toLowerCase().includes(phrase)
+            );
+            if (output && !isConfused) {
+                // 🔴 SANITIZE: Remove any raw <action> blocks that leaked into the text
+                const sanitized = output.replace(/<action>[\s\S]*?<\/action>/gi, '').trim();
+                briefingCacheRef.current = { data: sanitized, ts: Date.now() };
+                setBriefing(sanitized);
+            }
         } catch (err) {
             console.error(err);
         } finally {
@@ -348,8 +361,8 @@ const Dashboard = () => {
         else if (hour < 18) setGreeting('Good afternoon');
         else setGreeting('Good evening');
 
-        // 🟢 Guard: Don't start polling until user is fully authenticated and identified
-        if (!user.uid || !auth.isLoggedIn) {
+        // 🟢 Guard: Don't start polling until user is fully authenticated with a valid token
+        if (!user.uid || !auth.isLoggedIn || !accessToken) {
             console.log("Dashboard: Waiting for auth before polling...");
             return;
         }
@@ -375,7 +388,7 @@ const Dashboard = () => {
             clearInterval(histInt);
             clearInterval(analyticsInt);
         };
-    }, [user.uid, preferences]);
+    }, [user.uid, accessToken, preferences]);
 
     const sendToTelegram = async () => {
         setSendingTelegram(true);
@@ -393,7 +406,7 @@ const Dashboard = () => {
     const isAnyModalOpen = selectedEvent || selectedActivity || briefing;
 
     return (
-        <div className="relative min-h-screen bg-surface-base font-inter pb-24 overflow-x-hidden">
+        <div className="relative min-h-screen bg-surface-base font-inter pb-36 overflow-x-hidden">
             <AnimatePresence>
                 {toast && (
                     <motion.div
@@ -425,22 +438,25 @@ const Dashboard = () => {
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/40 backdrop-blur-md"
+                        className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-6 bg-black/40 backdrop-blur-md"
                         onClick={() => setBriefing(null)}
                     >
                         <motion.div
                             initial={{ scale: 0.9, y: 20 }}
                             animate={{ scale: 1, y: 0 }}
-                            className="bg-surface-container-high border border-primary/20 rounded-[2.5rem] w-full max-w-2xl overflow-hidden shadow-2xl ai-glow"
+                            className="bg-surface-container-high border border-primary/20 rounded-t-3xl sm:rounded-[2.5rem] w-full max-w-2xl overflow-hidden shadow-2xl ai-glow"
                             onClick={e => e.stopPropagation()}
                         >
-                            <div className="relative p-10 max-h-[80vh] overflow-y-auto custom-scrollbar">
+                            <div className="w-10 h-1 bg-neutral/30 rounded-full mx-auto mt-3 sm:hidden" />
+                            <div className="relative p-6 sm:p-10 max-h-[80vh] overflow-y-auto custom-scrollbar">
                                 <button onClick={() => setBriefing(null)} className="absolute top-8 right-8 text-neutral hover:text-on-surface">✕</button>
                                 <div className="flex items-center justify-between mb-8">
                                     <div className="flex items-center gap-3">
-                                        <BrainCircuit size={24} className="text-primary" />
-                                        <h3 className="font-manrope text-2xl font-extrabold tracking-tight italic text-primary">Intelligence Briefing</h3>
-                                    </div>
+                                         <div className="w-8 h-8 rounded-lg overflow-hidden">
+                                             <img src="/logo.png" alt="AI" className="w-full h-full object-cover" />
+                                         </div>
+                                         <h3 className="font-manrope text-2xl font-extrabold tracking-tight italic text-primary">Intelligence Briefing</h3>
+                                     </div>
                                     <button
                                         onClick={sendToTelegram}
                                         disabled={sendingTelegram}
@@ -473,7 +489,7 @@ const Dashboard = () => {
                                     <div className="w-1 h-1 rounded-full bg-neutral/30" />
                                     <span className="text-neutral text-[10px] font-bold uppercase tracking-widest hidden sm:inline">{user.company ? `${user.company} Workspace` : 'Personal Workspace'}</span>
                                 </div>
-                                <h2 className="text-3xl sm:text-4xl lg:text-5xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2 leading-none italic">{greeting}, {user.name ? user.name.split(' ')[0] : 'there'}.</h2>
+                                <h2 className="text-2xl sm:text-3xl lg:text-5xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2 leading-none italic">{greeting}, {user.name ? user.name.split(' ')[0] : 'there'}.</h2>
                                 <p className="text-on-surface-variant text-sm lg:text-lg">Priority: <span className="text-tertiary font-bold">{analytics?.priority || 'Roadmap Alignment'}</span>.</p>
                             </div>
                             <button
@@ -481,7 +497,9 @@ const Dashboard = () => {
                                 disabled={loadingBriefing}
                                 className="w-full sm:w-auto bg-surface-container hover:bg-surface-container-highest text-on-surface px-5 py-3 rounded-2xl font-bold transition-all text-sm flex items-center justify-center gap-2 border border-white/5 shadow-xl ai-glow"
                             >
-                                <BrainCircuit size={16} className={loadingBriefing ? 'animate-spin text-primary' : 'text-primary'} />
+                                <div className={`w-8 h-8 overflow-hidden ${loadingBriefing ? 'animate-spin' : ''}`}>
+                                    <img src="/logo.png" alt="AI" className="w-full h-full object-cover" />
+                                </div>
                                 {loadingBriefing ? 'Synthesizing...' : 'Intelligence Brief'}
                             </button>
                         </div>
@@ -494,6 +512,11 @@ const Dashboard = () => {
                         tasks: analytics?.tasks_total || 0,
                         efficiency: analytics?.efficiency || '0%'
                     }} />
+
+                    {/* Intelligence Hub Section */}
+                    <section className="mb-12">
+                        <IntelligenceHub />
+                    </section>
 
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-8 items-stretch">
                         <div className="col-span-1 lg:col-span-6 flex flex-col gap-4 lg:gap-6">
@@ -592,7 +615,9 @@ const Dashboard = () => {
                                 <div className="absolute -left-20 -bottom-20 w-64 h-64 bg-tertiary/5 rounded-full blur-[100px]" />
                                 <div className="relative z-10">
                                     <div className="flex items-center gap-3 mb-5 lg:mb-8">
-                                        <BrainCircuit size={18} className="text-primary" />
+                                        <div className="w-8 h-8 overflow-hidden">
+                                            <img src="/logo.png" alt="AI" className="w-full h-full object-cover" />
+                                        </div>
                                         <h3 className="font-manrope text-base lg:text-xl font-bold tracking-tight">Recent Inbox Highlights</h3>
                                     </div>
 

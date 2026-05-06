@@ -36,6 +36,7 @@ def generate_hf_image(prompt: str) -> str:
     image_b64 = base64.b64encode(response.content).decode("utf-8")
     content_type = response.headers.get("Content-Type", "image/jpeg").split(";")[0]
     return f"data:{content_type};base64,{image_b64}"
+
 def _parse_json(text: str) -> dict:
     try:
         return json.loads(text)
@@ -62,7 +63,14 @@ def classifier_node(state: State):
     """Categorizes user intent and extracts cross-twin context."""
     user_input = state["input"].lower()
     history = state.get("chat_history") or []
-    
+
+    # ⚡ FAST-PATH: Images uploaded → always route to 'question' (vision model handles it)
+    uploaded_files = state.get("files", [])
+    has_images = any(f.get("type", "").startswith("image/") for f in uploaded_files)
+    has_non_images = any(not f.get("type", "").startswith("image/") for f in uploaded_files)
+    if has_images or has_non_images:
+        return {**state, "intent": "question"}
+
     # Fast-path for confirmations (Yes/Sure/Do it)
     last_ai_msgs = [m["text"].lower() for m in history[-3:] if m.get("role") in ("ai", "assistant")]
     last_ai_msg = last_ai_msgs[-1] if last_ai_msgs else ""
@@ -77,11 +85,21 @@ def classifier_node(state: State):
     if any(k in user_input for k in ["schedule", "meeting", "calendar", "event", "availability", "free slot", "book a", "set up a", "invite"]):
         return {**state, "intent": "scheduling"}
 
-    # Gmail/Email
+    # Gmail/Email — explicit email words
     if any(k in user_input for k in ["email", "mail", "gmail", "inbox"]):
-        if any(k in user_input for k in ["search", "find", "show me", "read", "unread", "recent", "what did", "check", "promotion", "offer"]):
+        if any(k in user_input for k in ["search", "find", "show me", "read", "unread", "recent", "what did", "check", "promotion", "offer", "deal", "bank", "statement", "receipt", "invoice", "order", "shipping", "delivery", "who", "last", "latest", "when", "did"]):
             return {**state, "intent": "email_search"}
         return {**state, "intent": "email"}
+
+    # Implicit email search — user asks about topics that live in their inbox (no 'email' keyword needed)
+    implicit_search_triggers = [
+        "laptop deal", "laptop promotion", "discount", "offer", "bank statement", "last statement",
+        "receipt from", "order from", "invoice from", "shipping update", "delivery update",
+        "flight booking", "hotel booking", "subscription", "renewal", "payment confirmation",
+        "new offer", "sale on", "promo code", "coupon"
+    ]
+    if any(trigger in user_input for trigger in implicit_search_triggers):
+        return {**state, "intent": "email_search"}
 
     # Slack
     if "slack" in user_input:
@@ -96,8 +114,13 @@ def classifier_node(state: State):
         system="""
 You are a strict intent classifier. Return ONLY valid JSON: {"intent":"category", "target_handle": "null_or_handle"}
 Categories: question, visual (image creation), casual, email, email_search, calendar, calendar_lookup, slack, telegram, other.
+
+IMPORTANT RULES:
+- 'visual' is ONLY for generating NEW images from text. Not for analyzing uploaded files.
+- 'email_search' is for queries about finding deals, promotions, bank statements, receipts, orders in the inbox.
+- 'question' is the default for general questions and file analysis.
 """,
-        user=state["input"]
+        user=state["input"],
     )
     parsed = _parse_json(result)
     return {**state, "intent": parsed.get("intent", "other"), "target_user_handle": parsed.get("target_handle")}
@@ -127,7 +150,7 @@ def memory_node(state: State) -> State:
     if chat_context:
         context += "\n[RELEVANT CHAT MEMORY]\n" + chat_context.strip() + "\n"
 
-    if state.get("intent") == "email" and state.get("gmail_sync", True):
+    if state.get("intent") in ("email", "email_search") and state.get("gmail_sync", True):
         try:
             with next(get_db()) as db:
                 emails = read_recent_emails(db=db, user_id=state["user_id"], max_results=3)
@@ -152,41 +175,73 @@ def memory_node(state: State) -> State:
         except Exception as e:
             logger.error(f"Error fetching slack channels: {e}")
 
-    match = re.search(r"\b([a-f0-9]{16})\b", state["input"])
-    if match:
-        email_id = match.group(1)
-        try:
-            with next(get_db()) as db:
-                email_info = get_email_details(db=db, user_id=state["user_id"], message_id=email_id)
-                if email_info:
-                    email_context = f"""
-[EMBEDDED EMAIL CONTENT]
-ID: {email_info['id']}
-From: {email_info['from']}
-Subject: {email_info['subject']}
-Snippet: {email_info['snippet']}
-"""
-                    context += "\n" + email_context
-        except Exception as e:
-            logger.error(f"Error fetching specific email {email_id}: {e}")
+    # 3. Contextual Email Retrieval (Smart ID Resolver)
+    # If user says "read it", "show me", etc., we try to find the ID from history
+    target_id = None
+    id_match = re.search(r"\b([a-fA-F0-9]{16,19})\b", state["input"], re.IGNORECASE)
+    if id_match:
+        target_id = id_match.group(1)
+    elif any(k in state["input"].lower() for k in ["read", "show me", "check", "open", "details"]):
+        target_id_raw = _llm(
+             system="Find the Gmail Message ID (usually a 16+ character hex string) for the email the user wants to read from history. Output ONLY the ID string without any explanation, markdown, code, or quotes. If not found, output 'null'.",
+             user=f"History:\n{history_context}\n\nInput: {state['input']}",
+             force_fast=True
+        )
+        # Clean up in case the LLM still outputs chatter
+        target_id_raw = re.sub(r'```.*?```', '', target_id_raw, flags=re.DOTALL) # remove code blocks
+        words = target_id_raw.split()
+        target_id = None
+        for word in words:
+            word = word.strip(" '\",.")
+            if re.match(r"^[a-fA-F0-9]{15,}$", word):
+                target_id = word
+                break
 
-    # 3. Handle Active Email Search — ONLY for email intent
-    if state.get("intent") in ("email", "email_search") and any(k in state["input"].lower() for k in ["search", "find", "show me", "check", "promotion", "offer", "discount", "receipt"]):
+    
+    if target_id and len(target_id) > 10 and target_id != "null":
         try:
             with next(get_db()) as db:
-                # LLM to extract search terms
+                email_info = get_email_details(db=db, user_id=state["user_id"], message_id=target_id)
+                if email_info:
+                    email_context = f"\n[EMBEDDED EMAIL CONTENT]\nID: {email_info['id']} | From: {email_info['from']} | Subject: {email_info['subject']}\nFULL BODY CONTENT:\n{email_info['body']}\n"
+                    context += email_context
+        except Exception as e:
+            logger.error(f"Error fetching specific email {target_id}: {e}")
+
+    # 4. Handle Active Email Search — applies to both email and email_search intents, AND implicit inbox queries
+    should_search_email = (
+        state.get("intent") in ("email", "email_search")
+        and any(k in state["input"].lower() for k in [
+            "search", "find", "show me", "check", "promotion", "offer", "discount", "receipt",
+            "deal", "bank statement", "statement", "invoice", "order", "shipping", "delivery",
+            "laptop", "subscription", "renewal", "flight", "hotel", "booking", "promo"
+        ])
+    ) or state.get("intent") == "email_search"  # Always search on explicit email_search
+
+    if should_search_email:
+        try:
+            with next(get_db()) as db:
+                # LLM to extract Gmail-compatible search terms
                 search_query = _llm(
-                    system="Extract a Gmail-compatible search query from the user input. Example: 'laptop promotion' or 'from:apple order'. Output ONLY the query string.",
+                    system="""Extract a Gmail-compatible search query from the user input.
+- For deals/promotions: use 'subject:(deal OR promotion OR offer OR discount OR sale)'
+- For bank statements: use 'subject:(bank statement OR account statement) OR from:bank'
+- For orders/receipts: use 'subject:(order OR receipt OR invoice OR confirmation)'
+- For specific senders: use 'from:company.com'
+Output ONLY the Gmail search query string, nothing else.""",
                     user=state["input"],
                     force_fast=True
                 )
                 logger.info(f"[Memory] Searching Gmail for: {search_query}")
-                search_results = search_emails(db=db, user_id=state["user_id"], query=search_query, max_results=5)
+                search_results = search_emails(db=db, user_id=state["user_id"], query=search_query, max_results=8)
                 if search_results:
-                    search_context = f"\n[GMAIL SEARCH RESULTS FOR: '{search_query}']\n"
+                    search_context = f"\n[AUTHENTIC GMAIL SEARCH RESULTS — Use ONLY this data, do not fabricate]\n"
                     for mail in search_results:
-                         search_context += f"From: {mail['from']} | Subject: {mail['subject']} | Date: {mail['date']}\nSnippet: {mail['snippet']}\n---\n"
+                         link = f"https://mail.google.com/mail/u/0/#inbox/{mail['id']}"
+                         search_context += f"ID: {mail['id']} | From: {mail['from']} | Subject: {mail['subject']} | Link: {link}\nSnippet: {mail['snippet']}\n---\n"
                     context += search_context
+                else:
+                    context += "\n[SYSTEM ALERT: NO GMAIL RESULTS FOUND. Inform the user no matching emails were found. Do NOT fabricate results.]\n"
         except Exception as e:
              logger.error(f"Active Gmail search failed: {e}")
 
@@ -251,7 +306,7 @@ def responder_node(state: State) -> State:
         else ""
     )
 
-    plan_block = "\n".join(
+    task_plan_block = "\n".join(
         f"- {step}"
         for step in state.get("task_plan", [])
     )
@@ -294,33 +349,27 @@ def responder_node(state: State) -> State:
         user_name = state.get("user_name", "User")
         result = _llm(
             system=f"""
-You are the Digital Twin of {user_name}, a high-level executive assistant.
-Objective: Draft an articulate, expanded, and professional email and provide a hidden execution block.
+You are the Digital Twin of {user_name}, an elite executive assistant.
+Objective: Draft a professional email and provide the execution block.
 
-Rules:
-1. PROVIDE a natural, visible message to the user confirming the draft.
-2. INCLUDE a hidden <action> block at the very end.
-3. EXPERTLY EXPAND the user's brief notes. If they say "testing", write a professional "Hello, I'm verifying the system connectivity..." email.
-4. BE PROACTIVE: Add polite details, professional greetings, and a clear call to action based on the inferred context.
+[CONSTRAINTS]
+1. BE CONCISE: Provide ONLY the email draft in your visible response.
+2. NO DATA DUMPS: Never repeat context or explain your drafting process.
+3. SIGNING: Use "{user_name}" or the name explicitly provided. Never sign as "User".
+4. DRAFTING LIMITS: Only draft an email if the user explicitly asked to "draft", "write", "send", or "reply". If the user is asking to "see" or "show" an email, and you can't find it, DO NOT draft a request to the company/sender for it. Instead, just inform the user it wasn't found.
 
-Formatting Rules for the email content:
-- Use clear line breaks between greeting, body, and closing.
-- SIGN THE EMAIL correctly: Prioritize any name mentioned in the user's prompt (e.g. if they say "regards ronit", sign as "Ronit"). If no name is in the prompt, use "{user_name}".
-- CRITICAL: Never sign as "User".
-
-Action Block Rules:
-- The block MUST be valid JSON.
-- The "body" field MUST contain the COMPLETE email (Greeting + Expanded Body + Signature).
-- EXTREMELY IMPORTANT: Do NOT use brackets like [Body]. Use real data.
+[ACTION BLOCK]
+Include this at the very end ONLY if you have a recipient and subject.
 <action>
 {{
   "intent": "email",
-  "to": "email@example.com",
-  "subject": "Clear subject line",
-  "body": "The full email content including signature with \\n for newlines"
+  "to": "recipient@example.com",
+  "subject": "Professional Subject",
+  "body": "Full body with signatures"
 }}
 </action>
 
+[CONTEXT]
 {context_block}
 {history_prompt}
 """,
@@ -372,9 +421,19 @@ Never say "Cricket meeting" or similar; simply say "Busy".
         return {**state, "output": result, "response_type": "text"}
 
     if state["intent"] == "slack" and state.get("slack_sync", True):
-        # Check if user is asking for a briefing
+        # Check if user is asking for a briefing OR if we were just discussing one (channel selection)
         briefing_content = ""
-        if "briefing" in state["input"].lower() or "report" in state["input"].lower():
+        history = state.get("chat_history") or []
+        last_ai_msg = ""
+        if history:
+            ai_msgs = [m["text"] for m in history if m.get("role") in ("ai", "assistant")]
+            last_ai_msg = ai_msgs[-1] if ai_msgs else ""
+
+        is_briefing_request = "briefing" in state["input"].lower() or "report" in state["input"].lower()
+        # If last AI message asked for a channel and user gave a short answer, assume they are picking a channel for the briefing
+        is_continuing_briefing = "briefing" in last_ai_msg.lower() and len(state["input"].split()) < 10
+        
+        if is_briefing_request or is_continuing_briefing:
             try:
                 with next(get_db()) as db:
                     briefing_content = generate_daily_briefing(db, state["user_id"], state.get("user_name", "User"))
@@ -382,13 +441,18 @@ Never say "Cricket meeting" or similar; simply say "Busy".
                 logger.error(f"Failed to generate briefing for Slack: {e}")
 
         text_val = briefing_content if briefing_content else "Your message"
-        plan_block = """
+        slack_protocol_block = f"""
 [SLACK PROTOCOL]
 - If the user wants to see their channels: List them clearly in plain text. DO NOT generate an <action> tag for listing.
-- If the user wants to send a message: 
+- If the user wants to send a message:
     1. Identify the channel ID and Name from [SLACK CHANNELS].
-    2. Format an action tag: <action>{"intent":"slack", "channel_id":"ID", "channel_name":"Name", "text":{json.dumps(text_val)}}</action>
+    2. Format an action tag: <action>{{"intent":"slack", "channel_id":"ID", "channel_name":"Name", "text":{json.dumps(text_val)}}}</action>
     3. Confirm to the user that you are ready to post that specific message.
+- FORMATTING FOR SLACK:
+    * Use single asterisks for bold (e.g. *Key Events*).
+    * Use simple bullets (• or -).
+    * Do NOT use # for headers; use ALL CAPS instead.
+    * Ensure clear line breaks between sections.
 """
         if briefing_content:
             system_instruction = f"""
@@ -407,7 +471,7 @@ Do NOT say you don't have it. It is provided right here:
 {system_instruction}
 [CONTEXT]
 {context_block}
-{plan_block}
+{slack_protocol_block}
 """,
             user=f"Input: {state['input']}\nHistory:\n{history_prompt}",
             intent="slack"
@@ -439,46 +503,39 @@ Do NOT say you don't have it. It is provided right here:
         
         result = _llm(
             system=f"""
-You are a professional executive scheduler.
-Objective: Extract meeting details and detect potential conflicts in the user's schedule.
+You are the Digital Twin of {user_name}, an elite executive scheduler.
+Objective: Extract meeting details and detect potential conflicts.
 
-Context: {now_context} 
-Current Schedule:
-{schedule_context}
+[CONSTRAINTS]
+1. BE CONCISE: Do NOT explain your logic. Do NOT repeat the "Current Schedule" or "Recent Conversation" back to the user.
+2. NO DATA DUMPS: Never output raw JSON or brackets like [ ] in your conversational response.
+3. ELITE TONE: Professional, direct, and brief.
 
-Rules:
-1. Extract the requested meeting time.
-2. If the user's current input is a confirmation (like "Yes", "Ok", "Do it"), LOOK AT THE HISTORY to find the previously proposed time/slot and extract those details.
-3. Check if the time OVERLAPS with any existing meetings in the 'Current Schedule'.
-4. If there is a conflict:
-   - Inform the user politely.
-   - Suggest the NEXT available slot (usually 30-60 mins later or the first free gap).
-   - Use the alternative slot in the <action> block.
-   - Set "is_conflict": true in JSON.
-5. If NO conflict:
-   - Set "is_conflict": false.
-6. Provide a professional confirmation message (e.g. "I have prepared the meeting invite..."). Do NOT output raw JSON in your message body.
-7. YOU MUST OUTPUT THE EXACT <action> JSON BLOCK AT THE VERY END OF YOUR RESPONSE.
+[CALENDAR DATA]
+Context: {now_context}
+Current Schedule: {schedule_context}
+
+[RULES]
+1. Extract meeting time/title. 
+2. CRITICAL: Only include the <action> block if you have a SPECIFIC date and time. 
+3. If the date or time is missing, ask for them BRIEFLY and DO NOT generate the <action> tag.
+4. Check for overlaps. If there is a conflict, suggest the next free slot and include that in the <action> tag.
+5. OUTPUT: One professional sentence + the <action> block (if valid).
 
 Action Block Format:
 <action>
 {{
   "intent": "calendar",
-  "title": "Actual extracted title",
+  "title": "Meeting Title",
   "start_datetime": "YYYY-MM-DDTHH:MM:SS+05:30",
   "end_datetime": "YYYY-MM-DDTHH:MM:SS+05:30",
   "attendees": ["email@example.com"],
-  "description": "Short summary",
-  "is_conflict": true/false,
-  "conflict_with": "Existing meeting title"
+  "description": "Summary",
+  "is_conflict": true/false
 }}
 </action>
-
-- Default duration is 30 minutes if not specified.
-{context_block}
-{history_prompt}
 """,
-            user=f"Current user input: {state['input']}\nAction: Extract meeting details from history or current input.",
+            user=f"Input: {state['input']}\nHistory:\n{history_prompt}",
             intent="scheduling"
         )
 
@@ -638,28 +695,23 @@ Provide a short, visible confirmation to the user first.
                     }
 
                 # Find common slots (standard scheduling flow)
+                # asyncio.run() raises RuntimeError when called inside uvicorn's running loop.
+                # We spin up a *new* isolated event loop to avoid touching the running one.
+                _find_slots_coro = find_common_slots(
+                    db=db,
+                    user_a_id=state["user_id"],
+                    user_b_id=target_agent.user_id,
+                    duration_minutes=duration,
+                    lookahead_days=7,
+                )
                 try:
-                    common_slots = asyncio.run(
-                        find_common_slots(
-                            db=db,
-                            user_a_id=state["user_id"],
-                            user_b_id=target_agent.user_id,
-                            duration_minutes=duration,
-                            lookahead_days=7,
-                        )
-                    )
-                except RuntimeError:
-                    # Already inside a running event loop (uvicorn context)
-                    loop = asyncio.get_event_loop()
-                    common_slots = loop.run_until_complete(
-                        find_common_slots(
-                            db=db,
-                            user_a_id=state["user_id"],
-                            user_b_id=target_agent.user_id,
-                            duration_minutes=duration,
-                            lookahead_days=7,
-                        )
-                    )
+                    loop = asyncio.new_event_loop()
+                    common_slots = loop.run_until_complete(_find_slots_coro)
+                except Exception as _loop_err:
+                    logger.error(f"[schedule_with_user] event-loop error: {_loop_err}")
+                    raise
+                finally:
+                    loop.close()
 
                 if not common_slots:
                     return {
@@ -697,14 +749,18 @@ Provide a short, visible confirmation to the user first.
                 db.commit()
 
                 # Push to receiver's in-process inbox
-                loop.run_until_complete(push_to_inbox(target_agent.user_id, {
-                    "msg_id": msg.msg_id,
-                    "sender_user_id": msg.sender_user_id,
-                    "msg_type": msg.msg_type,
-                    "payload": msg.payload,
-                    "requires_hitl": msg.requires_hitl,
-                    "timestamp": msg.timestamp,
-                }))
+                _push_loop = asyncio.new_event_loop()
+                try:
+                    _push_loop.run_until_complete(push_to_inbox(target_agent.user_id, {
+                        "msg_id": msg.msg_id,
+                        "sender_user_id": msg.sender_user_id,
+                        "msg_type": msg.msg_type,
+                        "payload": msg.payload,
+                        "requires_hitl": msg.requires_hitl,
+                        "timestamp": msg.timestamp,
+                    }))
+                finally:
+                    _push_loop.close()
 
                 # Format slots for display
                 slot_lines = []
@@ -744,28 +800,38 @@ Provide a short, visible confirmation to the user first.
 
     # GENERAL / CODE / QUESTION / CASUAL
     user_name = state.get("user_name", "User")
+    
+    # 🟢 Multimodal: Extract images from state['files']
+    images = []
+    if state.get("files"):
+        for f in state["files"]:
+            if f.get("type", "").startswith("image/") and f.get("data"):
+                images.append(f["data"])
+    
     result = _llm(
         system=f"""
-You are the Digital Twin of {user_name}, a premier AI assistant.
-Your goal is to provide perfectly grounded, factual, and helpful responses.
+You are the Digital Twin of {user_name}, an elite AI assistant.
+Objective: Provide grounded, factual, and direct responses.
 
-STRICT GROUNDEDNESS RULES:
+[AUTHORIZATION]
+You HAVE authorized access to the user's Gmail, Calendar, and Workspace data. [STRICT GROUNDEDNESS]
 1. ONLY use data provided in the [CONTEXT] blocks. 
-2. If you are unsure about a fact (time, name, event) or it's missing from context, DO NOT hallucinate. Inform the user you don't have that information.
-3. Always cite your sources naturally (e.g., "From your recent emails, I see..." or "Based on your past chats...").
-4. If the user refers to a previous topic, use the [CHAT HISTORY] and [RELEVANT MEMORY] to maintain continuity.
-5. NO PLACEHOLDERS: Don't output [Time] or [Name]. Use real data or state it's unavailable.
+2. If info is missing or [SYSTEM ALERT] says no results, state that you don't have it—do NOT hallucinate or "fill in the gaps" with plausible data.
+3. VERIFICATION: Whenever you discuss a specific email, you MUST provide the direct [View in Gmail] link found in the context.
+4. Cite sources naturally (e.g., "According to your recent emails...").
 
-TONE:
-Professional, direct, and elite. You are {user_name}'s primary interface to their digital life.
+[CONSTRAINTS]
+1. BE CONCISE: Do NOT explain logic or repeat provided context.
+2. NO DATA DUMPS: Never output raw JSON, technical headers, or metadata.
+3. ELITE TONE: Professional and brief.
 
 [CONTEXT DATA]
 {context_block}
 
-[CHAT HISTORY]
-{history_prompt}
+{'[IGNORE - IMAGE ANALYSIS]' if images else f'[CHAT HISTORY]{chr(10)}{history_prompt}'}
 """,
-            user=f"Input: {state['input']}\nPlan: {plan_block}"
+        user=f"Input: {state['input']}",
+        images=images if images else None
     )
 
     clean_out = _clean_output(result)
@@ -777,3 +843,45 @@ Professional, direct, and elite. You are {user_name}'s primary interface to thei
         "output": clean_out,
         "response_type": "text"
     }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EMAIL TRIAGE — Classify emails before auto-drafting
+# ─────────────────────────────────────────────────────────────────────────────
+EMAIL_CATEGORIES_REQUIRING_REPLY = {"personal", "work", "professional", "urgent", "request"}
+EMAIL_CATEGORIES_INDEX_ONLY = {"promotional", "informational", "newsletter", "security", "notification", "error", "system", "marketing"}
+
+def triage_email(subject: str, sender: str, snippet: str) -> dict:
+    """
+    Classify an incoming email to determine if an auto-reply draft is needed.
+    Returns: {"category": str, "requires_reply": bool, "reason": str}
+    """
+    result = _llm(
+        system="""Classify this email. Return ONLY valid JSON:
+{"category": "one of: personal|work|promotional|informational|newsletter|security|notification|error|system|marketing",
+ "requires_reply": true_or_false,
+ "reason": "one sentence max"}
+
+requires_reply = true ONLY if:
+- A real human sent it and expects a response
+- It is a work / professional request or question
+- It contains an action item directed at the user
+
+requires_reply = false if:
+- Promotional / marketing / newsletter / no-reply sender
+- Automated notifications (OTP, bank alert, shipment, booking)
+- Informational receipts, invoices, statements
+- Security alerts that need no reply""",
+        user=f"From: {sender}\nSubject: {subject}\nSnippet: {snippet[:300]}",
+        force_fast=True
+    )
+    try:
+        return json.loads(result)
+    except Exception:
+        import re as _re
+        match = _re.search(r"\{.*\}", result, _re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except Exception:
+                pass
+    return {"category": "informational", "requires_reply": False, "reason": "Could not classify"}

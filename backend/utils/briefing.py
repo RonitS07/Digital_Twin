@@ -3,69 +3,68 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from tools.gmail_tool import read_recent_emails
 from tools.calendar_tool import get_upcoming_events
+from tools.google_oauth import is_scope_sufficient, CALENDAR_SCOPES
 from graph.llm_utils import _llm
 
 logger = logging.getLogger(__name__)
 
 def generate_daily_briefing(db: Session, user_id: str, user_name: str):
     """
-    Generates a daily briefing for the user based on their inbox and calendar for LAST 24 HOURS.
+    Generates a daily briefing for the user based on their inbox and calendar.
+    Gracefully skips services the user hasn't connected or authorized.
     """
-    email_text = "No new activity in the last 24 hours."
-    event_text = "No scheduled events for today."
+    email_text = "No new inbox activity."
+    event_text = "No calendar events available."
     
     try:
-        # 1. Fetch data
+        # 1. Fetch Gmail (only if connected)
         try:
-            emails = read_recent_emails(db=db, user_id=user_id, max_results=20)
+            emails = read_recent_emails(db=db, user_id=user_id, max_results=10)
             if emails:
-                email_text = ""
-                for m in emails:
-                    email_text += f"- From: {m['from']} | Subject: {m['subject']} | Snippet: {m['snippet']}\n"
+                lines = []
+                for m in emails[:8]:  # Cap at 8 to stay under token limits
+                    snippet = (m.get('snippet') or '')[:100]
+                    lines.append(f"- From: {m['from']} | Subject: {m['subject']} | {snippet}")
+                email_text = "\n".join(lines)
         except Exception as e:
             logger.warning(f"Gmail fetch failed for briefing: {e}")
-            email_text = "⚠️ Unable to sync latest emails. Please verify Gmail connection."
+            email_text = "⚠️ Gmail not connected or access revoked."
 
-        try:
-            events = get_upcoming_events(db=db, user_id=user_id, max_results=20)
-            if events:
-                event_text = ""
-                for e in events:
-                    event_text += f"- Event: {e['title']} | Time: {e['start']}\n"
-        except Exception as e:
-            logger.warning(f"Calendar fetch failed for briefing: {e}")
-            event_text = "⚠️ Unable to sync calendar events. Please verify Google Calendar connection."
+        # 2. Fetch Calendar — only if user has granted calendar scopes
+        if is_scope_sufficient(db=db, user_id=user_id, scopes=CALENDAR_SCOPES):
+            try:
+                events = get_upcoming_events(db=db, user_id=user_id, max_results=10)
+                if events:
+                    lines = []
+                    for e in events[:8]:
+                        lines.append(f"- {e['title']} | {e['start']}")
+                    event_text = "\n".join(lines)
+                else:
+                    event_text = "No upcoming events."
+            except Exception as e:
+                logger.warning(f"Calendar fetch failed for briefing: {e}")
+                event_text = "⚠️ Calendar sync failed."
+        else:
+            event_text = "Calendar not connected (missing scope). Reconnect Google in Settings."
         
         now = datetime.now()
         
-        # 3. Use LLM to summarize
-        prompt = f"""
-You are the Digital Twin of {user_name}. 
-Prepare a comprehensive LAST 24 HOURS REPORT and DAILY BRIEFING for {user_name}.
-
-CONTEXT:
-Inbox Activity (Last 24h):
-{email_text}
-
-Today's Schedule:
-{event_text}
-
-Current Time: {now.strftime('%Y-%m-%d %H:%M')}
-
-INSTRUCTIONS:
-1. Start with "LAST 24 HOURS REPORT - {now.strftime('%B %d, %Y')}"
-2. Summarize the events and priorities using SHORT BULLET POINTS.
-3. Show ONLY what is absolutely necessary for the user to understand.
-4. Do NOT write long paragraphs. Keep it extremely concise and scan-friendly.
-5. Highlight any missed opportunities or urgent items. Ensure you mention if any service is disconnected if the text contains warnings.
-6. Use a direct, executive tone.
-"""
+        # 3. Use LLM to summarize — keep prompt compact to avoid rate limits
+        prompt = (
+            f"LAST 24 HOURS REPORT - {now.strftime('%B %d, %Y')}\n\n"
+            f"Inbox Activity:\n{email_text}\n\n"
+            f"Today's Schedule:\n{event_text}\n\n"
+            f"Time: {now.strftime('%H:%M')}\n\n"
+            f"Write a short, executive-style briefing using bullet points. "
+            f"Mention any disconnected services. Be concise. No JSON or action tags."
+        )
         briefing = _llm(
-            system=f"You are the Digital Twin of {user_name}, a high-level executive summarized.",
-            user=prompt
+            system=f"You are the Digital Twin of {user_name}. Output ONLY the briefing text, no tags.",
+            user=prompt,
+            force_fast=True
         )
         
         return briefing
     except Exception as e:
         logger.error(f"Critical error in briefing generation: {e}")
-        return f"Good morning {user_name}. I had trouble accessing your primary data intelligence. Please ensure your Google integrations are active in Settings."
+        return f"Good morning {user_name}. I had trouble generating your briefing. Please ensure your integrations are active in Settings."

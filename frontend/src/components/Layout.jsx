@@ -9,15 +9,83 @@ import {
     Settings,
     Plus,
     Bell,
-    Sparkles,
-    BrainCircuit,
     HelpCircle,
     X,
     Users,
     Menu,
     ChevronRight,
+    HardDrive,
+    Keyboard,
+    Zap,
+    Shield,
+    BookOpen,
+    MoreHorizontal,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
+
+const HelpModal = ({ onClose }) => (
+    <div className="fixed inset-0 bg-surface-base/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <motion.div
+            initial={{ y: '100%', opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: '100%', opacity: 0 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="bg-surface-container w-full sm:max-w-xl rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 border border-neutral/10 shadow-2xl relative max-h-[85vh] overflow-y-auto custom-scrollbar"
+        >
+            <div className="w-10 h-1 bg-neutral/30 rounded-full mx-auto mb-5 sm:hidden" />
+            <button onClick={onClose} className="absolute right-5 top-5 text-neutral hover:text-on-surface transition-colors p-1"><X size={20} /></button>
+            <h2 className="text-xl sm:text-2xl font-manrope font-extrabold text-on-surface mb-6 flex items-center gap-2">
+                <BookOpen size={22} className="text-primary" /> Help & Documentation
+            </h2>
+
+            <div className="space-y-6">
+                <div>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral mb-3 flex items-center gap-2"><Keyboard size={14} /> Keyboard Shortcuts</h3>
+                    <div className="space-y-2">
+                        {[
+                            ['Enter', 'Send message'],
+                            ['Shift + Enter', 'New line in chat'],
+                            ['Ctrl + /', 'Focus chat input'],
+                        ].map(([key, desc]) => (
+                            <div key={key} className="flex items-center justify-between p-3 rounded-xl bg-surface-base">
+                                <span className="text-sm text-on-surface-variant">{desc}</span>
+                                <kbd className="px-2 py-0.5 rounded bg-surface-container-highest text-[11px] font-mono text-on-surface font-bold">{key}</kbd>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral mb-3 flex items-center gap-2"><Zap size={14} /> AI Twin Commands</h3>
+                    <div className="space-y-2">
+                        {[
+                            ['"Draft an email to..."', 'Compose & send email'],
+                            ['"Schedule a meeting on..."', 'Create calendar event'],
+                            ['"Send a Slack message to #..."', 'Post to Slack channel'],
+                            ['"Push to Telegram"', 'Send Telegram notification'],
+                            ['"Generate an image of..."', 'Create AI visual'],
+                            ['"Summarize my inbox"', 'Get email digest'],
+                        ].map(([cmd, desc]) => (
+                            <div key={cmd} className="p-3 rounded-xl bg-surface-base">
+                                <p className="text-sm font-mono text-primary font-medium">{cmd}</p>
+                                <p className="text-xs text-on-surface-variant mt-0.5">{desc}</p>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral mb-3 flex items-center gap-2"><Shield size={14} /> Privacy</h3>
+                    <p className="text-sm text-on-surface-variant leading-relaxed">
+                        Your data is processed on-device and via your own API credentials. Emails, calendar events, and messages are only accessed when you explicitly connect integrations in Settings.
+                    </p>
+                </div>
+            </div>
+
+            <button onClick={onClose} className="w-full mt-6 py-3 bg-primary text-white font-bold rounded-xl hover:brightness-110 transition-all">Close</button>
+        </motion.div>
+    </div>
+)
 
 const TaskModal = ({ onClose }) => {
     const { auth: storeAuth, addTask } = useStore();
@@ -91,7 +159,7 @@ const TaskModal = ({ onClose }) => {
                             <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] transition-all ${auto ? 'right-[3px]' : 'left-[3px]'}`} />
                         </div>
                     </div>
-                    <button type="submit" disabled={isDelegating} className="w-full py-4 bg-primary text-surface-base font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all outline-none disabled:opacity-50">
+                    <button type="submit" disabled={isDelegating} className="w-full py-4 bg-primary text-surface-base font-bold rounded-xl hover:brightness-110 active:scale-95 transition-transform flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest outline-none disabled:opacity-50">
                         {isDelegating ? 'Delegating to AI Twin...' : 'Save Task'}
                     </button>
                 </form>
@@ -120,30 +188,87 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, badge }) => (
     </motion.div>
 )
 
-// Mobile bottom nav tab
-const MobileTab = ({ icon: Icon, label, active, onClick, badge }) => (
+// ── FLOATING MOBILE NAV TAB ──
+const FloatingTab = ({ icon: Icon, active, onClick, badge, isCenter }) => (
     <button
         onClick={onClick}
-        className={`flex flex-col items-center justify-center gap-0.5 flex-1 py-2 transition-all relative ${active ? 'text-primary' : 'text-neutral'}`}
+        className={`relative flex items-center justify-center transition-all duration-300 ${
+            isCenter
+                ? 'w-[54px] h-[54px] -mt-7 rounded-[18px] bg-primary text-white active:scale-90'
+                : 'w-12 h-12 rounded-xl active:scale-90'
+        } ${
+            !isCenter && active ? 'text-primary' : !isCenter ? 'text-neutral/60' : ''
+        }`}
+        style={isCenter ? {
+            boxShadow: '0 0 20px rgba(var(--primary-rgb), 0.4), 0 4px 16px rgba(var(--primary-rgb), 0.3), 0 0 40px rgba(var(--primary-rgb), 0.15)'
+        } : active ? {
+            filter: 'drop-shadow(0 0 6px rgba(var(--primary-rgb), 0.3))'
+        } : {}}
     >
-        <div className={`p-1.5 rounded-xl transition-all ${active ? 'bg-primary/15' : ''}`}>
-            <Icon size={21} />
+        <div className={`transition-all duration-200 ${
+            isCenter
+                ? ''
+                : active
+                    ? 'p-2 rounded-xl bg-primary/15 ring-1 ring-primary/20'
+                    : 'p-2'
+        }`}>
+            <Icon size={isCenter ? 22 : 21} strokeWidth={isCenter || active ? 2.4 : 1.7} />
         </div>
-        <span className="text-[9px] font-bold uppercase tracking-wide">{label}</span>
         {badge > 0 && (
-            <span className="absolute top-1.5 right-[calc(50%-14px)] w-3.5 h-3.5 bg-primary rounded-full flex items-center justify-center text-[8px] font-black text-white">
+            <span className={`absolute ${isCenter ? '-top-1 -right-1' : 'top-1 right-0.5'} w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] font-black text-white ring-2 ring-surface-base`}>
                 {badge}
             </span>
         )}
+        {/* Glowing active indicator pill */}
+        {active && !isCenter && (
+            <motion.div
+                layoutId="activeNavTab"
+                className="absolute -bottom-0.5 w-5 h-[3px] rounded-full bg-primary"
+                style={{ boxShadow: '0 0 8px rgba(var(--primary-rgb), 0.6), 0 0 20px rgba(var(--primary-rgb), 0.3)' }}
+                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+            />
+        )}
     </button>
+)
+
+// ── MORE MENU (overflow items) ──
+const MoreMenu = ({ items, currentView, setView, onClose }) => (
+    <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.95 }}
+        transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+        className="absolute bottom-full right-2 mb-3 bg-surface-container/95 backdrop-blur-2xl border border-neutral/10 rounded-2xl shadow-2xl p-1.5 min-w-[170px] z-50"
+    >
+        {items.map(item => (
+            <button
+                key={item.id}
+                onClick={() => { setView(item.id); onClose(); }}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left transition-all ${
+                    currentView === item.id
+                        ? 'bg-primary/15 text-primary'
+                        : 'text-on-surface-variant hover:bg-surface-container-high'
+                }`}
+            >
+                <item.icon size={17} />
+                <span className="text-sm font-medium">{item.label}</span>
+                {item.badge > 0 && (
+                    <span className="ml-auto w-4 h-4 bg-primary rounded-full flex items-center justify-center text-[8px] font-black text-white">
+                        {item.badge}
+                    </span>
+                )}
+            </button>
+        ))}
+    </motion.div>
 )
 
 const Layout = ({ children, currentView, setView }) => {
     const { auth } = useStore();
     const user = auth.user || {};
     const [isTaskModalOpen, setTaskModalOpen] = useState(false);
+    const [isHelpOpen, setHelpOpen] = useState(false);
     const [agentUnread, setAgentUnread] = useState(0);
-    const [isMobileMenuOpen, setMobileMenuOpen] = useState(false);
+    const [isMoreOpen, setMoreOpen] = useState(false);
 
     // Poll for unread agent inbox messages every 30s
     React.useEffect(() => {
@@ -166,25 +291,35 @@ const Layout = ({ children, currentView, setView }) => {
     const navItems = [
         { id: 'home', icon: Home, label: 'Home' },
         { id: 'chat', icon: MessageSquare, label: 'Chat' },
+        { id: 'files', icon: HardDrive, label: 'Files' },
         { id: 'workspace', icon: LayoutGrid, label: 'Workspace' },
         { id: 'activity', icon: ActivityIcon, label: 'Activity' },
         { id: 'agents', icon: Users, label: 'Network', badge: agentUnread },
         { id: 'settings', icon: Settings, label: 'Settings' },
     ];
 
+    // Mobile: 4 primary tabs + More for overflow
+    const primaryMobileTabs = [navItems[0], navItems[1], navItems[4], navItems[6]]; // Home, Chat, Activity, Settings
+    const overflowItems = [navItems[2], navItems[3], navItems[5]]; // Files, Workspace, Network
+
     const viewLabel = navItems.find(n => n.id === currentView)?.label || 'Dashboard';
+    const isOverflowActive = overflowItems.some(item => item.id === currentView);
+
+    // Hide layout chrome on Chat view (Chat has its own header)
+    const isChatView = currentView === 'chat';
 
     return (
         <div className="flex h-screen overflow-hidden bg-surface-base text-on-surface font-inter">
             <AnimatePresence>
                 {isTaskModalOpen && <TaskModal onClose={() => setTaskModalOpen(false)} />}
+                {isHelpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
             </AnimatePresence>
 
             {/* ── DESKTOP SIDEBAR (hidden on mobile) ── */}
             <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-64 bg-surface-container border-r border-neutral/10 flex-col p-5 z-40">
                 <div className="flex items-center gap-3 mb-8 px-2">
-                    <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center ai-glow text-surface-base">
-                        <BrainCircuit size={20} className="text-white" />
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden ai-glow">
+                        <img src="/logo.png" alt="AI Twin Logo" className="w-full h-full object-cover" />
                     </div>
                     <div>
                         <h1 className="text-primary font-manrope font-extrabold tracking-tighter text-base leading-tight uppercase">AI Twin</h1>
@@ -212,21 +347,19 @@ const Layout = ({ children, currentView, setView }) => {
                         <Plus size={14} />
                         New Task
                     </button>
-                    <div className="opacity-60">
-                        <SidebarItem icon={HelpCircle} label="Help & Center" onClick={() => alert("Support Phase 3")} />
-                    </div>
+                    <SidebarItem icon={HelpCircle} label="Help & Docs" onClick={() => setHelpOpen(true)} />
                 </div>
             </aside>
 
             {/* ── MAIN CONTENT ── */}
             <div className="lg:ml-64 flex-1 flex flex-col min-w-0 h-full">
 
-                {/* ── HEADER ── */}
-                <header className="h-14 lg:h-16 flex items-center justify-between px-4 lg:px-8 bg-surface-base/90 backdrop-blur-3xl sticky top-0 z-30 border-b border-neutral/5 shrink-0">
+                {/* ── HEADER (hidden on mobile when in Chat view — Chat has its own) ── */}
+                <header className={`h-14 lg:h-16 flex items-center justify-between px-4 lg:px-8 bg-surface-base/90 backdrop-blur-3xl sticky top-0 z-30 border-b border-neutral/5 shrink-0 ${isChatView ? 'hidden lg:flex' : ''}`}>
                     {/* Mobile: logo + view title */}
                     <div className="flex items-center gap-3 lg:hidden">
-                        <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center ai-glow text-white">
-                            <BrainCircuit size={16} className="text-white" />
+                        <div className="w-8 h-8 rounded-xl flex items-center justify-center overflow-hidden ai-glow">
+                            <img src="/logo.png" alt="AI Twin Logo" className="w-full h-full object-cover" />
                         </div>
                         <span className="font-manrope font-extrabold text-sm tracking-tight text-on-surface">{viewLabel}</span>
                     </div>
@@ -240,7 +373,9 @@ const Layout = ({ children, currentView, setView }) => {
                             </>
                         ) : (
                             <div className="flex items-center gap-2">
-                                <BrainCircuit size={15} className="text-primary animate-pulse" />
+                                <div className="w-8 h-8 overflow-hidden animate-pulse">
+                                    <img src="/logo.png" alt="AI" className="w-full h-full object-cover" />
+                                </div>
                                 <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral/70">System Oversight Active</span>
                             </div>
                         )}
@@ -248,15 +383,6 @@ const Layout = ({ children, currentView, setView }) => {
 
                     {/* Right side controls */}
                     <div className="flex items-center gap-3 lg:gap-6">
-                        {/* New Task button - mobile only (+ icon) */}
-                        <button
-                            onClick={() => setTaskModalOpen(true)}
-                            className="lg:hidden p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                            aria-label="New Task"
-                        >
-                            <Plus size={18} />
-                        </button>
-
                         <div className="hidden lg:flex flex-col items-end">
                             <span className="text-[10px] uppercase tracking-widest text-neutral font-bold">System Status</span>
                             <span className="text-xs text-primary font-medium flex items-center gap-2">
@@ -287,32 +413,83 @@ const Layout = ({ children, currentView, setView }) => {
                 </header>
 
                 {/* ── PAGE CONTENT ── */}
-                <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
+                <main className={`flex-1 overflow-y-auto lg:pb-0 ${isChatView ? 'pb-0' : 'pb-32'}`}>
                     {children}
                 </main>
             </div>
 
-            {/* ── MOBILE BOTTOM NAV BAR ── */}
-            <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-surface-container/95 backdrop-blur-xl border-t border-neutral/10 flex items-center z-40 safe-area-pb"
-                style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-            >
-                {navItems.slice(0, 5).map(item => (
-                    <MobileTab
-                        key={item.id}
-                        icon={item.icon}
-                        label={item.label}
-                        active={currentView === item.id}
-                        onClick={() => setView(item.id)}
-                        badge={item.badge}
+            {/* ── MORE MENU BACKDROP ── */}
+            <AnimatePresence>
+                {isMoreOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setMoreOpen(false)}
+                        className="fixed inset-0 bg-black/10 z-40 lg:hidden"
                     />
-                ))}
-                <MobileTab
-                    icon={Settings}
-                    label="Settings"
-                    active={currentView === 'settings'}
-                    onClick={() => setView('settings')}
-                />
-            </nav>
+                )}
+            </AnimatePresence>
+
+            {/* ── FUTURISTIC FLOATING MOBILE NAV BAR ── */}
+            <div className={`lg:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-center pointer-events-none ${isChatView ? 'hidden' : ''}`}
+                 style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+            >
+                <nav className="pointer-events-auto relative mx-5 w-full max-w-sm">
+                    {/* More Menu Popover */}
+                    <AnimatePresence>
+                        {isMoreOpen && (
+                            <MoreMenu
+                                items={overflowItems}
+                                currentView={currentView}
+                                setView={setView}
+                                onClose={() => setMoreOpen(false)}
+                            />
+                        )}
+                    </AnimatePresence>
+
+                    {/* The floating bar */}
+                    <div className="floating-nav flex items-end justify-around px-1 pt-2 pb-2 rounded-[20px]">
+                        {/* Left tabs */}
+                        {primaryMobileTabs.slice(0, 2).map(item => (
+                            <FloatingTab
+                                key={item.id}
+                                icon={item.icon}
+                                active={currentView === item.id}
+                                onClick={() => { setView(item.id); setMoreOpen(false); }}
+                                badge={item.badge}
+                            />
+                        ))}
+
+                        {/* Center FAB — New Task */}
+                        <FloatingTab
+                            icon={Plus}
+                            active={false}
+                            isCenter
+                            onClick={() => { setTaskModalOpen(true); setMoreOpen(false); }}
+                        />
+
+                        {/* Right tabs */}
+                        {primaryMobileTabs.slice(2).map(item => (
+                            <FloatingTab
+                                key={item.id}
+                                icon={item.icon}
+                                active={currentView === item.id}
+                                onClick={() => { setView(item.id); setMoreOpen(false); }}
+                                badge={item.badge}
+                            />
+                        ))}
+
+                        {/* More button */}
+                        <FloatingTab
+                            icon={MoreHorizontal}
+                            active={isOverflowActive}
+                            onClick={() => setMoreOpen(prev => !prev)}
+                            badge={overflowItems.reduce((sum, item) => sum + (item.badge || 0), 0)}
+                        />
+                    </div>
+                </nav>
+            </div>
         </div>
     )
 }

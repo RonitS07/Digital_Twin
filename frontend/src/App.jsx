@@ -22,6 +22,7 @@ import Activity from './components/Activity'
 import Workspace from './components/Workspace'
 import Settings from './components/Settings'
 import AgentInbox from './components/AgentInbox'
+import Files from './components/Files'
 
 
 export { useStore } from './store/useStore'
@@ -209,6 +210,7 @@ function App() {
                                             className="h-full"
                                         >
                                             {view === 'chat' && <Chat />}
+                                            {view === 'files' && <Files />}
                                             {view === 'workspace' && <Workspace />}
                                             {view === 'activity' && <Activity />}
                                             {view === 'settings' && <Settings />}

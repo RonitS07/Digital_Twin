@@ -125,3 +125,142 @@ input, textarea, select, button {
 /* Utility to fully hide scrollbar while still allowing scroll */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+
+/* ══════════════════════════════════════════════════
+   FLOATING MOBILE NAV — Premium Glassmorphic Glow
+   ══════════════════════════════════════════════════ */
+
+/* Glow animation keyframes */
+@keyframes navGlowPulse {
+  0%, 100% {
+    box-shadow: 
+      0 0 15px rgba(var(--primary-rgb), 0.15),
+      0 0 40px rgba(var(--primary-rgb), 0.08),
+      0 8px 32px rgba(0, 0, 0, 0.12);
+  }
+  50% {
+    box-shadow: 
+      0 0 25px rgba(var(--primary-rgb), 0.25),
+      0 0 60px rgba(var(--primary-rgb), 0.12),
+      0 8px 32px rgba(0, 0, 0, 0.12);
+  }
+}
+
+@keyframes borderGlowShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.floating-nav {
+  position: relative;
+  overflow: visible;
+  backdrop-filter: blur(28px) saturate(2);
+  -webkit-backdrop-filter: blur(28px) saturate(2);
+  animation: navGlowPulse 3s ease-in-out infinite;
+}
+
+/* Animated gradient border */
+.floating-nav::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border-radius: 22px;
+  padding: 1.5px;
+  background: linear-gradient(
+    270deg,
+    rgba(var(--primary-rgb), 0.5) 0%,
+    rgba(var(--primary-rgb), 0.08) 25%,
+    rgba(var(--secondary-rgb), 0.3) 50%,
+    rgba(var(--primary-rgb), 0.08) 75%,
+    rgba(var(--primary-rgb), 0.5) 100%
+  );
+  background-size: 300% 300%;
+  animation: borderGlowShift 4s ease infinite;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Large diffused glow underneath */
+.floating-nav::after {
+  content: '';
+  position: absolute;
+  bottom: -10px;
+  left: 15%;
+  right: 15%;
+  height: 24px;
+  background: radial-gradient(ellipse, rgba(var(--primary-rgb), 0.3) 0%, transparent 70%);
+  filter: blur(12px);
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* ── Light theme floating nav ── */
+:root .floating-nav {
+  background: rgba(255, 255, 255, 0.85) !important;
+  box-shadow: 
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 0 20px rgba(79, 70, 229, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  animation: navGlowPulseLight 3s ease-in-out infinite;
+}
+
+@keyframes navGlowPulseLight {
+  0%, 100% {
+    box-shadow: 
+      0 4px 24px rgba(0, 0, 0, 0.06),
+      0 0 20px rgba(79, 70, 229, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+  50% {
+    box-shadow: 
+      0 4px 24px rgba(0, 0, 0, 0.06),
+      0 0 35px rgba(79, 70, 229, 0.15),
+      inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+}
+
+:root .floating-nav::after {
+  background: radial-gradient(ellipse, rgba(79, 70, 229, 0.12) 0%, transparent 70%);
+}
+
+/* ── Dark theme floating nav ── */
+.dark .floating-nav {
+  background: rgba(22, 21, 32, 0.82) !important;
+  animation: navGlowPulseDark 3s ease-in-out infinite;
+}
+
+@keyframes navGlowPulseDark {
+  0%, 100% {
+    box-shadow: 
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      0 0 20px rgba(103, 96, 253, 0.15),
+      0 0 0 1px rgba(103, 96, 253, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+  50% {
+    box-shadow: 
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      0 0 40px rgba(103, 96, 253, 0.25),
+      0 0 0 1px rgba(103, 96, 253, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+}
+
+.dark .floating-nav::after {
+  background: radial-gradient(ellipse, rgba(103, 96, 253, 0.35) 0%, transparent 70%);
+  height: 28px;
+  filter: blur(14px);
+}

@@ -1,8 +1,11 @@
 import time
 import uuid
 import threading
+import logging
 from datetime import datetime, timezone
 from googleapiclient.discovery import build
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.orm import Session
 
@@ -16,9 +19,10 @@ SCOPES = [
 
 _CAL_CACHE = threading.local()
 
+from tools.google_oauth import get_google_credentials, CALENDAR_SCOPES, is_scope_sufficient
+
 def get_calendar_service(db: Session, user_id: str):
     # Caching the service object per thread avoids the slow build() process on every poll
-    # and prevents httplib2 concurrency issues (which cause memory corruption).
     if not hasattr(_CAL_CACHE, 'services'):
         _CAL_CACHE.services = {}
 
@@ -29,8 +33,12 @@ def get_calendar_service(db: Session, user_id: str):
         else:
             _CAL_CACHE.services.pop(user_id)
             
+    # CRITICAL: Check if user has granted calendar scopes BEFORE building service
+    if not is_scope_sufficient(db=db, user_id=user_id, scopes=CALENDAR_SCOPES):
+        logger.warning(f"Insufficient scopes for Calendar API (user {user_id})")
+        raise RuntimeError("Missing Calendar permissions. Please reconnect your Google account in Settings and ensure all boxes are checked.")
+
     creds = get_google_credentials(db=db, user_id=user_id, scopes=CALENDAR_SCOPES)
-    # cache_discovery=False fixes the 'file_cache is only supported with oauth2client<4.0.0' warning
     service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     _CAL_CACHE.services[user_id] = (service, creds)
     return service

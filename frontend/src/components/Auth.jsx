@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-    BrainCircuit, Eye, EyeOff, ArrowLeft, CheckCircle2,
+    Eye, EyeOff, ArrowLeft, CheckCircle2,
     Mail, Lock, User, AlertCircle, Loader2
 } from 'lucide-react'
 import {
@@ -199,8 +199,8 @@ const BrandPanel = ({ quote, author }) => (
         <div className="absolute bottom-0 right-0 w-64 h-64 bg-secondary/5 rounded-full blur-[80px] pointer-events-none" />
 
         <div className="relative z-10 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/30">
-                <BrainCircuit size={20} className="text-white" />
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden shadow-lg shadow-primary/30">
+                <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div>
                 <p className="font-manrope font-extrabold tracking-tighter text-lg text-on-surface leading-none">AI Twin</p>
@@ -216,8 +216,8 @@ const BrandPanel = ({ quote, author }) => (
                 <div className="absolute inset-4 rounded-full border border-primary/10 flex items-center justify-center animate-[spin_15s_linear_infinite_reverse]">
                     <div className="absolute top-0 left-1/2 w-1.5 h-1.5 rounded-full bg-secondary/70" />
                 </div>
-                <div className="absolute inset-10 rounded-full bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-[0_0_50px_rgba(103,96,253,0.4)]">
-                    <BrainCircuit size={28} className="text-white" />
+                <div className="absolute inset-10 rounded-full flex items-center justify-center overflow-hidden shadow-[0_0_50px_rgba(103,96,253,0.4)]">
+                    <img src="/logo.png" alt="AI Twin" className="w-full h-full object-cover scale-150" />
                 </div>
             </div>
             <div className="mt-12 text-center max-w-xs space-y-2">
@@ -247,8 +247,8 @@ const AuthShell = ({ children, title, subtitle, branding }) => (
         <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-10 overflow-y-auto">
             {/* Mobile logo */}
             <div className="lg:hidden flex items-center gap-2 mb-10">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-primary to-secondary flex items-center justify-center">
-                    <BrainCircuit size={16} className="text-white" />
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden">
+                    <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
                 </div>
                 <span className="font-manrope font-extrabold tracking-tighter text-on-surface">AI Twin</span>
             </div>

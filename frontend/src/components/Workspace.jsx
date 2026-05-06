@@ -8,22 +8,22 @@ const Workspace = () => {
     const { preferences, togglePreference, setPreference, auth: storeAuth } = useStore();
     const [connecting, setConnecting] = useState(false);
 
+    const [googleConnected, setGoogleConnected] = useState(false);
+    const [slackConnected, setSlackConnected] = useState(false);
+
     useEffect(() => {
         if (storeAuth.user?.uid) {
             setConnecting(true)
             apiFetch(`/integrations/google/status`)
-                .then((data) => {
-                    setPreference('gmailSync', !!data?.connected)
-                    setPreference('calendarSync', !!data?.connected)
-                })
+                .then((data) => setGoogleConnected(!!data?.connected))
                 .catch(console.error)
                 .finally(() => setConnecting(false))
-            
+
             apiFetch(`/integrations/slack/status`)
-                .then((data) => setPreference('slackSync', !!data?.connected))
+                .then((data) => setSlackConnected(!!data?.connected))
                 .catch(console.error)
         }
-    }, [storeAuth.user?.uid, setPreference])
+    }, [storeAuth.user?.uid])
 
     const handleConnect = async (tool) => {
         if (tool.active) {
@@ -34,8 +34,12 @@ const Workspace = () => {
                     await apiFetch(`/integrations/${provider}/disconnect`, { method: 'POST' });
                     setPreference(tool.key, false);
                     if (provider === 'google') {
+                        setGoogleConnected(false);
                         setPreference('gmailSync', false);
                         setPreference('calendarSync', false);
+                    } else if (provider === 'slack') {
+                        setSlackConnected(false);
+                        setPreference('slackSync', false);
                     }
                 } catch (e) {
                     console.error("Disconnect failed", e);
@@ -81,7 +85,7 @@ const Workspace = () => {
     }
 
     return (
-        <div className="p-4 sm:p-6 lg:p-10 max-w-7xl mx-auto space-y-8 lg:space-y-12 w-full">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-7xl mx-auto space-y-8 lg:space-y-12 w-full pb-36">
             <div>
                 <h2 className="text-3xl lg:text-4xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2">Connected Workspace</h2>
                 <p className="text-on-surface-variant text-sm lg:text-base max-w-2xl">Manage the external applications and permissions your AI Twin utilizes to execute autonomous actions.</p>
@@ -89,10 +93,10 @@ const Workspace = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {[
-                    { name: "Gmail", icon: Mail, key: 'gmailSync', active: preferences.gmailSync, desc: "Allows twin to draft, reply, and send messages on your behalf." },
-                    { name: "Calendar", icon: Calendar, key: 'calendarSync', active: preferences.calendarSync, desc: "Allows twin to negotiate times and automatically schedule events." },
+                    { name: "Gmail", icon: Mail, key: 'gmailSync', active: googleConnected, desc: "Allows twin to draft, reply, and send messages on your behalf." },
+                    { name: "Calendar", icon: Calendar, key: 'calendarSync', active: googleConnected, desc: "Allows twin to negotiate times and automatically schedule events." },
                     { name: "Telegram", icon: MessageSquare, key: 'telegramSync', active: preferences.telegramSync, desc: "Acts as a rapid push notification and communication channel." },
-                    { name: "Slack", icon: MessageSquare, key: 'slackSync', active: preferences.slackSync, desc: "Connect your workspaces for real-time team collaboration and updates." }
+                    { name: "Slack", icon: MessageSquare, key: 'slackSync', active: slackConnected, desc: "Connect your workspaces for real-time team collaboration and updates." }
                 ].map((tool, i) => (
                     <motion.div
                         initial={{ opacity: 0, y: 10 }}
