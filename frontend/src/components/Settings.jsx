@@ -72,14 +72,16 @@ const Settings = () => {
         { key: 'system', icon: Monitor, label: 'System' }
     ];
 
-    // Depend on uid (stable string) not user object to prevent double-fetch on updateUser
     useEffect(() => {
         if (!user.uid) return;
         let isMounted = true;
 
-        apiFetch(`/auth/gmail/status`)
-            .then(data => { if (isMounted) setGmailConnected(data.connected); })
-            .catch(() => { if (isMounted) setGmailConnected(false); });
+        const checkGmailStatus = () => {
+            apiFetch(`/auth/gmail/status`)
+                .then(data => { if (isMounted) setGmailConnected(data.connected); })
+                .catch(() => { if (isMounted) setGmailConnected(false); });
+        };
+        checkGmailStatus();
 
         apiFetch(`/settings/telegram`)
             .then(data => { if (isMounted) setTeleConfig(data); })
@@ -89,7 +91,19 @@ const Settings = () => {
             .then(data => { if (isMounted) setSlackConnected(data.connected); })
             .catch(() => { if (isMounted) setSlackConnected(false); });
 
-        return () => { isMounted = false; };
+        const handleMessage = (event) => {
+            if (event.data === 'google_oauth_success') {
+                setToast({ msg: 'Google connected successfully!', type: 'success' });
+                setTimeout(() => setToast(null), 4000);
+                checkGmailStatus();
+            }
+        };
+        window.addEventListener('message', handleMessage);
+
+        return () => { 
+            isMounted = false; 
+            window.removeEventListener('message', handleMessage);
+        };
     }, [user.uid]); // uid is a stable string — only re-runs if the user actually changes
 
     const showToast = (msg, type = 'success') => {

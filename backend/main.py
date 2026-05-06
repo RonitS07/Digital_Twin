@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, EmailStr, validator
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, HTMLResponse
 from googleapiclient.errors import HttpError
 
 from db.database import get_db, engine
@@ -876,7 +876,22 @@ def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
         token_type=getattr(creds, "token_type", None),
     )
 
-    return RedirectResponse(url=f"{frontend_url}/?google=connected")
+    html_content = f"""
+    <html>
+    <body>
+        <script>
+            if (window.opener && !window.opener.closed) {{
+                window.opener.postMessage('google_oauth_success', '{frontend_url}');
+                window.close();
+            }} else {{
+                window.location.href = '{frontend_url}/?google=connected';
+            }}
+        </script>
+        <p>Authentication successful! You can close this window.</p>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 
 @app.post("/ai/process")
