@@ -282,16 +282,27 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                         if needs_reply and category in EMAIL_CATEGORIES_REQUIRING_REPLY:
                             # Auto-draft a reply for the user to review
                             try:
+                                schedule_context = "Schedule is fully clear/free."
+                                try:
+                                    from tools.calendar_tool import get_upcoming_events
+                                    events = get_upcoming_events(db=db, user_id=uid, max_results=5)
+                                    if events:
+                                        schedule_context = "Upcoming Schedule:\n" + "\n".join([f"- {e['title']} from {e['start']} to {e['end']}" for e in events])
+                                    else:
+                                        schedule_context = "Schedule is fully clear/free. You are available."
+                                except Exception as e:
+                                    logger.warning(f"Failed to fetch schedule for draft context: {e}")
+
                                 initial_state = {
                                     "user_id": uid,
                                     "user_name": user.name if user else "User",
-                                    "input": f"Draft a professional reply to this email.",
+                                    "input": "Draft a professional, direct reply to this email. IMPORTANT: Use the SCHEDULE CONTEXT provided below to definitively confirm availability or propose alternatives. DO NOT say you need to check your schedule; act confidently using the data provided.",
                                     "intent": "email",
                                     "task_plan": [],
                                     "output": "",
                                     "chat_history": [],
                                     "approval_required": True,
-                                    "context": f"EMAIL DETAILS:\nFrom: {info['from']}\nSubject: {info['subject']}\nBody: {info['body'][:1000]}"
+                                    "context": f"EMAIL DETAILS:\nFrom: {info['from']}\nSubject: {info['subject']}\nBody: {info['body'][:1000]}\n\nSCHEDULE CONTEXT:\n{schedule_context}"
                                 }
                                 res = twin_graph.invoke(initial_state)
                                 clean_reply = extract_reply(res["output"])
