@@ -28,14 +28,8 @@ def generate_hf_image(prompt: str) -> str:
     encoded_prompt = urllib.parse.quote(prompt)
     url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=768&model=flux&nologo=true"
 
-    # Fetch the image server-side → return as base64 data URL (works in any <img> tag)
-    response = requests.get(url, timeout=90)
-    if response.status_code != 200:
-        raise Exception(f"Pollinations returned {response.status_code}: {response.text[:200]}")
-
-    image_b64 = base64.b64encode(response.content).decode("utf-8")
-    content_type = response.headers.get("Content-Type", "image/jpeg").split(";")[0]
-    return f"data:{content_type};base64,{image_b64}"
+    # Return the direct URL for browser-side loading (more reliable than huge base64 strings)
+    return url
 
 def _parse_json(text: str) -> dict:
     try:
@@ -101,29 +95,48 @@ def classifier_node(state: State):
     if any(trigger in user_input for trigger in implicit_search_triggers):
         return {**state, "intent": "email_search"}
 
-    # Slack
-    if "slack" in user_input:
-        return {**state, "intent": "slack"}
-
-    # Telegram
+    # telegram / slack / email action prioritization
     if "telegram" in user_input:
         return {**state, "intent": "telegram"}
+    if "slack" in user_input and "briefing" not in user_input:
+        return {**state, "intent": "slack"}
 
     # Fallback to LLM for more complex classification
     result = _llm(
         system="""
-You are a strict intent classifier. Return ONLY valid JSON: {"intent":"category", "target_handle": "null_or_handle"}
-Categories: question, visual (image creation), casual, email, email_search, calendar, calendar_lookup, slack, telegram, other.
+You are a strict intent classifier for an AI Twin.
+Your goal is to identify if the user wants an ACTION (sending/scheduling) or just an ANSWER.
 
-IMPORTANT RULES:
-- 'visual' is ONLY for generating NEW images from text. Not for analyzing uploaded files.
-- 'email_search' is for queries about finding deals, promotions, bank statements, receipts, orders in the inbox.
-- 'question' is the default for general questions and file analysis.
+CATEGORY DEFINITIONS:
+1. 'visual': Generate a NEW image from text.
+2. 'telegram': Send a message/image to Telegram.
+3. 'slack': Send a message to Slack.
+4. 'email': WRITING, DRAFTING, or SENDING a NEW email. (e.g. "Draft an email to...", "Write to...", "Send email to...")
+5. 'calendar': Schedule or change a meeting.
+6. 'calendar_lookup': Check or list schedule.
+7. 'email_search': SEARCHING, CHECKING, or FINDING information in the inbox. (e.g. "Check my email for...", "Did I get a mail from...", "Show me my last emails...")
+8. 'briefing': Daily summary of day.
+9. 'question': General knowledge or asking about context.
+10. 'casual': Chit-chat.
+
+RULES:
+- If the user wants to FIND an email, use 'email_search'.
+- If the user wants to WRITE an email, use 'email'.
+- If the user mentions 'telegram' or 'slack', ALWAYS choose that over 'question'.
+- If the user asks for information AND to send it somewhere, choose the destination (telegram/slack/email).
+
+Return ONLY valid JSON: {"intent":"category", "target_handle": "null_or_handle"}
 """,
         user=state["input"],
     )
     parsed = _parse_json(result)
-    return {**state, "intent": parsed.get("intent", "other"), "target_user_handle": parsed.get("target_handle")}
+    intent = parsed.get("intent", "other")
+    
+    # Final override: if keywords are present, force the intent
+    if "telegram" in user_input: intent = "telegram"
+    if "slack" in user_input and intent == "question": intent = "slack"
+    
+    return {**state, "intent": intent, "target_user_handle": parsed.get("target_handle")}
 
 
 def memory_node(state: State) -> State:
@@ -149,6 +162,15 @@ def memory_node(state: State) -> State:
         context += "\n[LEARNED USER MEMORY]\n" + structured_context.strip() + "\n"
     if chat_context:
         context += "\n[RELEVANT CHAT MEMORY]\n" + chat_context.strip() + "\n"
+
+    is_calendar_query = any(k in state["input"].lower() for k in ["schedule", "meeting", "calendar", "event", "availability", "meet", "met", "who", "when"]) or state.get("intent") in ("calendar", "calendar_lookup", "scheduling")
+    if is_calendar_query:
+        past_cal_context = retrieve_memory(user_id=state["user_id"], query=state["input"], n=5, type="calendar_past")
+        future_cal_context = retrieve_memory(user_id=state["user_id"], query=state["input"], n=5, type="calendar_future")
+        if past_cal_context:
+            context += f"\n[CALENDAR CONTEXT — PAST MEETINGS]\n{past_cal_context}\n"
+        if future_cal_context:
+            context += f"\n[CALENDAR CONTEXT — UPCOMING]\n{future_cal_context}\n"
 
     if state.get("intent") in ("email", "email_search") and state.get("gmail_sync", True):
         try:
@@ -238,7 +260,7 @@ Output ONLY the Gmail search query string, nothing else.""",
                     search_context = f"\n[AUTHENTIC GMAIL SEARCH RESULTS — Use ONLY this data, do not fabricate]\n"
                     for mail in search_results:
                          link = f"https://mail.google.com/mail/u/0/#inbox/{mail['id']}"
-                         search_context += f"ID: {mail['id']} | From: {mail['from']} | Subject: {mail['subject']} | Link: {link}\nSnippet: {mail['snippet']}\n---\n"
+                         search_context += f"From: {mail['from']} | Subject: {mail['subject']} | Link: {link}\nSnippet: {mail['snippet']}\n---\n"
                     context += search_context
                 else:
                     context += "\n[SYSTEM ALERT: NO GMAIL RESULTS FOUND. Inform the user no matching emails were found. Do NOT fabricate results.]\n"
@@ -288,6 +310,7 @@ Format:
 
 
 def responder_node(state: State) -> State:
+    user_name = state.get("user_name", "User")
     context_block = (
         f"\nRelevant user context:\n{state['context']}"
         if state.get("context")
@@ -322,6 +345,7 @@ def responder_node(state: State) -> State:
             if "telegram" in state["input"].lower():
                 output_text += f'\n\nI am also transmitting this visual to your Telegram.\n\n<action>\n{{\n  "intent": "telegram",\n  "title": "Visual Generation",\n  "message": "Generated image based on: {state["input"]}",\n  "image_url": "{image_url}"\n}}\n</action>'
 
+            logger.info(f"[Responder] Visual Response: {output_text} | URL: {image_url}")
             return {
                 **state,
                 "output": output_text,
@@ -337,8 +361,10 @@ def responder_node(state: State) -> State:
                 "response_type": "text"
             }
 
-    # EMAIL REQUESTS
-    if state["intent"] == "email":
+    # EMAIL REQUESTS (Drafting/Sending)
+    # 🟢 Guard: Only proceed if it's truly an ACTION request, not a search
+    is_draft_request = any(k in state["input"].lower() for k in ["draft", "write", "send", "reply", "compose", "email to"])
+    if state["intent"] == "email" and is_draft_request:
         if not state.get("gmail_sync", True):
             return {
                 **state,
@@ -346,7 +372,9 @@ def responder_node(state: State) -> State:
                 "response_type": "text"
             }
             
-        user_name = state.get("user_name", "User")
+        sent_mail_examples = retrieve_memory(user_id=state["user_id"], query=state["input"], n=3, type="sent_mail")
+        sent_mail_context = f"\n[WRITING STYLE EXAMPLES — HOW THIS USER WRITES]\n{sent_mail_examples}\n" if sent_mail_examples else ""
+
         result = _llm(
             system=f"""
 You are the Digital Twin of {user_name}, an elite executive assistant.
@@ -354,9 +382,11 @@ Objective: Draft a professional email and provide the execution block.
 
 [CONSTRAINTS]
 1. BE CONCISE: Provide ONLY the email draft in your visible response.
-2. NO DATA DUMPS: Never repeat context or explain your drafting process.
-3. SIGNING: Use "{user_name}" or the name explicitly provided. Never sign as "User".
-4. DRAFTING LIMITS: Only draft an email if the user explicitly asked to "draft", "write", "send", or "reply". If the user is asking to "see" or "show" an email, and you can't find it, DO NOT draft a request to the company/sender for it. Instead, just inform the user it wasn't found.
+2. DO NOT include raw Gmail IDs (like 19dde49...) in your visible text.
+3. Use Markdown for structure.
+4. Never repeat context or explain your drafting process.
+5. SIGNING: Use "{user_name}" or the name explicitly provided. Never sign as "User".
+6. DRAFTING LIMITS: Only draft an email if the user explicitly asked to "draft", "write", "send", or "reply". If the user is asking to "see" or "show" an email, and you can't find it, DO NOT draft a request to the company/sender for it. Instead, just inform the user it wasn't found.
 
 [ACTION BLOCK]
 Include this at the very end ONLY if you have a recipient and subject.
@@ -368,7 +398,7 @@ Include this at the very end ONLY if you have a recipient and subject.
   "body": "Full body with signatures"
 }}
 </action>
-
+{sent_mail_context}
 [CONTEXT]
 {context_block}
 {history_prompt}
@@ -402,6 +432,9 @@ Include this at the very end ONLY if you have a recipient and subject.
         system_prompt = f"""
 You are the Digital Twin. Answer the user's question about their schedule using the following REAL data:
 {events_str}
+
+[MEMORY CONTEXT]
+{context_block}
 """
         if is_external_query:
             system_prompt += """
@@ -419,6 +452,16 @@ Never say "Cricket meeting" or similar; simply say "Busy".
             intent="calendar_lookup"
         )
         return {**state, "output": result, "response_type": "text"}
+
+    # DAILY BRIEFING
+    if state["intent"] == "briefing":
+        try:
+            with next(get_db()) as db:
+                briefing = generate_daily_briefing(db, state["user_id"], state.get("user_name", "User"))
+                return {**state, "output": briefing, "response_type": "text"}
+        except Exception as e:
+            logger.error(f"Briefing node failed: {e}")
+            return {**state, "output": "I encountered an error generating your briefing.", "response_type": "text"}
 
     if state["intent"] == "slack" and state.get("slack_sync", True):
         # Check if user is asking for a briefing OR if we were just discussing one (channel selection)
@@ -446,8 +489,10 @@ Never say "Cricket meeting" or similar; simply say "Busy".
 - If the user wants to see their channels: List them clearly in plain text. DO NOT generate an <action> tag for listing.
 - If the user wants to send a message:
     1. Identify the channel ID and Name from [SLACK CHANNELS].
-    2. Format an action tag: <action>{{"intent":"slack", "channel_id":"ID", "channel_name":"Name", "text":{json.dumps(text_val)}}}</action>
+    2. Format an action tag: <action>{{"intent":"slack", "channel_id":"ID", "channel_name":"Name", "text":"PUT_YOUR_MESSAGE_HERE"}}</action>
     3. Confirm to the user that you are ready to post that specific message.
+    4. CRITICAL: The 'text' field MUST contain the full content you want to send.
+
 - FORMATTING FOR SLACK:
     * Use single asterisks for bold (e.g. *Key Events*).
     * Use simple bullets (• or -).
@@ -497,7 +542,6 @@ Do NOT say you don't have it. It is provided right here:
                 pass
         
         schedule_context = json.dumps(schedule_data, indent=2)
-        user_name = state.get("user_name", "User")
         _now = datetime.now()
         now_context = f"Today is {_now.strftime('%A, %B %d, %Y')}. The year is {_now.year}."
         
@@ -514,6 +558,7 @@ Objective: Extract meeting details and detect potential conflicts.
 [CALENDAR DATA]
 Context: {now_context}
 Current Schedule: {schedule_context}
+Memory Context: {context_block}
 
 [RULES]
 1. Extract meeting time/title. 
@@ -531,7 +576,8 @@ Action Block Format:
   "end_datetime": "YYYY-MM-DDTHH:MM:SS+05:30",
   "attendees": ["email@example.com"],
   "description": "Summary",
-  "is_conflict": true/false
+  "is_conflict": true/false,
+  "conflict_with": "Title of conflicting event (if is_conflict is true)"
 }}
 </action>
 """,
@@ -547,9 +593,24 @@ Action Block Format:
 
     if state["intent"] == "telegram" or (state["intent"] == "action" and "telegram" in state["input"].lower()):
         # 🟢 Intelligence: Detect if user also wants to CREATE an image in this block
-        img_keywords = ["create", "generate", "make", "draw", "visualize", "image of", "picture of"]
+        img_keywords = ["create", "generate", "make", "draw", "visualize", "image of", "picture of", "image"]
         image_url = None
-        if any(k in state["input"].lower() for k in img_keywords):
+        
+        # Check if user is referring to a PREVIOUS image
+        if "this image" in state["input"].lower() or "the image" in state["input"].lower():
+            history = state.get("chat_history") or []
+            for msg in reversed(history):
+                # 1. Check explicit field
+                if msg.get("image_url"):
+                    image_url = msg["image_url"]
+                    break
+                # 2. Fallback to regex in text
+                found = re.search(r"https://image\.pollinations\.ai/[^\s\"'}]*", msg.get("text", ""))
+                if found:
+                    image_url = found.group(0)
+                    break
+        
+        if not image_url and any(k in state["input"].lower() for k in img_keywords):
             try:
                 image_url = generate_hf_image(state["input"])
             except Exception as e:
@@ -557,24 +618,27 @@ Action Block Format:
 
         result = _llm(
             system=f"""
-You are the Digital Twin. The user requested to send a Telegram notification.
-{'The user also requested an image which has been GENERATED.' if image_url else ''}
+You are the Digital Twin of {user_name}. 
+Objective: Answer the user's question AND prepare a Telegram notification.
 
-Output a professional confirmation AND wrap the explicit execution details in an <action> JSON block at the end.
+[CONSTRAINTS]
+1. Answer the user's question FULLY in your response. 
+2. Use the ACTUAL context from the user's request.
+3. At the end, include an <action> block to send this same information to Telegram.
+4. SIGNING: Use "{user_name}".
 
-Action Block Format:
+Action Block Format (MANDATORY):
 <action>
 {{
   "intent": "telegram",
-  "title": "Telegram Notification",
-  "message": "Hello from your AI Twin!",
+  "title": "Information Update",
+  "message": "The full text of your answer here",
   "image_url": { '"[IMAGE_PLACEHOLDER]"' if image_url else 'null' }
 }}
 </action>
-
-Provide a short, visible confirmation to the user first.
 """,
-            user=state["input"]
+            user=f"Input: {state['input']}\nContext: {state.get('context', '')}\nHistory: {history_prompt}",
+            intent="telegram"
         )
         
         if image_url:
@@ -772,7 +836,6 @@ Provide a short, visible confirmation to the user first.
                         slot_lines.append(f"  **Option {i}:** {s['start']}")
 
                 slots_text = "\n".join(slot_lines)
-                user_name = state.get("user_name", "You")
 
                 output = (
                     f"✅ **Scheduling request sent to @{target_agent.handle}** ({target_agent.display_name})\n\n"
@@ -799,8 +862,6 @@ Provide a short, visible confirmation to the user first.
             }
 
     # GENERAL / CODE / QUESTION / CASUAL
-    user_name = state.get("user_name", "User")
-    
     # 🟢 Multimodal: Extract images from state['files']
     images = []
     if state.get("files"):
@@ -821,9 +882,11 @@ You HAVE authorized access to the user's Gmail, Calendar, and Workspace data. [S
 4. Cite sources naturally (e.g., "According to your recent emails...").
 
 [CONSTRAINTS]
-1. BE CONCISE: Do NOT explain logic or repeat provided context.
-2. NO DATA DUMPS: Never output raw JSON, technical headers, or metadata.
-3. ELITE TONE: Professional and brief.
+1. BE CONCISE.
+2. DO NOT include internal message IDs or technical IDs (like 19dde49...) in your response.
+3. If no email is found, state that clearly.
+4. NO DATA DUMPS: Never output raw JSON, technical headers, or metadata.
+5. ELITE TONE: Professional and brief.
 
 [CONTEXT DATA]
 {context_block}

@@ -29,3 +29,4 @@
 *.log
 lint_output.txt
 ruff_errors.json
+backend/firebase-credentials.json

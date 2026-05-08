@@ -49,17 +49,20 @@ def generate_daily_briefing(db: Session, user_id: str, user_name: str):
         
         now = datetime.now()
         
-        # 3. Use LLM to summarize — keep prompt compact to avoid rate limits
+        # 3. Use LLM to summarize
         prompt = (
-            f"LAST 24 HOURS REPORT - {now.strftime('%B %d, %Y')}\n\n"
-            f"Inbox Activity:\n{email_text}\n\n"
-            f"Today's Schedule:\n{event_text}\n\n"
-            f"Time: {now.strftime('%H:%M')}\n\n"
-            f"Write a short, executive-style briefing using bullet points. "
-            f"Mention any disconnected services. Be concise. No JSON or action tags."
+            f"GENERATE ULTRA-CONCISE MOBILE BRIEFING\n"
+            f"Date: {now.strftime('%A, %b %d')}\n\n"
+            f"INBOX ACTIVITY:\n{email_text}\n\n"
+            f"CALENDAR EVENTS:\n{event_text}\n\n"
+            f"OBJECTIVE:\n"
+            f"Create a scan-friendly, 'elite' briefing. "
+            f"Use ONLY bold headers (no #), emojis, and bullet points. "
+            f"Structure: *📅 Agenda* (max 3 items), *📩 Inbox* (max 3 items). "
+            f"Keep it under 150 words. Focus on immediate priorities."
         )
         briefing = _llm(
-            system=f"You are the Digital Twin of {user_name}. Output ONLY the briefing text, no tags.",
+            system=f"You are the Digital Twin of {user_name}. Provide a sharp, executive summary. No yapping. No intro/outro.",
             user=prompt,
             force_fast=True
         )

@@ -69,47 +69,50 @@ const IntelligenceHub = () => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <AnimatePresence mode="popLayout">
                     {insights.length > 0 ? (
-                        insights.map((insight, idx) => (
-                            <motion.div
-                                key={insight.key + idx}
-                                layout
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.95 }}
-                                transition={{ delay: idx * 0.05 }}
-                                className="group/card bg-surface-container-high/50 hover:bg-surface-container-high border border-white/5 hover:border-primary/20 p-4 rounded-2xl transition-all cursor-default"
-                            >
-                                <div className="flex items-start gap-4">
-                                    <div className="p-2.5 rounded-xl bg-surface-base text-neutral group-hover/card:text-primary group-hover/card:bg-primary/10 transition-all">
-                                        <InsightIcon category={insight.key} />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center justify-between gap-2 mb-1">
-                                            <span className="text-[10px] font-black text-primary uppercase tracking-widest truncate">
-                                                {insight.key.replace(/_/g, ' ')}
-                                            </span>
-                                            {insight.value.startsWith('http') && (
-                                                <a href={insight.value} target="_blank" rel="noopener noreferrer" className="text-neutral hover:text-primary transition-colors">
-                                                    <ExternalLink size={12} />
-                                                </a>
-                                            )}
+                        insights
+                            .filter(ins => ins.value && ins.value !== 'null' && !ins.key.includes('19DF'))
+                            .slice(0, 6)
+                            .map((insight, idx) => (
+                                <motion.div
+                                    key={insight.key + idx}
+                                    layout
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, scale: 0.95 }}
+                                    transition={{ delay: idx * 0.05 }}
+                                    className="group/card bg-surface-container-high/50 hover:bg-surface-container-high border border-white/5 hover:border-primary/20 p-4 rounded-2xl transition-all cursor-default"
+                                >
+                                    <div className="flex items-start gap-4">
+                                        <div className="p-2.5 rounded-xl bg-surface-base text-neutral group-hover/card:text-primary group-hover/card:bg-primary/10 transition-all">
+                                            <InsightIcon category={insight.key} />
                                         </div>
-                                        <p className="text-sm font-medium text-on-surface truncate pr-2">
-                                            {insight.value}
-                                        </p>
-                                        <div className="flex items-center gap-2 mt-2 opacity-50">
-                                            <Clock size={10} className="text-neutral" />
-                                            <span className="text-[9px] font-bold text-neutral uppercase tracking-tighter">
-                                                {new Date(insight.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center justify-between gap-2 mb-1">
+                                                <span className="text-[10px] font-black text-primary uppercase tracking-widest truncate">
+                                                    {insight.key.replace(/_/g, ' ')}
+                                                </span>
+                                                {String(insight.value).startsWith('http') && (
+                                                    <a href={insight.value} target="_blank" rel="noopener noreferrer" className="text-neutral hover:text-primary transition-colors">
+                                                        <ExternalLink size={12} />
+                                                    </a>
+                                                )}
+                                            </div>
+                                            <p className="text-sm font-medium text-on-surface truncate pr-2">
+                                                {insight.value}
+                                            </p>
+                                            <div className="flex items-center gap-2 mt-2 opacity-50">
+                                                <Clock size={10} className="text-neutral" />
+                                                <span className="text-[9px] font-bold text-neutral uppercase tracking-tighter">
+                                                    {new Date(insight.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            </motion.div>
-                        ))
+                                </motion.div>
+                            ))
                     ) : (
                         <div className="col-span-full py-12 flex flex-col items-center justify-center text-center">
                             <div className="p-4 rounded-full bg-white/5 text-neutral/20 mb-4">

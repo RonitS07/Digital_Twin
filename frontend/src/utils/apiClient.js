@@ -68,7 +68,11 @@ export const apiFetch = async (endpoint, options = {}) => {
                     
                     const authRes = await fetch(`${API_BASE}/auth/firebase`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'ngrok-skip-browser-warning': 'true',
+                            'X-Firebase-Token': fbToken,
+                        },
                         body: JSON.stringify({
                             uid: user.uid,
                             email: user.email,

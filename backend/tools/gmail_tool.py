@@ -14,6 +14,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.compose"
 ]
 
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+
 
 _GMAIL_CACHE = threading.local()
 
@@ -66,6 +69,82 @@ def read_recent_emails(db: Session, user_id: str, max_results: int = 5) -> list:
             "from":    sender,
             "date":    date,
             "snippet": snippet
+        })
+
+    return emails
+
+def read_sent_emails(db: Session, user_id: str, max_results: int = 50) -> list:
+    from db.models import ProcessedEmail
+    service = get_gmail_service(db=db, user_id=user_id)
+    result = service.users().messages().list(
+        userId="me",
+        maxResults=max_results,
+        labelIds=["SENT"]
+    ).execute()
+
+    messages = result.get("messages", [])
+    emails = []
+    
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
+
+    for msg in messages:
+        # Check if already processed
+        existing = db.query(ProcessedEmail).filter(ProcessedEmail.id == msg["id"], ProcessedEmail.source == "sent_backfill").first()
+        if existing:
+            continue
+
+        try:
+            full = service.users().messages().get(
+                userId="me",
+                id=msg["id"],
+                format="full"
+            ).execute()
+        except Exception:
+            continue
+
+        headers = full["payload"].get("headers", [])
+        subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "No Subject")
+        to_addr  = next((h["value"] for h in headers if h["name"].lower() == "to"), "Unknown")
+        date_str = next((h["value"] for h in headers if h["name"].lower() == "date"), "")
+        snippet = full.get("snippet", "")
+
+        # Extract body
+        body = ""
+        def process_parts(parts):
+            b = ""
+            for part in parts:
+                mimeType = part.get('mimeType')
+                if mimeType == 'text/plain':
+                    data = part.get('body', {}).get('data')
+                    if data: b += base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
+                elif 'parts' in part:
+                    b += process_parts(part['parts'])
+            return b
+
+        payload = full['payload']
+        if 'parts' in payload:
+            body = process_parts(payload['parts'])
+        else:
+            data = payload.get('body', {}).get('data')
+            body = base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore') if data else full.get("snippet", "")
+
+        if date_str:
+            try:
+                dt = parsedate_to_datetime(date_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt < cutoff_date:
+                    continue
+            except Exception:
+                pass
+
+        emails.append({
+            "id":      msg["id"],
+            "subject": subject,
+            "to":      to_addr,
+            "date":    date_str,
+            "snippet": snippet,
+            "body":    body
         })
 
     return emails

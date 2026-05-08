@@ -1,8 +1,8 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, Index, Integer
+from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, Index, Integer, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from db.database import Base
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 class User(Base):
@@ -18,6 +18,10 @@ class User(Base):
     preferences_json = Column(Text, default="{}")
     last_briefing_at = Column(DateTime, nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
+    sent_backfill_done = Column(Boolean, default=False)
+    is_admin        = Column(Boolean, default=False, nullable=False, server_default="false")
+    admin_granted_at = Column(DateTime(timezone=True), nullable=True)
+    admin_granted_by = Column(String, nullable=True)
     tasks           = relationship("TaskLog", back_populates="user")
 
 class TaskLog(Base):
@@ -42,6 +46,7 @@ class ProcessedEmail(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
     thread_id = Column(String)
     action_taken = Column(String)  # 'drafted' or 'sent'
+    source = Column(String, nullable=True)
     processed_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -67,6 +72,19 @@ class IntegrationToken(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ArchiveMemory(Base):
+    __tablename__ = "archive_memory"
+    id          = Column(String, primary_key=True, 
+                         default=lambda: str(uuid.uuid4()))
+    user_id     = Column(String, nullable=False, index=True)
+    content     = Column(Text, nullable=False)
+    memory_type = Column(String)   # email, sent_mail, calendar, chat
+    original_date = Column(DateTime(timezone=True))
+    archived_at = Column(DateTime(timezone=True), 
+                         default=lambda: datetime.now(timezone.utc))
+    source      = Column(String)   # "chroma" or "structured"
+    metadata_json = Column(JSON, default={})
+
 class StructuredMemory(Base):
     __tablename__ = "structured_memories"
     __table_args__ = (
@@ -89,8 +107,10 @@ class StructuredMemory(Base):
     confidence = Column(String, nullable=True)
     source = Column(String, nullable=True)  # chat|email|calendar|manual
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    memory_type = Column(String, default="general")
+    content = Column(Text)
 
 
 class OAuthState(Base):

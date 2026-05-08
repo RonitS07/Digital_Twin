@@ -9,12 +9,20 @@ export const useStore = create(
                 isLoggedIn: false,
                 user: null, // Holds basic user profile
             },
-            login: (user) => set({ auth: { isLoggedIn: true, user } }),
+            isAdmin: false,
+            setIsAdmin: (val) => set({ isAdmin: !!val }),
+            login: (user, preferences = null) => set((state) => ({ 
+                auth: { isLoggedIn: true, user },
+                isAdmin: !!(user?.is_admin ?? user?.isAdmin ?? false),
+                preferences: preferences || state.preferences
+            })),
             updateUser: (updates) => set((state) => ({ 
-                auth: { ...state.auth, user: { ...state.auth.user, ...updates } } 
+                auth: { ...state.auth, user: { ...state.auth.user, ...updates } },
+                isAdmin: updates?.is_admin !== undefined ? !!updates.is_admin : state.isAdmin,
             })),
             logout: () => set({ 
                 auth: { isLoggedIn: false, user: null }, 
+                isAdmin: false,
                 currentScreen: 'login', 
                 view: 'home',
                 preferences: {
@@ -72,6 +80,7 @@ export const useStore = create(
             name: 'ai-twin-storage', // key in localStorage
             partialize: (state) => ({ 
                 auth: state.auth, 
+                isAdmin: state.isAdmin,
                 theme: state.theme, 
                 preferences: state.preferences,
                 currentScreen: state.currentScreen,

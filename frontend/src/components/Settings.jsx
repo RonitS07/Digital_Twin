@@ -59,6 +59,11 @@ const Settings = () => {
     const [slackConnected, setSlackConnected] = useState(false);
     const [draftPreferences, setDraftPreferences] = useState(preferences);
     const [toast, setToast] = useState(null);
+
+    // Sync draft preferences when store re-hydrates (e.g. from backend on refresh)
+    useEffect(() => {
+        setDraftPreferences(preferences);
+    }, [preferences]);
     const [resetConfirm, setResetConfirm] = useState(false);
     
     const [editName, setEditName] = useState(user.name || '');

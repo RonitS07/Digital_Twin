@@ -76,7 +76,11 @@ def send_telegram_photo(chat_id: str, photo_url: str, caption: str = None):
         files = {"photo": ("image.jpg", io.BytesIO(image_bytes), "image/jpeg")}
         payload = {"chat_id": chat_id}
         if caption:
-            payload["caption"] = caption
+            # 🟢 Guard: Telegram captions have a 1024 char limit
+            safe_caption = caption.strip()
+            if len(safe_caption) > 1000:
+                safe_caption = safe_caption[:980] + "..."
+            payload["caption"] = safe_caption
             
         response = requests.post(url, data=payload, files=files, timeout=25)
         

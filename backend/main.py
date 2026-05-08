@@ -7,7 +7,7 @@ import secrets
 import logging
 import httpx
 from typing import Optional, List, Union
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import requests
 import base64
@@ -20,18 +20,18 @@ os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 # Root directory of the backend — used for all file storage paths
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, StreamingResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, EmailStr, validator
 import json
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
-from fastapi.responses import RedirectResponse, StreamingResponse, HTMLResponse
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from googleapiclient.errors import HttpError
 
 from db.database import get_db, engine
-from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory, FileAsset
+from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory, FileAsset, ArchiveMemory
 from db.auth import hash_password, verify_password, create_access_token, decode_token
 from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email, get_email_details, send_styled_invite, download_attachment
 from tools.calendar_tool import get_upcoming_events, create_event, normalize_datetime
@@ -47,11 +47,24 @@ from tools.google_oauth import (
 from tools.slack_tool import upsert_slack_tokens, is_slack_connected, list_slack_channels, send_slack_message, SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_REDIRECT_URI
 from graph.graph import twin_graph
 from graph.nodes import triage_email, EMAIL_CATEGORIES_REQUIRING_REPLY
-from memory.chroma import store_memory
+from memory.chroma import store_memory, get_old_documents, delete_documents_by_ids
 from memory.learning import learn_from_interaction
 from tools.telegram_tool import send_telegram_message, get_telegram_updates, send_telegram_photo
+
 from utils.briefing import generate_daily_briefing
 from graph.llm_utils import _llm
+
+from security.firebase_config import initialize_firebase, verify_firebase_token
+from security.auth import get_current_user, get_optional_user, security
+from security.middleware import SecurityHeadersMiddleware
+from security.rate_limit import limiter
+from core.config import settings
+from utils.upload import validate_and_save_upload
+import magic
+import werkzeug.utils
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from routers.admin import router as admin_router
 
 # ── Multi-agent / A2A imports ──────────────────────────────────────────────
 from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory, AgentRegistry, A2AMessageLog
@@ -67,48 +80,57 @@ background_tasks = set()
 
 Base.metadata.create_all(bind=engine)
 
-security = HTTPBearer(auto_error=False)
+app = FastAPI(title=settings.PROJECT_NAME)
 
-app = FastAPI(title="AI Twin API")
-
-def _get_allowed_origins() -> list:
-    """Build CORS allowed origins from env so ngrok/prod domains are always included."""
-    origins = {
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:8000",
-    }
-    for env_var in ("FRONTEND_URL", "NGROK_URL"):
-        val = os.getenv(env_var)
-        if val:
-            origins.add(val.rstrip("/"))
-            
-    # Add Vercel domain to avoid CORS blocks
-    origins.add("https://digital-twin-ten-sand.vercel.app")
-    
-    return list(origins)
-
+logger.info(f"🚀 CORS Allowed Origins: {settings.BACKEND_CORS_ORIGINS}")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_get_allowed_origins(),
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SecurityHeadersMiddleware)
+
+from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import SQLAlchemyError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation error: {exc.errors()}")
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": "Invalid request parameters", "errors": exc.errors()},
+    )
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
+    logger.error(f"Database error: {str(exc)}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "A database error occurred. The operation could not be completed."},
+    )
+
+# 🟢 Logging Middleware
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
-    """Add COOP and COEP headers to allow popups to communicate back to the main window."""
+async def log_origin(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if origin:
+        logger.debug(f"[CORS] Request from origin: {origin}")
     response = await call_next(request)
-    response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
-    # COEP: credentialless or require-corp? require-corp is safer but stricter.
-    # For now same-origin-allow-popups is primarily what solves the blocking issue.
     return response
+
+# Removed add_security_headers to fix COOP blocking window.closed
+
+# Removed CORSMiddleware from here, moved to top
 
 # Mount multi-agent broker router
 app.include_router(agent_broker_router)
+app.include_router(admin_router, prefix="/admin", tags=["admin"])
 
 def extract_reply(text: str) -> str:
     """Extracts reply content and strips away hidden action tags and internal reasoning."""
@@ -191,7 +213,7 @@ def process_new_emails():
                             doc_id=f"email_{email['id']}",
                             content=f"Email from: {info['from']}\nSubject: {info['subject']}\nBody: {info['body']}",
                             type="email",
-                            metadata={"from": info["from"], "subject": info["subject"]}
+                            metadata={"from": info["from"], "subject": info["subject"], "timestamp": datetime.now(timezone.utc).isoformat()}
                         )
 
                         # 4. Proactive Attachment Handling
@@ -228,7 +250,16 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                         )
                         
                         try:
-                            intel = json.loads(intel_result)
+                            cleaned = intel_result.strip()
+                            if not cleaned:
+                                raise ValueError("Empty response from LLM")
+                                
+                            if "```json" in cleaned:
+                                cleaned = cleaned.split("```json")[1].split("```")[0].strip()
+                            elif "```" in cleaned:
+                                cleaned = cleaned.split("```")[1].split("```")[0].strip()
+                                
+                            intel = json.loads(cleaned)
                             action_item = intel.get("action_item")
                             if action_item and action_item != "null":
                                 task = TaskLog(
@@ -244,11 +275,18 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                                     send_telegram_message(user.telegram_chat_id, f"⚠️ *Action Required from Email*\n\n{action_item}")
                             
                             for entity in intel.get("entities", []):
+                                key_raw = str(entity.get("key", "")).strip()
+                                value_raw = str(entity.get("value", "")).strip()
+                                # Guard against LLM outputs like null/None/empty that violate unique constraints.
+                                if not key_raw or key_raw.lower() in {"null", "none", "undefined"}:
+                                    continue
+                                if not value_raw or value_raw.lower() in {"null", "none", "undefined"}:
+                                    continue
                                 memory = StructuredMemory(
                                     user_id=uid,
                                     category="reference",
-                                    key=entity["key"],
-                                    value=entity["value"],
+                                    key=key_raw,
+                                    value=value_raw,
                                     source=f"email_{email['id']}"
                                 )
                                 db.merge(memory)
@@ -332,6 +370,99 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
     except Exception as e:
         logger.error(f"Email Monitor Error: {e}")
     return processed_count > 0
+
+def _sync_index_calendar_to_memory(user_id: str):
+    from tools.calendar_tool import get_calendar_range
+    try:
+        with next(get_db()) as db:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                return
+            
+            if not is_connected(db=db, user_id=user_id):
+                return
+            if not is_scope_sufficient(db=db, user_id=user_id, scopes=CALENDAR_SCOPES):
+                return
+
+            events = get_calendar_range(db, user_id)
+            now_iso = datetime.utcnow().isoformat() + "Z"
+            
+            for event in events:
+                summary = event.get('summary', '')
+                start = event.get('start', '')
+                end = event.get('end', '')
+                attendees = event.get('attendees', [])
+                location = event.get('location', '')
+                event_id = event.get('id', '')
+                
+                content = f"Meeting: {summary}\nWhen: {start} to {end}\nAttendees: {attendees}\nLocation: {location}"
+                
+                mem_type = "calendar_past" if start < now_iso else "calendar_future"
+                
+                metadata = {
+                    "user_id": user_id,
+                    "event_id": event_id,
+                    "start": start,
+                    "summary": summary,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                
+                store_memory(
+                    user_id=user_id,
+                    doc_id=event_id,
+                    content=content,
+                    type=mem_type,
+                    metadata=metadata
+                )
+            logger.info(f"Calendar indexing complete for {user_id}: {len(events)} events indexed.")
+    except Exception as e:
+        logger.error(f"Error in calendar memory index for {user_id}: {e}")
+
+async def index_calendar_to_memory(user_id: str):
+    await asyncio.to_thread(_sync_index_calendar_to_memory, user_id)
+
+def _sync_run_sent_mail_backfill(user_id: str):
+    from tools.gmail_tool import read_sent_emails
+    try:
+        with next(get_db()) as db:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or getattr(user, 'sent_backfill_done', False):
+                return
+
+            emails = read_sent_emails(db=db, user_id=user_id, max_results=200)
+            count = 0
+            for email in emails:
+                store_memory(
+                    user_id=user_id,
+                    doc_id=f"sent_{email['id']}",
+                    content=f"Sent Email to: {email['to']}\\nSubject: {email['subject']}\\nBody: {email['body']}",
+                    type="sent_mail",
+                    metadata={
+                        "user_id": user_id,
+                        "date": email["date"],
+                        "subject": email["subject"],
+                        "to": email["to"],
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                )
+                entry = ProcessedEmail(
+                    id=email["id"],
+                    user_id=user_id,
+                    thread_id="",
+                    action_taken="indexed",
+                    source="sent_backfill"
+                )
+                db.add(entry)
+                count += 1
+
+            user.sent_backfill_done = True
+            db.commit()
+            logger.info(f"Sent mail backfill complete for {user_id}: {count} emails indexed")
+    except Exception as e:
+        logger.error(f"Error in sent mail backfill for {user_id}: {e}")
+
+async def run_sent_mail_backfill(user_id: str):
+    await asyncio.to_thread(_sync_run_sent_mail_backfill, user_id)
 
 async def monitor_emails():
     try:
@@ -594,20 +725,107 @@ async def daily_briefing_task():
         logger.info("[Monitor] Briefing task stopping...")
         raise
 
+def process_calendar_index_all():
+    """Background task to index calendars for all users."""
+    try:
+        with next(get_db()) as db:
+            users = db.query(User).all()
+            for user in users:
+                if is_connected(db=db, user_id=user.id) and is_scope_sufficient(db=db, user_id=user.id, scopes=CALENDAR_SCOPES):
+                    _sync_index_calendar_to_memory(user.id)
+                    time.sleep(2)
+    except Exception as e:
+        logger.error(f"Calendar Index All Error: {e}")
+
+async def calendar_index_task():
+    try:
+        while True:
+            await asyncio.to_thread(process_calendar_index_all)
+            await asyncio.sleep(6 * 3600) # Every 6 hours
+    except asyncio.CancelledError:
+        logger.info("[Monitor] Calendar index task stopping...")
+        raise
+
+async def run_memory_lifecycle():
+    """Runs daily at 02:00 IST. Migrates old memory across tiers."""
+    while True:
+        now = datetime.now(timezone.utc)
+        # Calculate seconds until next 02:00 IST (UTC+5:30 = 20:30 UTC)
+        next_run = now.replace(hour=20, minute=30, second=0, microsecond=0)
+        if now >= next_run:
+            next_run += timedelta(days=1)
+        await asyncio.sleep((next_run - now).total_seconds())
+        await asyncio.to_thread(_sync_memory_lifecycle)
+
+def _sync_memory_lifecycle():
+    with next(get_db()) as db:
+        users = db.query(User).all()
+        for user in users:
+            _migrate_chroma_to_structured(user.id, db)
+            _migrate_structured_to_archive(user.id, db)
+
+def _migrate_chroma_to_structured(user_id, db):
+    """Move ChromaDB docs older than 6 months to StructuredMemory."""
+    old_docs = get_old_documents(user_id, older_than_days=180)
+    if not old_docs:
+        return
+    for doc in old_docs:
+        db.add(StructuredMemory(
+            user_id=user_id,
+            category="migrated",
+            key=doc["id"],
+            value="migrated_from_chroma",
+            content=doc["content"],
+            memory_type=doc["metadata"].get("type", "general"),
+            created_at=datetime.fromisoformat(
+                doc["metadata"].get("timestamp", 
+                datetime.now(timezone.utc).isoformat())
+            ),
+        ))
+    db.commit()
+    delete_documents_by_ids(user_id, [d["id"] for d in old_docs])
+    logger.info(f"Migrated {len(old_docs)} docs: ChromaDB→Structured for {user_id}")
+
+def _migrate_structured_to_archive(user_id, db):
+    """Move StructuredMemory records older than 2 years to Archive."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=730)
+    old_records = db.query(StructuredMemory).filter(
+        StructuredMemory.user_id == user_id,
+        StructuredMemory.created_at < cutoff
+    ).all()
+    if not old_records:
+        return
+    for rec in old_records:
+        db.add(ArchiveMemory(
+            user_id=user_id,
+            content=rec.content,
+            memory_type=rec.memory_type,
+            original_date=rec.created_at,
+            source="structured",
+        ))
+        db.delete(rec)
+    db.commit()
+    logger.info(f"Archived {len(old_records)} records: Structured→Archive for {user_id}")
+
 @app.on_event("startup")
 async def startup_event():
     logger.info("Initializing AI Twin Background services...")
+    initialize_firebase()
     
     # Track tasks for clean shutdown
     t1 = asyncio.create_task(monitor_emails())
     t2 = asyncio.create_task(monitor_telegram())
     t3 = asyncio.create_task(monitor_calendar())
     t4 = asyncio.create_task(daily_briefing_task())
+    t5 = asyncio.create_task(calendar_index_task())
+    t6 = asyncio.create_task(run_memory_lifecycle())
     
     background_tasks.add(t1)
     background_tasks.add(t2)
     background_tasks.add(t3)
     background_tasks.add(t4)
+    background_tasks.add(t5)
+    background_tasks.add(t6)
     
     # Inject auth dependency into agent broker (avoids circular import)
     set_auth_dependency(get_current_user)
@@ -722,29 +940,6 @@ class FirebaseAuthRequest(BaseModel):
     name: Optional[str] = None
 
 
-def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: Session = Depends(get_db),
-) -> User:
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-        
-    payload = decode_token(credentials.credentials)
-    
-    # Check for specific expiration error
-    if payload and payload.get("error") == "ExpiredIdTokenError":
-        raise HTTPException(
-            status_code=401, 
-            detail={"code": "REFRESH_REQUIRED", "message": "Token expired"}
-        )
-        
-    if not payload or "sub" not in payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
-        
-    user = db.query(User).filter(User.id == payload["sub"]).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found for token")
-    return user
 
 @app.get("/auth/gmail/status")
 def gmail_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -765,17 +960,6 @@ def _decode_oauth_state(state: str, db: Session) -> Optional[str]:
     """
     record = db.query(OAuthState).filter(OAuthState.state == state).first()
     return record.user_id if record else None
-
-def get_optional_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: Session = Depends(get_db),
-) -> Optional[User]:
-    if not credentials:
-        return None
-    payload = decode_token(credentials.credentials)
-    if not payload or "sub" not in payload:
-        return None
-    return db.query(User).filter(User.id == payload["sub"]).first()
 
 
 @app.get("/integrations/google/status")
@@ -906,7 +1090,8 @@ def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
 
 
 @app.post("/ai/process")
-def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Optional[User] = Depends(get_optional_user)):
+@limiter.limit("10/minute")
+def process(request: Request, req: ProcessRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # Allow image-only messages — if files are attached but no text, use a default prompt
     has_files = bool(req.files)
     effective_input = req.input.strip()
@@ -916,8 +1101,7 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
         # User sent image(s) without text — default to analysis
         effective_input = "Please analyze and describe the attached file(s)."
 
-    # If a valid bearer token is provided, trust it over any client-supplied user_id
-    effective_user_id = token_user.id if token_user else req.user_id
+    effective_user_id = current_user.id
     
     # 1. JIT User Check & Name Fallback
     final_user_name = req.user_name or "Twin User"
@@ -989,26 +1173,21 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
     # 🟢 Multimodal: Save uploaded files to Disk & DB
     if req.files:
         from db.models import FileAsset
-        
         for f in req.files:
             try:
-                # Expecting f['data'] to be data:image/png;base64,....
+                # Extract file bytes from base64 data URI
                 header, encoded = f['data'].split(",", 1) if "," in f['data'] else (None, f['data'])
                 file_bytes = base64.b64decode(encoded)
                 
-                filename = f"{uuid.uuid4()}_{f['name']}"
-                save_path = os.path.join("uploads", filename)
-                full_path = os.path.join(BACKEND_DIR, save_path)
-                
-                with open(full_path, "wb") as buffer:
-                    buffer.write(file_bytes)
+                # 2. Secure Upload & Validation (MIME, Size, Path)
+                file_path = validate_and_save_upload(file_bytes, f['name'])
                 
                 new_asset = FileAsset(
                     user_id=effective_user_id,
                     name=f['name'],
                     file_type=f['type'],
                     size=len(file_bytes),
-                    storage_path=save_path,
+                    storage_path=file_path,
                     is_processed=True
                 )
                 db.add(new_asset)
@@ -1039,7 +1218,7 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
                 doc_id=f"{uuid.uuid4().hex}_user",
                 content=req.input,
                 type="chat",
-                metadata={"role": "user"}
+                metadata={"role": "user", "timestamp": datetime.now(timezone.utc).isoformat()}
             )
             if final_state.get("output"):
                 store_memory(
@@ -1047,7 +1226,7 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
                     doc_id=f"{uuid.uuid4().hex}_assistant",
                     content=str(final_state.get("output")),
                     type="chat",
-                    metadata={"role": "assistant", "intent": final_state.get("intent", "other")}
+                    metadata={"role": "assistant", "intent": final_state.get("intent", "other"), "timestamp": datetime.now(timezone.utc).isoformat()}
                 )
         except Exception as e:
             logger.warning(f"Memory store skipped: {e}")
@@ -1078,6 +1257,7 @@ def process(req: ProcessRequest, db: Session = Depends(get_db), token_user: Opti
             logger.warning(f"Task log write failed: {log_err}")
             db.rollback()
 
+        logger.info(f"[AI Process] Returning Final State: response_type={final_state.get('response_type')}, has_image={bool(final_state.get('image_url'))}")
         return {
             "output": final_state.get("output"),
             "intent": final_state.get("intent"),
@@ -1151,6 +1331,11 @@ def download_file(file_id: str, current_user: User = Depends(get_current_user), 
         raise HTTPException(status_code=404, detail="File not found")
 
     full_path = os.path.join(BACKEND_DIR, asset.storage_path)
+    
+    # Safety: Ensure the path is within the uploads directory
+    if not os.path.abspath(full_path).startswith(os.path.join(BACKEND_DIR, "uploads")):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+        
     if not os.path.exists(full_path):
         raise HTTPException(status_code=404, detail="File not on disk")
 
@@ -1191,15 +1376,13 @@ def delete_file(file_id: str, current_user: User = Depends(get_current_user), db
         raise HTTPException(status_code=500, detail="Failed to delete file")
 
 @app.get("/history")
-def get_history(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_history(session_id: str = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        logs = (
-            db.query(TaskLog)
-            .filter(TaskLog.user_id == current_user.id)
-            .order_by(TaskLog.created_at.desc())
-            .limit(15)
-            .all()
-        )
+        query = db.query(TaskLog).filter(TaskLog.user_id == current_user.id)
+        if session_id:
+            query = query.filter(TaskLog.session_id == session_id)
+        
+        logs = query.order_by(TaskLog.created_at.asc()).all()
         return {
             "history": [
                 {
@@ -1220,6 +1403,45 @@ def get_history(current_user: User = Depends(get_current_user), db: Session = De
     except Exception as e:
         logger.exception(f"History Error: {e}")
         return {"history": []}
+
+@app.get("/sessions")
+def get_sessions(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        # Get unique session IDs and their latest message timestamp
+        from sqlalchemy import func
+        sessions_raw = (
+            db.query(
+                TaskLog.session_id,
+                func.max(TaskLog.created_at).label("last_active"),
+                func.first_value(TaskLog.input).over(
+                    partition_by=TaskLog.session_id,
+                    order_by=TaskLog.created_at.desc()
+                ).label("last_msg")
+            )
+            .filter(TaskLog.user_id == current_user.id)
+            .filter(TaskLog.session_id.isnot(None))
+            .distinct(TaskLog.session_id)
+            .all()
+        )
+        
+        # Note: SQLite doesn't support distinct on column or first_value easily in some versions.
+        # Let's use a simpler approach for broad compatibility.
+        
+        all_logs = db.query(TaskLog).filter(TaskLog.user_id == current_user.id).filter(TaskLog.session_id.isnot(None)).order_by(TaskLog.created_at.desc()).all()
+        sessions_map = {}
+        for log in all_logs:
+            sid = log.session_id
+            if sid not in sessions_map:
+                sessions_map[sid] = {
+                    "id": sid,
+                    "title": log.input[:30] + "..." if len(log.input) > 30 else log.input,
+                    "updatedAt": log.created_at.timestamp() * 1000
+                }
+        
+        return {"sessions": list(sessions_map.values())}
+    except Exception as e:
+        logger.exception(f"Sessions Error: {e}")
+        return {"sessions": []}
 
 @app.get("/calendar/events")
 def list_calendar(max_results: int = 20, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1306,9 +1528,11 @@ def create_calendar(req: CreateEventRequest, current_user: User = Depends(get_cu
         _tool_error("Calendar execution failed. Please try again.", "CALENDAR_FAILED", status_code=500)
 
 @app.post("/telegram/send")
-def api_send_telegram(req: TelegramSendRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def api_send_telegram(request: Request, req: TelegramSendRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        user = db.query(User).filter(User.id == req.user_id).first()
+        # Use authenticated user ID instead of client-supplied req.user_id
+        user = db.query(User).filter(User.id == current_user.id).first()
         if not user or not user.telegram_chat_id:
             raise HTTPException(status_code=400, detail="Telegram not connected or unavailable.")
         
@@ -1323,14 +1547,20 @@ def api_send_telegram(req: TelegramSendRequest, db: Session = Depends(get_db)):
                 img_url = None
             
         success = False
+        import re
+        formatted_msg = req.message
+        # Convert **bold** to *bold* for standard Telegram Markdown mode
+        formatted_msg = re.sub(r'\*\*(.*?)\*\*', r'*\1*', formatted_msg)
+
+        success = False
         if img_url:
-            success = send_telegram_photo(str(user.telegram_chat_id), img_url, caption=req.message)
+            success = send_telegram_photo(str(user.telegram_chat_id), img_url, caption=formatted_msg)
             # 🟢 Robust Fallback: If photo failed (e.g. broken URL), try sending as text
             if not success:
                 logger.warning(f"Telegram photo push failed for {img_url}. Falling back to text message.")
-                success = send_telegram_message(str(user.telegram_chat_id), f"📸 (Image failed to load)\n\n{req.message}")
+                success = send_telegram_message(str(user.telegram_chat_id), f"📸 (Image failed to load)\n\n{formatted_msg}")
         else:
-            success = send_telegram_message(str(user.telegram_chat_id), req.message)
+            success = send_telegram_message(str(user.telegram_chat_id), formatted_msg)
             
         if success:
             try:
@@ -1427,29 +1657,27 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     }
 
 @app.post("/auth/firebase")
-def firebase_auth(request: Request, req: FirebaseAuthRequest, db: Session = Depends(get_db)):
+@limiter.limit("20/minute")
+def firebase_auth(request: Request, req: FirebaseAuthRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Exchange Firebase UID for a backend JWT.
-    The client has already authenticated with Firebase; we trust the UID.
-    
-    TODO: Enable server-side verification by uncommenting the block below
-    once firebase-admin SDK service account JSON is configured in the environment.
-    
-    import firebase_admin.auth as fb_auth
-    id_token = request.headers.get("X-Firebase-Token")
-    if id_token:
-        try:
-            decoded = fb_auth.verify_id_token(id_token)
-            if decoded["uid"] != req.uid:
-                raise HTTPException(status_code=403, detail="Token UID mismatch")
-        except Exception as e:
-            raise HTTPException(status_code=401, detail=f"Invalid Firebase token: {e}")
     """
     if not req.uid:
         raise HTTPException(status_code=400, detail="uid is required")
-    
+        
+    id_token = request.headers.get("X-Firebase-Token")
+    if not id_token:
+        raise HTTPException(status_code=401, detail="Missing Firebase token")
+        
+    decoded = verify_firebase_token(id_token)
+    if not decoded:
+        raise HTTPException(status_code=401, detail="Invalid or expired Firebase token")
+        
+    if decoded.get("uid") != req.uid:
+        raise HTTPException(status_code=403, detail="Token UID mismatch")
+
     # Log the presence of the Firebase token for audit trail
-    fb_token_present = bool(request.headers.get("X-Firebase-Token"))
+    fb_token_present = bool(id_token)
     logger.debug(f"[Auth] Firebase auth for uid={req.uid}, token_header={'yes' if fb_token_present else 'no'}")
 
     user = db.query(User).filter(User.id == req.uid).first()
@@ -1512,11 +1740,27 @@ def firebase_auth(request: Request, req: FirebaseAuthRequest, db: Session = Depe
     except Exception as e:
         logger.warning(f"Agent registry registration failed for {user.id}: {e}")
 
+    if not getattr(user, 'sent_backfill_done', False):
+        background_tasks.add_task(run_sent_mail_backfill, user.id)
+
+    background_tasks.add_task(index_calendar_to_memory, user.id)
+
+    access_token = create_access_token({"sub": str(user.id)})
+    user_payload = {
+        "id": str(user.id),
+        "email": user.email,
+        "name": user.name,
+        "is_admin": bool(getattr(user, "is_admin", False)),
+    }
     return {
-        "access_token": create_access_token({"sub": str(user.id)}),
+        "access_token": access_token,
+        "token": access_token,
         "user_id": str(user.id),
         "email": user.email,
         "name": user.name,
+        "is_admin": user_payload["is_admin"],
+        "user": user_payload,
+        "preferences": json.loads(user.preferences_json or "{}"),
     }
 
 
@@ -1608,10 +1852,16 @@ def send_msg(req: dict, current_user: User = Depends(get_current_user), db: Sess
     text = req.get("text")
     if not channel_id or not text:
         raise HTTPException(status_code=400, detail="Missing channel_id or text")
+    # 🟢 Convert standard Markdown to Slack's mrkdwn (e.g. **bold** -> *bold*)
+    import re
+    formatted_text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
+    formatted_text = re.sub(r'### (.*)', r'*\1*', formatted_text) # Headers to bold
+    
     try:
-        res = send_slack_message(db, current_user.id, channel_id, text)
+        res = send_slack_message(db, current_user.id, channel_id, formatted_text)
         return {"status": "success", "details": res}
     except Exception as e:
+        logger.error(f"Slack Send Error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/slack/events")

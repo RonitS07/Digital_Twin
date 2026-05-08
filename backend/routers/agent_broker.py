@@ -21,8 +21,9 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from security.rate_limit import limiter
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -182,15 +183,41 @@ async def send_message(
 
 
 @router.post("/{user_id}/receive")
+@limiter.limit("20/minute")
 async def receive_message(
+    request: Request,
     user_id: str,
     msg: A2AMessage,
+    current_user: User = Depends(get_current_user_router),
     db: Session = Depends(get_db),
 ):
     """Internal inbox endpoint — called by the broker to deliver a message.
     In production this would be protected by an inter-service secret/mTLS.
     For Sprint 1 it's an internal-only path not exposed to the frontend.
     """
+    # Enforce ownership validation and derive identity from auth token
+    if msg.sender_user_id and msg.sender_user_id != current_user.id:
+        logger.warning(json.dumps({"event": "forged_sender_attempt", "user_id": current_user.id, "attempted_sender": msg.sender_user_id}))
+        raise HTTPException(status_code=403, detail="sender_user_id must match the authenticated user")
+    
+    msg.sender_user_id = current_user.id
+    msg.receiver_user_id = user_id
+    
+    # Replay protection: Check if msg_id already exists
+    existing = db.query(A2AMessageLog).filter(A2AMessageLog.msg_id == msg.msg_id).first()
+    if existing:
+        logger.warning(json.dumps({"event": "replay_attack_attempt", "msg_id": msg.msg_id, "user_id": current_user.id}))
+        raise HTTPException(status_code=409, detail="Duplicate message ID")
+
+    # Structured audit logging
+    logger.info(json.dumps({
+        "event": "message_received",
+        "msg_id": msg.msg_id,
+        "sender": msg.sender_user_id,
+        "receiver": msg.receiver_user_id,
+        "type": msg.msg_type
+    }))
+
     log = _persist_message(db, msg, status="delivered")
     await push_to_inbox(user_id, {
         "msg_id": msg.msg_id,

@@ -263,7 +263,7 @@ const MoreMenu = ({ items, currentView, setView, onClose }) => (
 )
 
 const Layout = ({ children, currentView, setView }) => {
-    const { auth } = useStore();
+    const { auth, isAdmin } = useStore();
     const user = auth.user || {};
     const [isTaskModalOpen, setTaskModalOpen] = useState(false);
     const [isHelpOpen, setHelpOpen] = useState(false);
@@ -296,11 +296,12 @@ const Layout = ({ children, currentView, setView }) => {
         { id: 'activity', icon: ActivityIcon, label: 'Activity' },
         { id: 'agents', icon: Users, label: 'Network', badge: agentUnread },
         { id: 'settings', icon: Settings, label: 'Settings' },
+        ...(isAdmin ? [{ id: 'admin', icon: Shield, label: 'Admin Panel' }] : []),
     ];
 
     // Mobile: 4 primary tabs + More for overflow
     const primaryMobileTabs = [navItems[0], navItems[1], navItems[4], navItems[6]]; // Home, Chat, Activity, Settings
-    const overflowItems = [navItems[2], navItems[3], navItems[5]]; // Files, Workspace, Network
+    const overflowItems = navItems.filter(item => !primaryMobileTabs.some(p => p.id === item.id));
 
     const viewLabel = navItems.find(n => n.id === currentView)?.label || 'Dashboard';
     const isOverflowActive = overflowItems.some(item => item.id === currentView);

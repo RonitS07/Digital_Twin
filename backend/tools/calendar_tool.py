@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 
 from tools.google_oauth import get_google_credentials, CALENDAR_SCOPES
+from utils.email_templates import get_invite_html
+from db.models import User
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
@@ -201,7 +203,7 @@ def create_event(title: str, start_datetime: str, end_datetime: str,
     created = service.events().insert(
         calendarId="primary",
         body=event,
-        sendUpdates="all",
+        sendUpdates="none", # We will send our own styled invite
         conferenceDataVersion=1     # Required for Meet link generation
     ).execute()
 
@@ -229,6 +231,31 @@ def create_event(title: str, start_datetime: str, end_datetime: str,
     if fetched is None:
         fetched = created
 
+    # 🟢 Send Styled Invites via Gmail
+    try:
+        from tools.gmail_tool import send_styled_invite
+        user = db.query(User).filter(User.id == user_id).first()
+        user_name = user.name if user else "Your AI Twin"
+        
+        html = get_invite_html(
+            title=title,
+            start_time=start_fmt,
+            end_time=end_fmt,
+            meet_link=meet_link or fetched.get("htmlLink"),
+            description=description,
+            user_name=user_name,
+            attendees=attendees
+        )
+        
+        for email in attendees:
+            if email.strip():
+                try:
+                    send_styled_invite(db=db, user_id=user_id, to=email, subject=f"Invitation: {title}", html_content=html)
+                except Exception as e:
+                    logger.error(f"Failed to send styled invite to {email}: {e}")
+    except Exception as e:
+        logger.error(f"Failed to process styled invites: {e}")
+
     return {
         "event_id":      fetched["id"],
         "title":         fetched.get("summary"),
@@ -238,3 +265,68 @@ def create_event(title: str, start_datetime: str, end_datetime: str,
         "meet_link":     meet_link if meet_link else None,
         "calendar_link": fetched.get("htmlLink")
     }
+
+def get_calendar_range(db: Session, user_id: str, days_past: int = 90, days_future: int = 30, max_results: int = 100) -> list:
+    from datetime import timedelta
+    service = get_calendar_service(db=db, user_id=user_id)
+    
+    now = datetime.utcnow()
+    timeMin = (now - timedelta(days=days_past)).isoformat() + "Z"
+    timeMax = (now + timedelta(days=days_future)).isoformat() + "Z"
+    
+    try:
+        calendar_list = service.calendarList().list().execute().get('items', [])
+    except Exception as e:
+        print(f"Error fetching calendar list: {e}")
+        calendar_list = [{"id": "primary", "selected": True}]
+
+    all_raw_events = []
+    for cal in calendar_list:
+        if not cal.get('selected', True):
+            continue
+        try:
+            events_result = service.events().list(
+                calendarId=cal['id'],
+                timeMin=timeMin,
+                timeMax=timeMax,
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy="startTime"
+            ).execute()
+            events = events_result.get("items", [])
+            all_raw_events.extend(events)
+        except Exception as e:
+            print(f"Error fetching events for calendar {cal['id']}: {e}")
+
+    result = []
+    seen_ids = set()
+
+    for event in all_raw_events:
+        eid = event.get("id")
+        if eid in seen_ids:
+            continue
+        seen_ids.add(eid)
+
+        start_datetime = event.get("start", {}).get("dateTime")
+        if not start_datetime:
+            continue
+
+        start = start_datetime
+        end = event.get("end", {}).get("dateTime", event.get("end", {}).get("date"))
+        
+        attendees = []
+        for a in event.get("attendees", []):
+            if "email" in a:
+                attendees.append(a["email"])
+                
+        result.append({
+            "id":          event["id"],
+            "summary":     event.get("summary", "No Title"),
+            "start":       start,
+            "end":         end,
+            "location":    event.get("location", ""),
+            "description": event.get("description", ""),
+            "attendees":   attendees
+        })
+        
+    return result

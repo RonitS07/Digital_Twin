@@ -76,6 +76,7 @@ const syncWithBackend = async (firebaseUser, updateUser) => {
             name:        data.name    || firebaseUser.displayName,
             accessToken: data.access_token,   // ← backend JWT used for all API calls
             photoURL:    firebaseUser.photoURL || '',
+            is_admin:    !!(data?.user?.is_admin ?? data?.is_admin),
         })
         return data.access_token
     } catch (err) {
@@ -298,6 +299,7 @@ export const Login = ({ onSignup, onForgotPassword }) => {
             name:        firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
             photoURL:    firebaseUser.photoURL || '',
             accessToken: await firebaseUser.getIdToken(),
+            is_admin:    false,
         })
         // Navigate immediately — don't block on backend
         setCurrentScreen('main')
@@ -449,6 +451,7 @@ export const Signup = ({ onBack }) => {
             name:        firebaseUser.displayName || name.trim() || firebaseUser.email?.split('@')[0] || 'User',
             photoURL:    firebaseUser.photoURL || '',
             accessToken: await firebaseUser.getIdToken(),
+            is_admin:    false,
         })
         setCurrentScreen('main')
         syncWithBackend(firebaseUser, updateUser)

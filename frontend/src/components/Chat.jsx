@@ -20,6 +20,7 @@ import {
     Search,
     Download,
     Sparkles,
+    ExternalLink,
     X
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -98,7 +99,22 @@ const ImageLoader = ({ src }) => {
     return (
         <div className="relative rounded-xl overflow-hidden w-full bg-surface-container-highest min-h-[200px]">
             {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>}
-            <img src={src} className={`w-full h-auto rounded-xl ${status === 'loaded' ? 'opacity-100' : 'opacity-0'}`} onLoad={() => setStatus('loaded')} />
+            <img 
+                src={src} 
+                className={`w-full h-auto rounded-xl ${status === 'loaded' ? 'opacity-100' : 'opacity-0'}`} 
+                onLoad={() => setStatus('loaded')} 
+                onError={(e) => {
+                    console.error("Image load failed", src.slice(0, 50) + "...");
+                    setStatus('error');
+                }}
+            />
+            {status === 'error' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 bg-red-400/5 p-4 text-center">
+                    <Sparkles size={24} className="mb-2 opacity-50" />
+                    <p className="text-xs font-bold uppercase tracking-widest">Visual Rendering Failed</p>
+                    <p className="text-[10px] opacity-70 mt-1">The AI generated a visual, but your browser could not display it. This often happens with very large data URLs or slow connections.</p>
+                </div>
+            )}
         </div>
     )
 }
@@ -106,20 +122,33 @@ const ImageLoader = ({ src }) => {
 const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
     const isAi = msg.role === 'assistant' || msg.role === 'ai'
     const [actionData, setActionData] = useState(null)
-    const [cleanText, setCleanText] = useState(msg.text || '')
+    const [cleanText, setCleanText] = useState(() => {
+        if (!msg.text) return '';
+        return msg.text.replace(/<action>[\s\S]*?<\/action>/g, '').trim();
+    })
     const [isProcessing, setIsProcessing] = useState(false)
     const [autoCompleted, setAutoCompleted] = useState(false)
+    const [isExecuted, setIsExecuted] = useState(false)
+    const [actionStatus, setActionStatus] = useState(null) // 'approved' | 'rejected'
     const [lightboxSrc, setLightboxSrc] = useState(null)
     const [copied, setCopied] = useState(false)
+
+    console.log("ChatMessage Render:", { 
+        id: msg.id, 
+        role: msg.role, 
+        responseType: msg.responseType, 
+        imageUrl: msg.imageUrl,
+        text: msg.text 
+    });
 
     useEffect(() => {
         if (!msg.text) return
         const actionMatch = msg.text.match(/<action>([\s\S]*?)<\/action>/)
         if (actionMatch) {
+            setCleanText(msg.text.replace(/<action>[\s\S]*?<\/action>/g, '').trim())
             try {
                 const parsed = JSON.parse(actionMatch[1].trim())
                 setActionData(parsed)
-                setCleanText(msg.text.replace(/<action>[\s\S]*?<\/action>/, '').trim())
 
                 const AUTO_APPROVE_ALLOWLIST = new Set(['calendar', 'scheduling', 'telegram', 'slack'])
                 const isSafe = AUTO_APPROVE_ALLOWLIST.has(parsed.intent)
@@ -135,9 +164,21 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
     }, [msg.text, autoApprove, autoCompleted])
 
     const handleActionClick = async (type, data) => {
+        if (isExecuted) return;
+        
+        if (type === 'reject') {
+            setIsExecuted(true)
+            setActionStatus('rejected')
+            return;
+        }
+
         setIsProcessing(true)
         try {
             await onAction(type, data)
+            setIsExecuted(true)
+            setActionStatus('approved')
+        } catch (e) {
+            console.error("Action execution failed", e)
         } finally {
             setIsProcessing(false)
         }
@@ -218,10 +259,20 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                             ))}
                         </div>
                     )}
-                    {msg.responseType === "visual" ? (
+                    { (msg.responseType === "visual" || msg.response_type === "visual" || msg.source === "VISUAL") ? (
                         <div className="space-y-3 lg:space-y-4">
                             <SimpleMarkdown>{cleanText}</SimpleMarkdown>
                             <ImageLoader src={msg.imageUrl} />
+                            <div className="flex justify-end mt-2">
+                                <a 
+                                    href={msg.imageUrl} 
+                                    target="_blank" 
+                                    rel="noreferrer" 
+                                    className="text-[10px] font-black uppercase tracking-widest text-primary/60 hover:text-primary transition-colors flex items-center gap-1.5"
+                                >
+                                    <ExternalLink size={10} /> View Full Image
+                                </a>
+                            </div>
                         </div>
                     ) : (
                         <div className="text-sm leading-relaxed break-words">
@@ -253,9 +304,8 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
 
                             {actionData.is_conflict && (
                                 <div className="bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
-                                    <p className="text-xs text-amber-200/90 leading-relaxed font-medium">
-                                        ⚠️ You have a conflict with <span className="text-white font-bold underline">"{actionData.conflict_with}"</span>.
-                                        I've found a free slot and updated the suggestion below.
+                                    <p className="text-sm font-medium leading-relaxed">
+                                        ⚠️ You have a conflict with <span className="text-white font-bold underline">"{actionData.conflict_with || 'another event'}"</span>. I've found a free slot and updated the suggestion below.
                                     </p>
                                 </div>
                             )}
@@ -277,7 +327,15 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                             </div>
 
                             <div className="flex gap-2 pt-2">
-                                {autoApprove ? (
+                                {isExecuted ? (
+                                    <div className={`flex-1 py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-2 border ${
+                                        actionStatus === 'approved' 
+                                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                                        : 'bg-red-500/10 text-red-400 border-red-500/20'
+                                    }`}>
+                                        {actionStatus === 'approved' ? <><Check size={14} /> Action Executed</> : <><X size={14} /> Request Rejected</>}
+                                    </div>
+                                ) : autoApprove ? (
                                     <div className="flex-1 py-2 text-primary text-xs font-bold rounded-xl bg-primary/10 flex items-center justify-center gap-2">
                                         <Zap size={14} fill="currentColor" className="animate-pulse" /> Executing Autonomously...
                                     </div>
@@ -349,60 +407,79 @@ const Chat = () => {
     const recognitionRef = useRef(null)
 
     const [autoMode, setAutoMode] = useState(false)
+    const [fetchingSessions, setFetchingSessions] = useState(false)
+    const [fetchingMessages, setFetchingMessages] = useState(false)
 
     const newSessionId = () => `${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`
-
-    useEffect(() => {
-        if (!user.uid) return
-
-        const memoryRetention = preferences.memoryRetention !== false;
-        const autoM = localStorage.getItem(`autonomous_mode_${user.uid}`) === 'true';
-        setAutoMode(autoM);
-
-        if (!sessionId) {
-            // Find active or create new
-            if (sessions.length > 0) {
-                setSessionId(sessions[0].id)
-            } else {
-                handleNewChat()
+    
+    const fetchSessions = useCallback(async () => {
+        if (!user.uid) return;
+        setFetchingSessions(true);
+        try {
+            const data = await apiFetch('/sessions');
+            if (data.sessions) {
+                setSessions(data.sessions.sort((a, b) => b.updatedAt - a.updatedAt));
+                if (!sessionId && data.sessions.length > 0) {
+                    setSessionId(data.sessions[0].id);
+                } else if (!sessionId) {
+                    handleNewChat();
+                }
             }
-            return
+        } catch (err) {
+            console.error("Failed to fetch sessions", err);
+        } finally {
+            setFetchingSessions(false);
         }
+    }, [user.uid, sessionId]);
 
-        // Load specific session messages
-        const saved = memoryRetention ? localStorage.getItem(`chat_history_${user.uid}_${sessionId}`) : null;
-        if (saved) {
-            const parsed = JSON.parse(saved)
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                setMessages(parsed)
-            } else {
-                setMessages([{
-                    id: 'init', role: 'ai', sender: 'Twin Assistant',
-                    text: `Hello ${user.name?.split(' ')[0] || 'there'}. I'm your AI Twin${autoM ? ' (Autonomous Mode ✅)' : ''}. How can I assist you?`,
-                    time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
-                }])
+    const loadMessages = useCallback(async (sid) => {
+        if (!user.uid || !sid) return;
+        setFetchingMessages(true);
+        try {
+            const data = await apiFetch(`/history?session_id=${sid}`);
+            if (data.history) {
+                const mapped = data.history.map(h => ({
+                    id: h.id,
+                    role: h.kind === 'prompt' ? 'user' : 'ai',
+                    text: h.kind === 'prompt' ? h.input : h.output,
+                    time: new Date(h.timestamp).toLocaleTimeString([], { timeStyle: 'short' }),
+                    source: h.intent?.toUpperCase() || 'AI',
+                    responseType: h.response_type,
+                    imageUrl: h.image_url
+                }));
+                
+                if (mapped.length > 0) {
+                    setMessages(mapped);
+                } else {
+                    setMessages([{
+                        id: 'init', role: 'ai', sender: 'Twin Assistant',
+                        text: `Hello ${user.name?.split(' ')[0] || 'there'}. I'm your AI Twin. How can I assist you?`,
+                        time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
+                    }]);
+                }
             }
-        } else {
-            setMessages([{
-                id: 'init', role: 'ai', sender: 'Twin Assistant',
-                text: `Hello ${user.name?.split(' ')[0] || 'there'}. I'm your AI Twin${autoM ? ' (Autonomous Mode ✅)' : ''}. How can I assist you?`,
-                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
-            }])
+        } catch (err) {
+            console.error("Failed to fetch history", err);
+        } finally {
+            setFetchingMessages(false);
         }
-    }, [user.uid, preferences.memoryRetention, sessionId])
-
-    useEffect(() => {
-        if (user.uid && messages.length > 0 && preferences.memoryRetention !== false && sessionId) {
-            localStorage.setItem(`chat_history_${user.uid}_${sessionId}`, JSON.stringify(messages))
-        }
-        endRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, [messages, user.uid, preferences.memoryRetention, sessionId])
+    }, [user.uid, user.name]);
 
     useEffect(() => {
         if (user.uid) {
-            localStorage.setItem(`chat_sessions_${user.uid}`, JSON.stringify(sessions))
+            fetchSessions();
         }
-    }, [sessions, user.uid])
+    }, [user.uid]);
+
+    useEffect(() => {
+        if (sessionId) {
+            loadMessages(sessionId);
+        }
+    }, [sessionId, loadMessages]);
+
+    useEffect(() => {
+        endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }, [messages])
 
     const handleNewChat = () => {
         const sid = newSessionId()
@@ -467,7 +544,8 @@ const Chat = () => {
             const chat_history = memoryRetention
                 ? [...messages, userMsg].slice(-5).map(m => ({ 
                     role: m.role === 'ai' ? 'assistant' : m.role,
-                    text: m.text 
+                    text: m.text,
+                    image_url: m.imageUrl
                   }))
                 : [{ role: 'user', text: userMsg.text }];
 
@@ -486,7 +564,7 @@ const Chat = () => {
             const aiMsg = {
                 id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: 'ai', sender: 'Twin Assistant',
                 text: data.output, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
-                source: data.intent?.toUpperCase() || 'AI', response_type: data.response_type, imageUrl: data.image_url
+                source: data.intent?.toUpperCase() || 'AI', responseType: data.response_type, imageUrl: data.image_url
             }
             setMessages(prev => {
                 const newMessages = [...prev, aiMsg];
@@ -509,7 +587,14 @@ const Chat = () => {
     }
 
     const handleAction = async (action, actionData) => {
-        if (action === 'reject') return
+        if (action === 'reject') {
+            setMessages(prev => [...prev, {
+                role: 'ai', sender: 'Twin Assistant', 
+                text: `### ❌ Task Cancelled\n\n*The proposed action (${actionData.intent}) has been rejected and will not be executed.*`,
+                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
+            }])
+            return
+        }
         const token = useStore.getState().auth?.user?.accessToken;
 
         if (!token) {
@@ -537,12 +622,12 @@ const Chat = () => {
 
             setMessages(prev => [...prev, {
                 role: 'ai', sender: 'Twin Assistant', 
-                text: `✅ **Task Completed Successfully.**\n\n*Action: ${
+                text: `### ✅ Execution Successful\n\n**Action:** ${
                     actionData.intent === 'email' ? 'Email sent to ' + actionData.to : 
                     actionData.intent === 'slack' ? 'Slack message posted to #' + (actionData.channel_name || actionData.channel_id) :
-                    actionData.intent === 'telegram' ? 'Telegram message pushed to connected device' : 
-                    'Event scheduled'
-                }*`,
+                    actionData.intent === 'telegram' ? 'Notification pushed to your Telegram' : 
+                    'Calendar event scheduled'
+                }\n\n*Your Twin has completed this task. You can check the history for details.*`,
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
             }])
         } catch (err) {
