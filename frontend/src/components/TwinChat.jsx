@@ -259,7 +259,7 @@ function SuggestionsPanel({ data, onApprove, onDismiss, partnerName }) {
       {data.respondingTo && (
         <div className="mb-4 p-3 bg-surface-base rounded-xl border border-neutral/10">
           <p className="text-[9px] text-neutral font-bold uppercase mb-1 flex items-center gap-1">
-            <Clock size={10} /> Just received from {partnerName}:
+            <Clock size={10} /> {data.isEnhancement ? 'Your drafted message:' : `Just received from ${partnerName}:`}
           </p>
           <p className="text-xs text-on-surface-variant italic line-clamp-2">"{data.respondingTo}"</p>
         </div>
@@ -336,7 +336,8 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
         suggestions: wsEvent.message.suggestions, 
         enrichment: wsEvent.enrichment, 
         msgId: wsEvent.message.id,
-        respondingTo: wsEvent.responding_to 
+        respondingTo: wsEvent.responding_to,
+        isEnhancement: wsEvent.is_enhancement === true
       })
     } else if (wsEvent.event === 'partner_typing') {
       setPartnerTyping(true)
@@ -380,13 +381,10 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
     if (session?.id) wsSend({ event: 'stop_typing', session_id: session.id })
     
     try {
-      const data = await apiFetch(`/twin-chat/sessions/${session.id}/ai-process`, {
+      const data = await apiFetch(`/twin-chat/sessions/${session.id}/messages`, {
         method: 'POST', body: JSON.stringify({ 
           content: text,
-          files: currentFiles,
-          gmail_sync: preferences?.gmailSync !== false,
-          calendar_sync: preferences?.calendarSync !== false,
-          slack_sync: preferences?.slackSync !== false
+          files: currentFiles
         })
       })
       if (data.message) {
@@ -434,14 +432,33 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
   }
 
   const handleEnhance = async () => {
-    if (!input.trim() || enhancing) return
+    const text = input.trim()
+    if ((!text && attachedFiles.length === 0) || enhancing) return
     setEnhancing(true)
+    
+    const currentFiles = [...attachedFiles]
+    setAttachedFiles([])
+    setInput('')
+
     try {
-      const data = await apiFetch(`/twin-chat/sessions/${session.id}/enhance`, {
-        method: 'POST', body: JSON.stringify({ draft: input, conversation_history: [] })
+      const data = await apiFetch(`/twin-chat/sessions/${session.id}/ai-process`, {
+        method: 'POST', body: JSON.stringify({ 
+          content: text,
+          files: currentFiles,
+          gmail_sync: preferences?.gmailSync !== false,
+          calendar_sync: preferences?.calendarSync !== false,
+          slack_sync: preferences?.slackSync !== false
+        })
       })
-      if (data.enhanced) setInput(data.enhanced)
-    } catch {}
+      // The AI response comes back as a suggestion, so we display it in the pending panel
+      if (data.suggestion) {
+        setPendingSuggestion({
+          suggestions: data.suggestion.suggestions_json ? JSON.parse(data.suggestion.suggestions_json) : [],
+          msgId: data.suggestion.id,
+          respondingTo: text
+        })
+      }
+    } catch (e) { console.error(e) }
     setEnhancing(false)
   }
 
@@ -521,7 +538,16 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
                 data={pendingSuggestion} 
                 partnerName={partnerName}
                 onApprove={handleApprove} 
-                onDismiss={() => setPendingSuggestion(null)} 
+                onDismiss={async () => {
+                   if (pendingSuggestion.isEnhancement && pendingSuggestion.respondingTo) {
+                     setInput(pendingSuggestion.respondingTo);
+                   }
+                   const msgId = pendingSuggestion.msgId;
+                   setPendingSuggestion(null);
+                   try {
+                     await apiFetch(`/twin-chat/sessions/${session.id}/messages/${msgId}`, { method: 'DELETE' });
+                   } catch (e) { console.error(e) }
+                }} 
               />
             )}
           </AnimatePresence>

@@ -366,7 +366,7 @@ const AgentCard = ({ agent, onSchedule }) => {
 // ─── Main AgentInbox Component ────────────────────────────────────────────────
 
 const AgentInbox = () => {
-  const { auth } = useStore()
+  const { auth, unreadTwinChats, setView, setTwinChatActiveSessionId } = useStore()
   const userId = auth?.user?.uid
   const accessToken = auth?.user?.accessToken
 
@@ -508,7 +508,8 @@ const AgentInbox = () => {
 
   // Filter inbox: pending first, then rest
   const pendingMsgs = inbox.filter(m => ['pending', 'delivered'].includes(m.status))
-  const historyMsgs = inbox.filter(m => !['pending', 'delivered'].includes(m.status))
+  // Filter out rejected messages completely so they vanish
+  const historyMsgs = inbox.filter(m => !['pending', 'delivered', 'rejected'].includes(m.status))
 
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -560,7 +561,7 @@ const AgentInbox = () => {
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-surface-container rounded-2xl border border-neutral/10">
         {[
-          { id: 'inbox', label: 'Inbox', icon: Inbox, count: unreadCount },
+          { id: 'inbox', label: 'Inbox', icon: Inbox, count: unreadCount + (unreadTwinChats?.length || 0) },
           { id: 'registry', label: 'Discover Twins', icon: Globe },
         ].map(t => (
           <button
@@ -588,7 +589,7 @@ const AgentInbox = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-xs font-black uppercase tracking-widest text-neutral">
-              {pendingMsgs.length > 0 ? `${pendingMsgs.length} awaiting approval` : 'No pending messages'}
+              {pendingMsgs.length > 0 || unreadTwinChats.length > 0 ? `${pendingMsgs.length + unreadTwinChats.length} awaiting action` : 'No pending messages'}
             </h2>
             <button
               onClick={fetchInbox}
@@ -605,14 +606,46 @@ const AgentInbox = () => {
                 <div key={i} className="bg-surface-container rounded-2xl border border-neutral/10 p-5 animate-pulse h-48" />
               ))}
             </div>
-          ) : inbox.length === 0 ? (
+          ) : (inbox.length === 0 && unreadTwinChats.length === 0) ? (
             <div className="text-center py-16 text-neutral">
               <Inbox size={40} className="mx-auto mb-3 opacity-30" />
               <p className="font-bold text-sm">No messages yet</p>
-              <p className="text-xs mt-1 opacity-70">Scheduling proposals from other Twins will appear here</p>
+              <p className="text-xs mt-1 opacity-70">Scheduling proposals and Twin chats will appear here</p>
             </div>
           ) : (
             <AnimatePresence>
+              {/* Unread Twin Chats */}
+              {unreadTwinChats.length > 0 && (
+                <div className="space-y-3 mb-6">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1.5">
+                    <MessageSquare size={11} /> Unread Twin Chats
+                  </p>
+                  {unreadTwinChats.map((msg, i) => (
+                    <motion.div
+                      key={`tc-${msg.id}-${i}`}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-surface-container rounded-2xl border border-neutral/10 hover:border-primary/20 p-5 flex items-start gap-4 transition-all cursor-pointer"
+                      onClick={() => {
+                        setTwinChatActiveSessionId(msg.session_id);
+                        setView('twin-chat');
+                      }}
+                    >
+                      <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center font-bold text-primary shrink-0 border border-primary/20">
+                        {msg.sender?.name?.[0] || '?'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="text-sm font-bold text-on-surface truncate">{msg.sender?.name || 'Partner'}</p>
+                          <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-widest">New Message</span>
+                        </div>
+                        <p className="text-sm text-on-surface-variant line-clamp-2">{msg.content}</p>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+
               {/* Pending first */}
               {pendingMsgs.length > 0 && (
                 <div className="space-y-3">

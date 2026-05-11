@@ -97,6 +97,7 @@ export const useStore = create(
                 preferences: state.preferences,
                 currentScreen: state.currentScreen,
                 tasks: state.tasks,
+                unreadTwinChats: state.unreadTwinChats,
             }),
         }
     )

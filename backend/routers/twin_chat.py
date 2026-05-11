@@ -104,6 +104,7 @@ class SendMessageRequest(BaseModel):
     content: str
     sender_type: str = "human"   # human | twin
     status: str = "sent"
+    files: Optional[List[dict]] = None
 
 class SuggestRequest(BaseModel):
     incoming_message: str
@@ -323,6 +324,10 @@ async def send_message(
         raise HTTPException(status_code=403, detail="Not a participant")
 
     now = datetime.now(timezone.utc)
+    metadata = {}
+    if body.files:
+        metadata["files"] = body.files
+
     msg = DirectChatMessage(
         id=str(uuid.uuid4()),
         session_id=session_id,
@@ -330,6 +335,7 @@ async def send_message(
         sender_type="human",
         status="sent",
         content=body.content,
+        metadata_json=json.dumps(metadata) if metadata else None,
         created_at=now,
         updated_at=now,
     )
@@ -619,28 +625,9 @@ async def ai_process_in_chat(
     now = datetime.now(timezone.utc)
     partner_id = session.partner_id if session.initiator_id == current_user.id else session.initiator_id
 
-    # 1. Save the user's message
-    user_msg = DirectChatMessage(
-        id=str(uuid.uuid4()),
-        session_id=session_id,
-        sender_id=current_user.id,
-        sender_type="human",
-        status="sent",
-        content=body.content,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(user_msg)
-    session.last_message_at = now
-    session.updated_at = now
-    db.commit()
-    db.refresh(user_msg)
-
-    # Broadcast user message to both participants
-    await manager.broadcast_to_session(session, {
-        "event": "new_message",
-        "message": _serialize_message(user_msg),
-    })
+    # We DO NOT save the user's prompt as a message in the chat history, 
+    # because this is an "Enhance" / "AI Action" request by the current user.
+    # The prompt is only used to guide the AI graph.
 
     # 2. Build conversation history for the AI graph
     recent_msgs = db.query(DirectChatMessage).filter(
@@ -698,7 +685,7 @@ async def ai_process_in_chat(
         logger.error(f"[TwinChat AI] Graph error: {e}")
         final_state = {"output": f"❌ AI processing error: {str(e)}", "intent": "error", "response_type": "text"}
 
-    # 5. Store the AI response as a message in the session
+    # 5. Store the AI response as a pending suggestion for the current user
     ai_output = final_state.get("output", "")
     response_type = final_state.get("response_type", "text")
     image_url = final_state.get("image_url")
@@ -711,6 +698,7 @@ async def ai_process_in_chat(
         "intent": intent,
         "approval_required": approval_required,
         "source": "ai_pipeline",
+        "files": body.files, # Include files if any
     }
 
     ai_msg = DirectChatMessage(
@@ -718,27 +706,31 @@ async def ai_process_in_chat(
         session_id=session_id,
         sender_id=current_user.id,
         sender_type="twin",
-        status="sent",
+        status="pending",
         content=ai_output,
+        suggestions_json=json.dumps([{ "content": ai_output, "intent": intent }]),
         metadata_json=json.dumps(metadata),
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
     db.add(ai_msg)
-    session.last_message_at = ai_msg.created_at
     db.commit()
     db.refresh(ai_msg)
 
     serialized = _serialize_message(ai_msg)
 
-    # Broadcast AI response to both participants
-    await manager.broadcast_to_session(session, {
-        "event": "new_message",
+    # Send ONLY to the current user as a suggestion
+    await manager.send_to_user(current_user.id, {
+        "event": "twin_suggestion",
         "message": serialized,
+        "enrichment": "",
+        "responding_to": body.content,
+        "is_enhancement": True,
+        "suggestions": [{ "content": ai_output, "intent": intent }]
     })
 
     return {
-        "message": serialized,
+        "suggestion": serialized,
         "ai_response": {
             "output": ai_output,
             "intent": intent,
