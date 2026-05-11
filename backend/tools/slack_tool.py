@@ -86,7 +86,25 @@ def send_slack_message(db: Session, user_id: str, channel_id: str, text: str) ->
         logger.error(f"Slack API Error (send_message): {data.get('error')}")
         raise RuntimeError(f"Slack post failed: {data.get('error')}")
     
-    return data
+    return {"ok": True, "ts": data.get("ts"), "channel": data.get("channel")}
+
+def read_slack_messages(db: Session, user_id: str, channel_id: str, limit: int = 10) -> list:
+    token = get_slack_token(db, user_id)
+    url = "https://slack.com/api/conversations.history"
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {"channel": channel_id, "limit": limit}
+    
+    response = requests.get(url, headers=headers, params=params)
+    data = response.json()
+    
+    if not data.get("ok"):
+        logger.error(f"Slack API Error (read_messages): {data.get('error')}")
+        return []
+    
+    return [
+        {"user": m.get("user"), "text": m.get("text"), "ts": m.get("ts")}
+        for m in data.get("messages", [])
+    ]
 
 def get_user_id_by_slack_bot_id(db: Session, bot_user_id: str) -> Optional[str]:
     """Finds our internal user_id associated with a Slack bot_user_id."""

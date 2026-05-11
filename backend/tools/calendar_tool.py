@@ -164,6 +164,31 @@ def get_upcoming_events(db: Session, user_id: str, max_results: int = 20) -> lis
 
     return result
 
+def check_conflict(db: Session, user_id: str, start_dt: str, end_dt: str) -> str:
+    try:
+        service = get_calendar_service(db=db, user_id=user_id)
+        body = {
+            "timeMin": start_dt,
+            "timeMax": end_dt,
+            "items": [{"id": "primary"}]
+        }
+        fb = service.freebusy().query(body=body).execute()
+        busy_slots = fb.get("calendars", {}).get("primary", {}).get("busy", [])
+        if busy_slots:
+            events = service.events().list(
+                calendarId="primary",
+                timeMin=start_dt,
+                timeMax=end_dt,
+                singleEvents=True,
+                orderBy="startTime"
+            ).execute().get("items", [])
+            for e in events:
+                return e.get("summary", "Busy Event")
+            return "Another Event"
+    except Exception as e:
+        logger.error(f"Freebusy check failed: {e}")
+    return None
+
 def create_event(title: str, start_datetime: str, end_datetime: str,
                  attendees: list = [], description: str = "",
                  location: str = "", db: Session = None, user_id: str = None) -> dict:
@@ -174,6 +199,10 @@ def create_event(title: str, start_datetime: str, end_datetime: str,
     # Normalize datetime strings — accepts flexible formats
     start_fmt = normalize_datetime(start_datetime)
     end_fmt   = normalize_datetime(end_datetime)
+
+    conflict_name = check_conflict(db, user_id, start_fmt, end_fmt)
+    if conflict_name:
+        raise ValueError(f"Conflict Detected: You have a conflict with '{conflict_name}'.")
 
     # Build attendees list — always include as guests
     attendee_list = [{"email": email.strip()} for email in attendees if email.strip()]

@@ -4,10 +4,28 @@ import { API_BASE } from "../config";
 
 let isRefreshing = false;
 let failedQueue = [];
+let refreshCooldownUntil = 0;
 
 const processQueue = (error, token = null) => {
     failedQueue.forEach(prom => error ? prom.reject(error) : prom.resolve(token));
     failedQueue = [];
+};
+
+const GOOGLE_INTEGRATION_ENDPOINTS = [
+    '/gmail/',
+    '/calendar/',
+    '/auth/gmail/status',
+    '/integrations/google/',
+    '/oauth/google/',
+];
+
+const shouldSkipTokenRefresh = (endpoint, errData = {}) => {
+    if (GOOGLE_INTEGRATION_ENDPOINTS.some(prefix => endpoint.startsWith(prefix))) {
+        return true;
+    }
+    const detail = errData?.detail;
+    const detailCode = typeof detail === 'object' ? detail?.code : null;
+    return ["GOOGLE_AUTH", "GOOGLE_PERMISSION_DENIED", "BAD_DATETIME"].includes(detailCode);
 };
 
 /**
@@ -44,7 +62,16 @@ export const apiFetch = async (endpoint, options = {}) => {
 
         // Handle 401 Unauthorized
         if (response.status === 401) {
+            const errData = await response.clone().json().catch(() => ({}));
+            if (shouldSkipTokenRefresh(endpoint, errData)) {
+                throw new Error(errData?.detail?.message || errData?.detail || "Google integration required");
+            }
+
             console.warn(`Auth required for: ${endpoint}`);
+
+            if (Date.now() < refreshCooldownUntil) {
+                throw new Error("Session refresh temporarily throttled. Please retry in a few seconds.");
+            }
             
             // Standardizing: Almost all 401s in our system should trigger a refresh attempt
             if (isRefreshing) {
@@ -80,7 +107,12 @@ export const apiFetch = async (endpoint, options = {}) => {
                         })
                     });
 
-                    if (!authRes.ok) throw new Error("Session refresh unsuccessful.");
+                    if (!authRes.ok) {
+                        if (authRes.status === 429) {
+                            refreshCooldownUntil = Date.now() + 20000;
+                        }
+                        throw new Error("Session refresh unsuccessful.");
+                    }
                     const authData = await authRes.json();
                     
                     useStore.getState().updateUser({
@@ -98,7 +130,9 @@ export const apiFetch = async (endpoint, options = {}) => {
 
                 } catch (refreshErr) {
                     processQueue(refreshErr, null);
-                    useStore.getState().logout();
+                    if (!String(refreshErr?.message || "").includes("throttled")) {
+                        useStore.getState().logout();
+                    }
                     return Promise.reject(refreshErr);
                 } finally {
                     isRefreshing = false;

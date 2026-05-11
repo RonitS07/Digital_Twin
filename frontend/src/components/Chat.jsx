@@ -542,7 +542,7 @@ const Chat = () => {
         try {
             const memoryRetention = preferences.memoryRetention !== false;
             const chat_history = memoryRetention
-                ? [...messages, userMsg].slice(-5).map(m => ({ 
+                ? [...messages, userMsg].map(m => ({ 
                     role: m.role === 'ai' ? 'assistant' : m.role,
                     text: m.text,
                     image_url: m.imageUrl

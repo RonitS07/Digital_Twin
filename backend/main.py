@@ -71,6 +71,10 @@ from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, Integrati
 from routers.agent_broker import router as agent_broker_router, set_auth_dependency
 from services.agent_registry import register_agent
 
+# ── Twin-to-Twin Direct Chat ───────────────────────────────────────────────
+from db.twin_chat_models import DirectChatSession, DirectChatMessage  # register models
+from routers.twin_chat import router as twin_chat_router
+from security.auth import get_current_user
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -131,6 +135,9 @@ async def log_origin(request: Request, call_next):
 # Mount multi-agent broker router
 app.include_router(agent_broker_router)
 app.include_router(admin_router, prefix="/admin", tags=["admin"])
+
+# Mount Twin-to-Twin Direct Chat router
+app.include_router(twin_chat_router)
 
 def extract_reply(text: str) -> str:
     """Extracts reply content and strips away hidden action tags and internal reasoning."""
@@ -852,6 +859,7 @@ class ProcessRequest(BaseModel):
     calendar_sync: bool = True
     slack_sync: bool = True
     files: Optional[List[dict]] = Field(default_factory=list) # [{ name, type, data }]
+    file_path: Optional[str] = None
 
 class MemoryRequest(BaseModel):
     user_id: str
@@ -1181,6 +1189,8 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
                 
                 # 2. Secure Upload & Validation (MIME, Size, Path)
                 file_path = validate_and_save_upload(file_bytes, f['name'])
+                if not req.file_path:
+                    req.file_path = file_path
                 
                 new_asset = FileAsset(
                     user_id=effective_user_id,
@@ -1194,6 +1204,11 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
             except Exception as e:
                 logger.error(f"Failed to save file asset {f.get('name')}: {e}")
         db.commit()
+
+    if req.file_path:
+        initial_state["file_path"] = req.file_path
+        if not req.input.strip():
+            initial_state["input"] = "Summarise this file"
 
     try:
         final_state = twin_graph.invoke(initial_state)
@@ -1849,6 +1864,15 @@ def list_channels(current_user: User = Depends(get_current_user), db: Session = 
 @app.post("/slack/send")
 def send_msg(req: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     channel_id = req.get("channel_id")
+    action = req.get("action", "send")
+    
+    if action == "read":
+        from tools.slack_tool import read_slack_messages
+        if not channel_id:
+            raise HTTPException(status_code=400, detail="Missing channel_id")
+        res = read_slack_messages(db, current_user.id, channel_id, limit=10)
+        return {"status": "success", "details": res, "messages": res}
+        
     text = req.get("text")
     if not channel_id or not text:
         raise HTTPException(status_code=400, detail="Missing channel_id or text")

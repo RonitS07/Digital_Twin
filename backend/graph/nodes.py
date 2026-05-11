@@ -6,8 +6,7 @@ import base64
 import logging
 import asyncio
 from datetime import datetime
-from groq import Groq
-from graph.state import State
+from .state import State
 from memory.chroma import retrieve_memory
 from tools.gmail_tool import get_email_details, read_recent_emails, search_emails
 from tools.calendar_tool import get_upcoming_events
@@ -21,7 +20,7 @@ from utils.briefing import generate_daily_briefing
 
 logger = logging.getLogger(__name__)
 
-from graph.llm_utils import _llm
+from .llm_utils import _llm
 
 def generate_hf_image(prompt: str) -> str:
     import urllib.parse
@@ -32,10 +31,12 @@ def generate_hf_image(prompt: str) -> str:
     return url
 
 def _parse_json(text: str) -> dict:
+    import re
+    clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     try:
-        return json.loads(text)
+        return json.loads(clean)
     except Exception:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
+        match = re.search(r"\{.*\}", clean, re.DOTALL)
         if match:
             try:
                 return json.loads(match.group())
@@ -71,7 +72,7 @@ def classifier_node(state: State):
     is_confirmation = any(word in user_input for word in ["yes", "yeah", "sure", "do it", "ok", "go ahead", "send it", "book it", "confirm", "proceed", "approved"])
     
     if is_confirmation and last_ai_msg:
-        if "briefing" in last_ai_msg: return {**state, "intent": "slack"}
+        if "briefing" in last_ai_msg: return {**state, "intent": "slack_send"}
         if any(k in last_ai_msg for k in ["schedule", "meeting", "calendar", "invite", "slot"]): 
             return {**state, "intent": "scheduling"}
 
@@ -83,7 +84,7 @@ def classifier_node(state: State):
     if any(k in user_input for k in ["email", "mail", "gmail", "inbox"]):
         if any(k in user_input for k in ["search", "find", "show me", "read", "unread", "recent", "what did", "check", "promotion", "offer", "deal", "bank", "statement", "receipt", "invoice", "order", "shipping", "delivery", "who", "last", "latest", "when", "did"]):
             return {**state, "intent": "email_search"}
-        return {**state, "intent": "email"}
+        return {**state, "intent": "email_draft"}
 
     # Implicit email search — user asks about topics that live in their inbox (no 'email' keyword needed)
     implicit_search_triggers = [
@@ -97,44 +98,46 @@ def classifier_node(state: State):
 
     # telegram / slack / email action prioritization
     if "telegram" in user_input:
-        return {**state, "intent": "telegram"}
+        return {**state, "intent": "telegram_send"}
     if "slack" in user_input and "briefing" not in user_input:
-        return {**state, "intent": "slack"}
+        return {**state, "intent": "slack_send"}
 
     # Fallback to LLM for more complex classification
     result = _llm(
         system="""
 You are a strict intent classifier for an AI Twin.
-Your goal is to identify if the user wants an ACTION (sending/scheduling) or just an ANSWER.
+Your goal is to categorize the user's intent EXACTLY into one of these:
 
-CATEGORY DEFINITIONS:
-1. 'visual': Generate a NEW image from text.
-2. 'telegram': Send a message/image to Telegram.
-3. 'slack': Send a message to Slack.
-4. 'email': WRITING, DRAFTING, or SENDING a NEW email. (e.g. "Draft an email to...", "Write to...", "Send email to...")
-5. 'calendar': Schedule or change a meeting.
-6. 'calendar_lookup': Check or list schedule.
-7. 'email_search': SEARCHING, CHECKING, or FINDING information in the inbox. (e.g. "Check my email for...", "Did I get a mail from...", "Show me my last emails...")
-8. 'briefing': Daily summary of day.
-9. 'question': General knowledge or asking about context.
-10. 'casual': Chit-chat.
+1. 'email_read': "show my emails", "what's in my inbox", "read latest email from X"
+2. 'email_draft': "draft a reply to X", "write an email to Y"
+3. 'email_send': "send that email", "approve and send"
+4. 'calendar': "schedule a meeting", "what's on my calendar", "book a call with X"
+5. 'slack_send': "post to #channel", "send message to slack", "tell the team X"
+6. 'slack_read': "what's new in slack", "show #general"
+7. 'telegram_send': "send via telegram", "notify me on telegram"
+8. 'telegram_read': "what did I get on telegram"
+9. 'visual': "generate an image", "create a visual of X", "make an image"
+10. 'file_read': "read this file", "what's in this doc", "summarise this PDF"
+11. 'general': everything else
 
 RULES:
-- If the user wants to FIND an email, use 'email_search'.
-- If the user wants to WRITE an email, use 'email'.
-- If the user mentions 'telegram' or 'slack', ALWAYS choose that over 'question'.
-- If the user asks for information AND to send it somewhere, choose the destination (telegram/slack/email).
-
-Return ONLY valid JSON: {"intent":"category", "target_handle": "null_or_handle"}
+- Return ONLY valid JSON: {"intent":"category", "target_handle": "null_or_handle"}
 """,
         user=state["input"],
     )
     parsed = _parse_json(result)
-    intent = parsed.get("intent", "other")
+    intent = parsed.get("intent", "general")
     
-    # Final override: if keywords are present, force the intent
-    if "telegram" in user_input: intent = "telegram"
-    if "slack" in user_input and intent == "question": intent = "slack"
+    valid_intents = [
+        "email_read", "email_draft", "email_send", 
+        "calendar", "slack_send", "slack_read", 
+        "telegram_send", "telegram_read", 
+        "visual", "file_read", "general"
+    ]
+    if intent not in valid_intents:
+        intent = "general"
+        
+    logger.info(f"[Classifier] Input: {state['input'][:80]} → Intent: {intent}")
     
     return {**state, "intent": intent, "target_user_handle": parsed.get("target_handle")}
 
@@ -144,7 +147,7 @@ def memory_node(state: State) -> State:
     # If it's a short/ambiguous input, we use history to make it a better RAG query.
     history_context = ""
     if state.get("chat_history"):
-        history_context = "\n".join([f"{m.get('role')}: {_clean_output(m.get('text', ''))}" for m in state["chat_history"][-3:]])
+        history_context = "\n".join([f"{m.get('role')}: {_clean_output(m.get('text', ''))}" for m in state["chat_history"]])
     
     query = state["input"]
     if len(query.split()) < 4 and history_context:
@@ -185,7 +188,7 @@ def memory_node(state: State) -> State:
             logger.error(f"Error fetching inbox emails: {e}")
 
     # 3. Slack Context (Channels)
-    if state.get("intent") == "slack" and state.get("slack_sync", True):
+    if state.get("intent") in ("slack_send", "slack_read") and state.get("slack_sync", True):
         try:
             with next(get_db()) as db:
                 channels = list_slack_channels(db=db, user_id=state["user_id"])
@@ -295,11 +298,10 @@ Format:
     plan = parsed.get("task_plan", [state["input"]])
 
     needs_approval = state["intent"] in [
-        "email",
-        "calendar_schedule",
-        "scheduling",
-        "action",
-        "telegram"
+        "email_draft",
+        "calendar",
+        "slack_send",
+        "telegram_send"
     ]
 
     return {
@@ -317,7 +319,7 @@ def responder_node(state: State) -> State:
         else ""
     )
 
-    history_items = state.get("chat_history", [])[-10:]
+    history_items = state.get("chat_history", [])
     history_block = "\n".join(
         f"{m.get('role', 'user')}: {_clean_output(m.get('text', ''))}"
         for m in history_items
@@ -357,14 +359,40 @@ def responder_node(state: State) -> State:
             logger.error(f"Image generation failed: {e}")
             return {
                 **state,
-                "output": f"Image generation failed: {str(e)}",
+                "output": "Image generation is temporarily unavailable.",
                 "response_type": "text"
             }
 
+    # FILE READ REQUESTS
+    if state["intent"] == "file_read":
+        file_path = state.get("file_path")
+        output_text = ""
+        if file_path:
+            try:
+                from tools.file_tool import read_file
+                text_content = read_file(file_path)
+                result = _llm(
+                    system=f"You are the Digital Twin. Summarize the following file content.\n\n[FILE CONTENT]\n{text_content}",
+                    user=f"Input: {state['input']}",
+                    intent="file_read"
+                )
+                output_text = result
+            except Exception as e:
+                output_text = f"Failed to read file: {e}"
+        else:
+             result = _llm(
+                 system=f"You are the Digital Twin. Read the provided file contents and answer the user.",
+                 user=f"Input: {state['input']}",
+                 intent="file_read"
+             )
+             output_text = result
+
+        return {**state, "output": output_text, "response_type": "text"}
+
     # EMAIL REQUESTS (Drafting/Sending)
     # 🟢 Guard: Only proceed if it's truly an ACTION request, not a search
-    is_draft_request = any(k in state["input"].lower() for k in ["draft", "write", "send", "reply", "compose", "email to"])
-    if state["intent"] == "email" and is_draft_request:
+    is_draft_request = state["intent"] in ("email_draft", "email_send")
+    if is_draft_request:
         if not state.get("gmail_sync", True):
             return {
                 **state,
@@ -406,10 +434,13 @@ Include this at the very end ONLY if you have a recipient and subject.
             user=f"Draft email for: {state['input']}",
             intent="email"
         )
+        
+        import re
+        visible = re.sub(r'<action>.*?</action>', '', result, flags=re.DOTALL).strip()
 
         return {
             **state,
-            "output": result,
+            "output": result, # We must return the raw result with action block so the frontend UI can parse it
             "response_type": "text"
         }
 
@@ -463,7 +494,7 @@ Never say "Cricket meeting" or similar; simply say "Busy".
             logger.error(f"Briefing node failed: {e}")
             return {**state, "output": "I encountered an error generating your briefing.", "response_type": "text"}
 
-    if state["intent"] == "slack" and state.get("slack_sync", True):
+    if state["intent"] in ("slack_send", "slack_read") and state.get("slack_sync", True):
         # Check if user is asking for a briefing OR if we were just discussing one (channel selection)
         briefing_content = ""
         history = state.get("chat_history") or []
@@ -591,7 +622,7 @@ Action Block Format:
             "response_type": "text"
         }
 
-    if state["intent"] == "telegram" or (state["intent"] == "action" and "telegram" in state["input"].lower()):
+    if state["intent"] in ("telegram_send", "telegram_read") or (state["intent"] == "action" and "telegram" in state["input"].lower()):
         # 🟢 Intelligence: Detect if user also wants to CREATE an image in this block
         img_keywords = ["create", "generate", "make", "draw", "visualize", "image of", "picture of", "image"]
         image_url = None

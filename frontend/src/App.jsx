@@ -23,6 +23,7 @@ import Workspace from './components/Workspace'
 import Settings from './components/Settings'
 import AgentInbox from './components/AgentInbox'
 import Files from './components/Files'
+import TwinChat from './components/TwinChat'
 import AdminDashboard from './components/AdminDashboard'
 
 
@@ -264,6 +265,7 @@ function App() {
                                             {view === 'activity' && <Activity />}
                                             {view === 'settings' && <Settings />}
                                             {view === 'agents' && <AgentInbox />}
+                                            {view === 'twin-chat' && <TwinChat />}
                                             {view === 'admin' && (isAdmin ? <AdminDashboard /> : <Dashboard />)}
                                         </motion.div>
                                     )}

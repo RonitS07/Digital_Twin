@@ -20,6 +20,7 @@ import {
     Shield,
     BookOpen,
     MoreHorizontal,
+    MessagesSquare,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 
@@ -291,6 +292,7 @@ const Layout = ({ children, currentView, setView }) => {
     const navItems = [
         { id: 'home', icon: Home, label: 'Home' },
         { id: 'chat', icon: MessageSquare, label: 'Chat' },
+        { id: 'twin-chat', icon: MessagesSquare, label: 'Twin Chat' },
         { id: 'files', icon: HardDrive, label: 'Files' },
         { id: 'workspace', icon: LayoutGrid, label: 'Workspace' },
         { id: 'activity', icon: ActivityIcon, label: 'Activity' },
@@ -307,7 +309,7 @@ const Layout = ({ children, currentView, setView }) => {
     const isOverflowActive = overflowItems.some(item => item.id === currentView);
 
     // Hide layout chrome on Chat view (Chat has its own header)
-    const isChatView = currentView === 'chat';
+    const isChatView = currentView === 'chat' || currentView === 'twin-chat';
 
     return (
         <div className="flex h-screen overflow-hidden bg-surface-base text-on-surface font-inter">
