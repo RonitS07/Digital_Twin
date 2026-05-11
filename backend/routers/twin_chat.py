@@ -116,6 +116,14 @@ class EnhanceRequest(BaseModel):
 class ApproveMessageRequest(BaseModel):
     content: Optional[str] = None  # override content if editing before sending
 
+class AIProcessRequest(BaseModel):
+    """Send a message through the full AI pipeline (image gen, email, calendar, etc.)"""
+    content: str
+    files: Optional[List[dict]] = []    # [{ name, type, data(base64) }]
+    gmail_sync: bool = True
+    calendar_sync: bool = True
+    slack_sync: bool = True
+
 
 # ────────────────────────────────────────────────────────────────────
 # Helpers
@@ -395,6 +403,7 @@ async def send_message(
                     "event": "twin_suggestion",
                     "message": _serialize_message(twin_msg),
                     "enrichment": enrichment_data.get("enrichment", ""),
+                    "responding_to": body.content,
                 })
         except Exception as e:
             logger.error(f"[TwinChat] Partner enrichment failed: {e}")
@@ -582,6 +591,162 @@ def summarize_session(
     )
 
     return {"summary": summary}
+
+
+@router.post("/sessions/{session_id}/ai-process")
+async def ai_process_in_chat(
+    session_id: str,
+    body: AIProcessRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Route a Twin Chat message through the FULL AI pipeline (LangGraph).
+    Supports: image generation, email drafting, calendar events, file analysis, etc.
+    The response is stored as a twin-generated message in the session.
+    """
+    import base64
+    from graph.graph import twin_graph
+
+    session = db.query(DirectChatSession).filter(
+        DirectChatSession.id == session_id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if current_user.id not in (session.initiator_id, session.partner_id):
+        raise HTTPException(status_code=403, detail="Not a participant")
+
+    now = datetime.now(timezone.utc)
+    partner_id = session.partner_id if session.initiator_id == current_user.id else session.initiator_id
+
+    # 1. Save the user's message
+    user_msg = DirectChatMessage(
+        id=str(uuid.uuid4()),
+        session_id=session_id,
+        sender_id=current_user.id,
+        sender_type="human",
+        status="sent",
+        content=body.content,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(user_msg)
+    session.last_message_at = now
+    session.updated_at = now
+    db.commit()
+    db.refresh(user_msg)
+
+    # Broadcast user message to both participants
+    await manager.broadcast_to_session(session, {
+        "event": "new_message",
+        "message": _serialize_message(user_msg),
+    })
+
+    # 2. Build conversation history for the AI graph
+    recent_msgs = db.query(DirectChatMessage).filter(
+        DirectChatMessage.session_id == session_id,
+        DirectChatMessage.status.in_(["sent", "approved"]),
+    ).order_by(DirectChatMessage.created_at).limit(20).all()
+
+    chat_history = []
+    for m in recent_msgs:
+        role = "user" if m.sender_id == current_user.id else "assistant"
+        chat_history.append({"role": role, "text": m.content})
+
+    # 3. Prepare input for the AI graph
+    effective_input = body.content.strip()
+    if not effective_input and body.files:
+        effective_input = "Please analyze and describe the attached file(s)."
+
+    initial_state = {
+        "user_id": current_user.id,
+        "user_name": current_user.name or "User",
+        "input": effective_input,
+        "chat_history": chat_history,
+        "intent": "other",
+        "output": "",
+        "task_plan": [],
+        "approval_required": False,
+        "response_type": "text",
+        "image_url": None,
+        "gmail_sync": body.gmail_sync,
+        "calendar_sync": body.calendar_sync,
+        "slack_sync": body.slack_sync,
+        "files": body.files or [],
+    }
+
+    # Augment with text file contents
+    if body.files:
+        text_file_context = []
+        for f in body.files:
+            mime = f.get("type", "")
+            if not mime.startswith("image/"):
+                try:
+                    raw = f.get("data", "")
+                    encoded = raw.split(",", 1)[1] if "," in raw else raw
+                    content = base64.b64decode(encoded).decode("utf-8", errors="replace")
+                    text_file_context.append(f'--- File: {f["name"]} ---\n{content[:3000]}\n---')
+                except Exception:
+                    pass
+        if text_file_context:
+            initial_state["input"] = effective_input + "\n\n" + "\n".join(text_file_context)
+
+    # 4. Invoke the LangGraph twin pipeline
+    try:
+        final_state = twin_graph.invoke(initial_state)
+    except Exception as e:
+        logger.error(f"[TwinChat AI] Graph error: {e}")
+        final_state = {"output": f"❌ AI processing error: {str(e)}", "intent": "error", "response_type": "text"}
+
+    # 5. Store the AI response as a message in the session
+    ai_output = final_state.get("output", "")
+    response_type = final_state.get("response_type", "text")
+    image_url = final_state.get("image_url")
+    intent = final_state.get("intent", "other")
+    approval_required = final_state.get("approval_required", False)
+
+    metadata = {
+        "response_type": response_type,
+        "image_url": image_url,
+        "intent": intent,
+        "approval_required": approval_required,
+        "source": "ai_pipeline",
+    }
+
+    ai_msg = DirectChatMessage(
+        id=str(uuid.uuid4()),
+        session_id=session_id,
+        sender_id=current_user.id,
+        sender_type="twin",
+        status="sent",
+        content=ai_output,
+        metadata_json=json.dumps(metadata),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    db.add(ai_msg)
+    session.last_message_at = ai_msg.created_at
+    db.commit()
+    db.refresh(ai_msg)
+
+    serialized = _serialize_message(ai_msg)
+
+    # Broadcast AI response to both participants
+    await manager.broadcast_to_session(session, {
+        "event": "new_message",
+        "message": serialized,
+    })
+
+    return {
+        "message": serialized,
+        "ai_response": {
+            "output": ai_output,
+            "intent": intent,
+            "response_type": response_type,
+            "image_url": image_url,
+            "approval_required": approval_required,
+        }
+    }
 
 
 # ────────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { apiFetch } from '../utils/apiClient'
+import { API_BASE } from '../config'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     Home,
@@ -259,12 +260,50 @@ const MoreMenu = ({ items, currentView, setView, onClose }) => (
 )
 
 const Layout = ({ children, currentView, setView }) => {
-    const { auth, isAdmin } = useStore();
+    const { auth, isAdmin, twinChatActiveSessionId, addUnreadTwinChat, unreadTwinChats } = useStore();
     const user = auth.user || {};
     const [isTaskModalOpen, setTaskModalOpen] = useState(false);
     const [isHelpOpen, setHelpOpen] = useState(false);
     const [agentUnread, setAgentUnread] = useState(0);
     const [isMoreOpen, setMoreOpen] = useState(false);
+    const [twinToast, setTwinToast] = useState(null);
+    const wsRef = useRef(null);
+
+    // Global Twin Chat WebSocket
+    useEffect(() => {
+        if (!user?.accessToken) return;
+        let alive = true;
+        const connect = () => {
+            const proto = API_BASE.startsWith('https') ? 'wss' : 'ws';
+            const host = API_BASE.replace(/^https?:\/\//, '');
+            const url = `${proto}://${host}/twin-chat/ws?token=${encodeURIComponent(user.accessToken)}`;
+            const ws = new WebSocket(url);
+            wsRef.current = ws;
+
+            ws.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.event === 'new_message' && data.message.sender_id !== user.uid) {
+                        // Determine if we should show a notification
+                        // Check if the user is currently in this specific chat
+                        const isViewingChat = window.location.pathname.includes('twin-chat') || currentView === 'twin-chat';
+                        const isActiveSession = useStore.getState().twinChatActiveSessionId === data.message.session_id;
+
+                        if (!(isViewingChat && isActiveSession)) {
+                            addUnreadTwinChat(data.message);
+                            setTwinToast(data.message);
+                            setTimeout(() => setTwinToast(null), 4000);
+                        }
+                    }
+                } catch (err) {}
+            };
+            ws.onclose = () => {
+                if (alive) setTimeout(connect, 5000);
+            };
+        };
+        connect();
+        return () => { alive = false; wsRef.current?.close(); };
+    }, [user?.accessToken, user?.uid, currentView, addUnreadTwinChat]);
 
     // Poll for unread agent inbox messages every 30s
     React.useEffect(() => {
@@ -290,7 +329,7 @@ const Layout = ({ children, currentView, setView }) => {
         { id: 'files', icon: HardDrive, label: 'Files' },
         { id: 'integrations', icon: LayoutGrid, label: 'Integrations' },
         { id: 'activity', icon: ActivityIcon, label: 'Activity' },
-        { id: 'agents', icon: Users, label: 'Network', badge: agentUnread },
+        { id: 'agents', icon: Users, label: 'Network', badge: agentUnread + unreadTwinChats.length },
         { id: 'settings', icon: Settings, label: 'Settings' },
         ...(isAdmin ? [{ id: 'admin', icon: Shield, label: 'Admin Panel' }] : []),
     ];
@@ -349,7 +388,33 @@ const Layout = ({ children, currentView, setView }) => {
             </aside>
 
             {/* ── MAIN CONTENT ── */}
-            <div className="lg:ml-64 flex-1 flex flex-col min-w-0 h-full">
+            <div className="lg:ml-64 flex-1 flex flex-col min-w-0 h-full relative">
+
+                {/* Twin Chat Notification Toast */}
+                <AnimatePresence>
+                    {twinToast && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                            className="absolute top-16 right-4 md:right-8 z-[100] bg-primary text-white p-4 rounded-2xl shadow-2xl border border-white/10 max-w-sm flex items-start gap-3 cursor-pointer"
+                            onClick={() => {
+                                setTwinToast(null);
+                                useStore.getState().setTwinChatActiveSessionId(twinToast.session_id);
+                                setView('twin-chat');
+                            }}
+                        >
+                            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0 font-bold text-lg">
+                                {twinToast.sender?.name?.[0] || '?'}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-xs font-bold uppercase tracking-widest text-white/70 mb-0.5">New Twin Message</p>
+                                <p className="text-sm font-semibold truncate">{twinToast.sender?.name || 'Partner'}</p>
+                                <p className="text-sm opacity-90 truncate">{twinToast.content}</p>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
 
                 {/* ── HEADER (hidden on mobile when in Chat view — Chat has its own) ── */}
                 <header className={`h-14 lg:h-16 flex items-center justify-between px-4 lg:px-8 bg-surface-base/90 backdrop-blur-3xl sticky top-0 z-30 border-b border-neutral/5 shrink-0 ${isChatView ? 'hidden lg:flex' : ''}`}>
@@ -358,7 +423,7 @@ const Layout = ({ children, currentView, setView }) => {
                         <div className="w-8 h-8 rounded-xl flex items-center justify-center overflow-hidden ai-glow">
                             <img src="/logo.png" alt="AI Twin Logo" className="w-full h-full object-cover" />
                         </div>
-                        <span className="font-manrope font-extrabold text-sm tracking-tight text-on-surface">{viewLabel}</span>
+                        <h1 className="text-on-surface font-manrope font-bold">{viewLabel}</h1>
                     </div>
 
                     {/* Desktop: welcome text */}

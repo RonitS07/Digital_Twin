@@ -79,6 +79,14 @@ export const useStore = create(
             // Twin Chat Navigation
             twinChatActiveSessionId: null,
             setTwinChatActiveSessionId: (id) => set({ twinChatActiveSessionId: id }),
+            unreadTwinChats: [],
+            addUnreadTwinChat: (msg) => set(state => {
+                if (state.unreadTwinChats.some(m => m.id === msg.id)) return state;
+                return { unreadTwinChats: [...state.unreadTwinChats, msg] };
+            }),
+            removeUnreadTwinChat: (sessionId) => set(state => ({ 
+                unreadTwinChats: state.unreadTwinChats.filter(m => m.session_id !== sessionId) 
+            })),
         }),
         {
             name: 'ai-twin-storage', // key in localStorage

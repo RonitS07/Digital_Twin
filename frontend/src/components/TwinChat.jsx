@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import {
-  Search, Plus, ArrowLeft, Send, Sparkles, Check, X, Bot,
-  User as UserIcon, MessageCircle, Wand2, ChevronDown, Loader2,
-  Users, Clock, Zap, RefreshCw, FileText
+import { 
+  Search, Send, ArrowLeft, MoreVertical, Plus, 
+  Sparkles, Zap, Wand2, Shield, Loader2, Users, 
+  MessageSquare, HardDrive, Settings, Activity as ActivityIcon,
+  Home, Check, X, Clock, Paperclip, Mic as MicIcon, MicOff,
+  File as FileIcon, Calendar, Mail, ExternalLink, Image
 } from 'lucide-react'
-import { useStore } from '../store/useStore'
 import { apiFetch } from '../utils/apiClient'
+import { useStore } from '../store/useStore'
 import { API_BASE } from '../config'
 
 // ─── WebSocket Manager ───────────────────────────────────────────
@@ -47,190 +49,180 @@ function useTwinChatWS(token, handlers) {
   return { send }
 }
 
-// ─── Sidebar: Session List ───────────────────────────────────────
-function SessionSidebar({ sessions, activeId, onSelect, onNew, loading }) {
-  return (
-    <div className="flex flex-col h-full bg-surface-container border-r border-neutral/10">
-      <div className="p-4 border-b border-neutral/10">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-manrope font-extrabold text-sm tracking-tight text-on-surface flex items-center gap-2">
-            <Users size={16} className="text-primary" /> Twin Chat
-          </h2>
-          <button onClick={onNew} className="p-1.5 rounded-lg bg-primary/15 text-primary hover:bg-primary/25 transition-colors">
-            <Plus size={16} />
-          </button>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
-        {loading && <div className="text-center py-8 text-neutral text-xs">Loading...</div>}
-        {!loading && sessions.length === 0 && (
-          <div className="text-center py-12 px-4">
-            <MessageCircle size={32} className="mx-auto text-neutral/40 mb-3" />
-            <p className="text-xs text-neutral">No conversations yet</p>
-            <button onClick={onNew} className="mt-3 text-[10px] uppercase tracking-widest font-bold text-primary">
-              Start a Chat
-            </button>
-          </div>
-        )}
-        {sessions.map(s => (
-          <button key={s.id} onClick={() => onSelect(s.id)}
-            className={`w-full text-left p-3 rounded-xl transition-all ${activeId === s.id
-              ? 'bg-primary/15 border border-primary/20' : 'hover:bg-surface-container-high border border-transparent'}`}>
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">
-                {s.partner?.name?.[0]?.toUpperCase() || '?'}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-on-surface truncate">{s.partner?.name || 'Unknown'}</p>
-                <p className="text-[10px] text-neutral truncate">{s.title || s.partner?.email || ''}</p>
-              </div>
-            </div>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
+// ─── Sub-Components ─────────────────────────────────────────────
 
-// ─── New Chat Modal ──────────────────────────────────────────────
-function NewChatModal({ onClose, onCreated }) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
-  const [searching, setSearching] = useState(false)
-  const [creating, setCreating] = useState(null)
-  const debounceRef = useRef(null)
+// Lightweight zero-dep markdown renderer
+const SimpleMarkdown = ({ children }) => {
+  if (!children) return null
 
-  const doSearch = useCallback(async (q) => {
-    if (q.length < 2) { setResults([]); return }
-    setSearching(true)
-    try {
-      const data = await apiFetch(`/twin-chat/users/search?q=${encodeURIComponent(q)}`)
-      setResults(data.users || [])
-    } catch { setResults([]) }
-    setSearching(false)
-  }, [])
-
-  useEffect(() => {
-    clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => doSearch(query), 300)
-    return () => clearTimeout(debounceRef.current)
-  }, [query, doSearch])
-
-  const startChat = async (userId) => {
-    setCreating(userId)
-    try {
-      const data = await apiFetch('/twin-chat/sessions', {
-        method: 'POST', body: JSON.stringify({ partner_id: userId })
-      })
-      onCreated(data.session)
-    } catch (e) { console.error(e) }
-    setCreating(null)
+  const formatInline = (text) => {
+    const parts = []
+    let remaining = text
+    let key = 0
+    const inlineRx = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g
+    let lastIndex = 0
+    let match
+    while ((match = inlineRx.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index))
+      }
+      if (match[2]) {
+        parts.push(<strong key={key++} className="font-bold">{match[2]}</strong>)
+      } else if (match[3]) {
+        parts.push(<em key={key++} className="italic">{match[3]}</em>)
+      } else if (match[4]) {
+        parts.push(<code key={key++} className="px-1.5 py-0.5 rounded bg-black/15 text-xs font-mono">{match[4]}</code>)
+      }
+      lastIndex = match.index + match[0].length
+    }
+    if (lastIndex < text.length) parts.push(text.slice(lastIndex))
+    return parts.length > 0 ? parts : text
   }
 
+  const lines = children.split('\n')
+  const elements = []
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]
+    if (line.startsWith('```')) {
+      const codeLines = []
+      i++
+      while (i < lines.length && !lines[i].startsWith('```')) {
+        codeLines.push(lines[i])
+        i++
+      }
+      elements.push(
+        <pre key={i} className="bg-black/20 rounded-lg p-4 overflow-x-auto my-3 text-xs font-mono border border-white/5 text-on-surface">
+          <code>{codeLines.join('\n')}</code>
+        </pre>
+      )
+    } else if (line.startsWith('# ')) {
+      elements.push(<h3 key={i} className="text-lg font-bold mt-4 mb-2 text-primary">{formatInline(line.slice(2))}</h3>)
+    } else if (line.startsWith('## ')) {
+      elements.push(<h4 key={i} className="text-base font-bold mt-3 mb-1 text-on-surface">{formatInline(line.slice(3))}</h4>)
+    } else if (line.startsWith('### ')) {
+      elements.push(<h5 key={i} className="text-sm font-bold mt-2 mb-1 text-on-surface">{formatInline(line.slice(4))}</h5>)
+    } else if (line.startsWith('- ') || line.startsWith('* ')) {
+      elements.push(<li key={i} className="ml-4 list-disc text-sm mb-1">{formatInline(line.slice(2))}</li>)
+    } else if (/^\d+\.\s/.test(line)) {
+      elements.push(<li key={i} className="ml-4 list-decimal text-sm mb-1">{formatInline(line.replace(/^\d+\.\s/, ''))}</li>)
+    } else if (line.trim() === '---' || line.trim() === '***') {
+      elements.push(<hr key={i} className="border-white/10 my-4" />)
+    } else if (line.trim() !== '') {
+      const lineId = `p-${i}-${line.slice(0, 5)}`
+      elements.push(<p key={lineId} className="text-sm leading-relaxed mb-2 last:mb-0">{formatInline(line)}</p>)
+    }
+    i++
+  }
+  return <>{elements}</>
+}
+
+// Image loader with skeleton
+const ImageLoader = ({ src }) => {
+  const [status, setStatus] = useState('loading')
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-        className="bg-surface-container rounded-2xl w-full max-w-md border border-neutral/10 shadow-2xl">
-        <div className="p-5 border-b border-neutral/10 flex items-center justify-between">
-          <h3 className="font-manrope font-extrabold text-on-surface">New Twin Chat</h3>
-          <button onClick={onClose} className="text-neutral hover:text-on-surface"><X size={18} /></button>
+    <div className="relative rounded-xl overflow-hidden w-full bg-surface-container-highest min-h-[200px]">
+      {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>}
+      <img 
+        src={src} 
+        className={`w-full h-auto rounded-xl ${status === 'loaded' ? 'opacity-100' : 'opacity-0'}`} 
+        onLoad={() => setStatus('loaded')} 
+        onError={(e) => {
+          setStatus('error')
+        }}
+      />
+      {status === 'error' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 bg-red-400/5 p-4 text-center">
+          <Sparkles size={24} className="mb-2 opacity-50" />
+          <p className="text-xs font-bold uppercase tracking-widest">Visual Rendering Failed</p>
+          <p className="text-[10px] opacity-70 mt-1">The AI generated a visual, but your browser could not display it.</p>
         </div>
-        <div className="p-4">
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" />
-            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search users by name or email..."
-              className="w-full bg-surface-base rounded-xl py-2.5 pl-9 pr-4 text-sm text-on-surface border-none outline-none focus:ring-1 focus:ring-primary" autoFocus />
-          </div>
-          <div className="mt-3 max-h-64 overflow-y-auto space-y-1">
-            {searching && <p className="text-xs text-neutral text-center py-4">Searching...</p>}
-            {!searching && results.length === 0 && query.length >= 2 && (
-              <p className="text-xs text-neutral text-center py-4">No users found</p>
-            )}
-            {results.map(u => (
-              <button key={u.id} onClick={() => startChat(u.id)} disabled={creating === u.id}
-                className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-surface-base transition-colors text-left disabled:opacity-50">
-                <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-bold">
-                  {u.name?.[0]?.toUpperCase() || '?'}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-on-surface">{u.name}</p>
-                  <p className="text-[10px] text-neutral truncate">{u.email}</p>
-                </div>
-                {creating === u.id ? <Loader2 size={16} className="animate-spin text-primary" /> : <Plus size={16} className="text-neutral" />}
-              </button>
-            ))}
-          </div>
-        </div>
-      </motion.div>
+      )}
     </div>
   )
 }
 
-// ─── AI Suggestion Card ──────────────────────────────────────────
-function SuggestionCard({ suggestion, enrichment, onApprove, onReject, onEdit }) {
-  const [editing, setEditing] = useState(false)
-  const [editText, setEditText] = useState('')
-  const suggestions = suggestion?.suggestions || []
+function MessageBubble({ msg, isOwn, onAction, user }) {
+  const [cleanText, setCleanText] = useState(msg.content || '')
+  const [actionData, setActionData] = useState(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [isExecuted, setIsExecuted] = useState(false)
+  
+  const isAi = msg.sender_type === 'twin'
+  const metadata = msg.metadata || {}
+  const hasImage = metadata.response_type === 'visual' || metadata.image_url
+
+  useEffect(() => {
+    if (!msg.content) return
+    const match = msg.content.match(/<action>([\s\S]*?)<\/action>/)
+    if (match) {
+      setCleanText(msg.content.replace(/<action>[\s\S]*?<\/action>/g, '').trim())
+      try {
+        setActionData(JSON.parse(match[1].trim()))
+      } catch (e) {}
+    } else {
+      setCleanText(msg.content)
+    }
+  }, [msg.content])
 
   return (
-    <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-      className="mx-4 mb-3 p-4 rounded-2xl bg-gradient-to-br from-primary/5 via-surface-container to-primary/5 border border-primary/15 shadow-lg">
-      <div className="flex items-center gap-2 mb-2">
-        <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center">
-          <Sparkles size={11} className="text-primary" />
-        </div>
-        <span className="text-[10px] uppercase tracking-widest font-bold text-primary">Twin Suggestions</span>
-      </div>
-      {enrichment && <p className="text-xs text-on-surface-variant mb-3 italic">💡 {enrichment}</p>}
-      <div className="space-y-2">
-        {suggestions.map((s, i) => (
-          <div key={i} className="group flex items-start gap-2">
-            <button onClick={() => { if (!editing) onApprove(s.content) }}
-              className="flex-1 text-left p-2.5 rounded-xl bg-surface-base/80 hover:bg-primary/10 border border-transparent hover:border-primary/20 transition-all">
-              <p className="text-[10px] text-neutral font-semibold mb-0.5">{s.label}</p>
-              <p className="text-xs text-on-surface leading-relaxed">{s.content}</p>
-            </button>
-            <div className="flex flex-col gap-1 pt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={() => { setEditing(true); setEditText(s.content) }}
-                className="p-1 rounded-md hover:bg-surface-container-high text-neutral"><Wand2 size={12} /></button>
-            </div>
-          </div>
-        ))}
-      </div>
-      {editing && (
-        <div className="mt-3 space-y-2">
-          <textarea value={editText} onChange={e => setEditText(e.target.value)} rows={3}
-            className="w-full bg-surface-base rounded-xl p-3 text-xs text-on-surface border border-primary/20 outline-none resize-none" />
-          <div className="flex gap-2">
-            <button onClick={() => { onApprove(editText); setEditing(false) }}
-              className="flex-1 py-2 bg-primary text-white text-[10px] uppercase tracking-widest font-bold rounded-lg">Send Edited</button>
-            <button onClick={() => setEditing(false)}
-              className="px-4 py-2 text-neutral text-[10px] uppercase tracking-widest font-bold rounded-lg hover:bg-surface-container-high">Cancel</button>
-          </div>
-        </div>
-      )}
-      <button onClick={onReject} className="mt-2 text-[10px] text-neutral hover:text-red-400 transition-colors">Dismiss suggestions</button>
-    </motion.div>
-  )
-}
-
-// ─── Message Bubble ──────────────────────────────────────────────
-function MessageBubble({ msg, isOwn }) {
-  const isTwin = msg.sender_type === 'twin'
-  return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-      className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2 px-4`}>
-      <div className={`max-w-[75%] relative group`}>
-        {isTwin && (
-          <div className="flex items-center gap-1 mb-1">
-            <Bot size={10} className="text-primary" />
-            <span className="text-[9px] text-primary font-bold uppercase tracking-wider">AI-Assisted</span>
-          </div>
-        )}
-        <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${isOwn
-          ? 'bg-primary text-white rounded-br-md'
+    <motion.div initial={{ opacity: 0, y: 10, x: isOwn ? 10 : -10 }} animate={{ opacity: 1, y: 0, x: 0 }}
+      className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-4 px-4`}>
+      <div className={`max-w-[85%] sm:max-w-[70%] ${isOwn ? 'items-end' : 'items-start'} flex flex-col`}>
+        <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${isOwn 
+          ? 'bg-primary text-white rounded-br-md' 
           : 'bg-surface-container border border-neutral/10 text-on-surface rounded-bl-md'}`}>
-          {msg.content}
+          
+          {hasImage && metadata.image_url ? (
+            <div className="space-y-3">
+              <SimpleMarkdown>{cleanText}</SimpleMarkdown>
+              <ImageLoader src={metadata.image_url} />
+              <div className="flex justify-end mt-2">
+                <a href={metadata.image_url} target="_blank" rel="noreferrer" 
+                   className="text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary-variant transition-colors flex items-center gap-1.5">
+                   <ExternalLink size={10} /> View Full Image
+                </a>
+              </div>
+            </div>
+          ) : (
+            <div className="break-words">
+              <SimpleMarkdown>{cleanText}</SimpleMarkdown>
+            </div>
+          )}
+
+          {actionData && (
+            <div className={`mt-4 p-4 rounded-xl border ${actionData.is_conflict ? 'bg-amber-900/20 border-amber-500/30' : 'bg-black/20 border-white/5'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                {actionData.intent === 'email' ? <Mail size={14} className="text-primary" /> : 
+                 actionData.intent === 'slack' ? <Zap size={14} className="text-[#36C5F0]" /> :
+                 actionData.intent === 'telegram' ? <MessageSquare size={14} className="text-secondary" /> : 
+                 <Calendar size={14} className="text-secondary" />}
+                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60">
+                  {actionData.intent} Suggestion
+                </span>
+              </div>
+              <h4 className="text-xs font-bold text-white mb-1">{actionData.subject || actionData.title || 'Action'}</h4>
+              <p className="text-[10px] text-white/50 line-clamp-2 italic mb-3">{actionData.body || actionData.description}</p>
+              
+              {isExecuted ? (
+                <div className="py-1.5 text-[10px] font-bold rounded-lg flex items-center justify-center gap-2 border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                  <Check size={12} /> Executed
+                </div>
+              ) : (
+                <button
+                  disabled={isProcessing}
+                  onClick={async () => {
+                    setIsProcessing(true)
+                    await onAction('approve', actionData, msg.id)
+                    setIsExecuted(true)
+                    setIsProcessing(false)
+                  }}
+                  className="w-full py-1.5 text-white text-[10px] font-bold rounded-lg bg-primary hover:brightness-110 flex items-center justify-center gap-2 transition-all">
+                  {isProcessing ? <Loader2 size={12} className="animate-spin" /> : 'Execute Action'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className={`flex items-center gap-1.5 mt-1 ${isOwn ? 'justify-end' : 'justify-start'}`}>
           <span className="text-[9px] text-neutral">
@@ -239,15 +231,73 @@ function MessageBubble({ msg, isOwn }) {
           {msg.sender_type === 'twin' && msg.status === 'approved' && (
             <span className="text-[9px] text-primary/60">• Approved</span>
           )}
+          {isAi && msg.status === 'sent' && (
+             <span className="text-[9px] text-primary/60 flex items-center gap-1"><Sparkles size={8} /> AI Processed</span>
+          )}
         </div>
       </div>
     </motion.div>
   )
 }
 
+function SuggestionsPanel({ data, onApprove, onDismiss, partnerName }) {
+  if (!data) return null
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }}
+      className="bg-primary/5 border border-primary/10 rounded-2xl p-4 mb-4 overflow-hidden relative"
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-primary" />
+          <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Twin Suggestions</span>
+        </div>
+        <button onClick={onDismiss} className="text-neutral hover:text-red-400 transition-colors">
+          <X size={14} />
+        </button>
+      </div>
+      
+      {data.respondingTo && (
+        <div className="mb-4 p-3 bg-surface-base rounded-xl border border-neutral/10">
+          <p className="text-[9px] text-neutral font-bold uppercase mb-1 flex items-center gap-1">
+            <Clock size={10} /> Just received from {partnerName}:
+          </p>
+          <p className="text-xs text-on-surface-variant italic line-clamp-2">"{data.respondingTo}"</p>
+        </div>
+      )}
+
+      {data.enrichment && (
+        <div className="mb-4 flex items-start gap-2 p-3 bg-primary/10 rounded-xl">
+          <Zap size={14} className="text-primary shrink-0 mt-0.5" />
+          <p className="text-xs text-on-surface-variant leading-relaxed">
+            {data.enrichment}
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-2">
+        {data.suggestions?.map((s, i) => (
+          <button key={i} onClick={() => onApprove(s.content)}
+            className="w-full text-left p-3 rounded-xl bg-surface-base hover:bg-primary/10 border border-neutral/10 transition-all group">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] text-primary font-bold uppercase tracking-wider">{s.label}</span>
+              <Check size={12} className="text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <p className="text-xs text-on-surface leading-relaxed">{s.content}</p>
+          </button>
+        ))}
+      </div>
+      
+      <button onClick={onDismiss} 
+        className="mt-3 w-full py-1.5 text-[10px] text-neutral hover:text-on-surface uppercase tracking-widest font-bold transition-colors">
+        Dismiss suggestions
+      </button>
+    </motion.div>
+  )
+}
+
 // ─── Chat View (right panel) ─────────────────────────────────────
 function ChatPanel({ session, onBack, wsSend, wsEvent }) {
-  const { auth } = useStore()
+  const { auth, preferences } = useStore()
   const user = auth.user
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
@@ -256,6 +306,13 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
   const [partnerTyping, setPartnerTyping] = useState(false)
   const [pendingSuggestion, setPendingSuggestion] = useState(null)
   const [enhancing, setEnhancing] = useState(false)
+  
+  // New features state
+  const [attachedFiles, setAttachedFiles] = useState([])
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef(null)
+  const fileInputRef = useRef(null)
+
   const messagesEndRef = useRef(null)
   const typingTimeoutRef = useRef(null)
 
@@ -278,7 +335,8 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
       setPendingSuggestion({ 
         suggestions: wsEvent.message.suggestions, 
         enrichment: wsEvent.enrichment, 
-        msgId: wsEvent.message.id 
+        msgId: wsEvent.message.id,
+        respondingTo: wsEvent.responding_to 
       })
     } else if (wsEvent.event === 'partner_typing') {
       setPartnerTyping(true)
@@ -290,7 +348,9 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
   // Load messages
   useEffect(() => {
     if (!session?.id) return
+    useStore.getState().removeUnreadTwinChat(session.id)
     setLoading(true)
+    setPendingSuggestion(null) // Clear suggestions when switching sessions
     apiFetch(`/twin-chat/sessions/${session.id}`)
       .then(data => { setMessages(data.messages || []); setLoading(false) })
       .catch(() => setLoading(false))
@@ -299,7 +359,6 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
   // Auto-scroll
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, partnerTyping])
 
-  // Typing indicator
   const handleInputChange = (val) => {
     setInput(val)
     if (session?.id) wsSend({ event: 'typing', session_id: session.id })
@@ -309,43 +368,71 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
     }, 2000)
   }
 
-  // Send message
   const handleSend = async () => {
     const text = input.trim()
-    if (!text || sending) return
+    if ((!text && attachedFiles.length === 0) || sending) return
+    
     setSending(true)
     setInput('')
+    const currentFiles = [...attachedFiles]
+    setAttachedFiles([])
+    setPendingSuggestion(null) 
     if (session?.id) wsSend({ event: 'stop_typing', session_id: session.id })
+    
     try {
-      const data = await apiFetch(`/twin-chat/sessions/${session.id}/messages`, {
-        method: 'POST', body: JSON.stringify({ content: text })
+      const data = await apiFetch(`/twin-chat/sessions/${session.id}/ai-process`, {
+        method: 'POST', body: JSON.stringify({ 
+          content: text,
+          files: currentFiles,
+          gmail_sync: preferences?.gmailSync !== false,
+          calendar_sync: preferences?.calendarSync !== false,
+          slack_sync: preferences?.slackSync !== false
+        })
       })
-      setMessages(prev => prev.some(m => m.id === data.message.id) ? prev : [...prev, data.message])
+      if (data.message) {
+        setMessages(prev => prev.some(m => m.id === data.message.id) ? prev : [...prev, data.message])
+      }
     } catch (e) { console.error(e) }
     setSending(false)
   }
 
-  // Approve suggestion
+  const handleActionClick = async (action, actionData, msgId) => {
+    // Execute action directly
+    try {
+      const endpoint = 
+          actionData.intent === 'email' ? '/gmail/send' : 
+          actionData.intent === 'telegram' ? '/telegram/send' : 
+          actionData.intent === 'slack' ? '/slack/send' : 
+          '/calendar/create'
+      
+      const payload = { ...actionData, user_id: user.uid }
+      await apiFetch(endpoint, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+      })
+      
+      // We could add a system message to indicate success
+      setMessages(prev => [...prev, {
+        id: `sys-${Date.now()}`,
+        sender_type: 'system',
+        content: `✅ Action executed successfully.`,
+        created_at: new Date().toISOString()
+      }])
+    } catch (err) {
+      console.error("Action failed", err)
+    }
+  }
+
   const handleApprove = async (content) => {
     if (!pendingSuggestion) return
     try {
       await apiFetch(`/twin-chat/sessions/${session.id}/approve/${pendingSuggestion.msgId}`, {
         method: 'POST', body: JSON.stringify({ content })
       })
+      setPendingSuggestion(null)
     } catch (e) { console.error(e) }
-    setPendingSuggestion(null)
   }
 
-  // Reject suggestion
-  const handleReject = async () => {
-    if (!pendingSuggestion) return
-    try {
-      await apiFetch(`/twin-chat/sessions/${session.id}/messages/${pendingSuggestion.msgId}`, { method: 'DELETE' })
-    } catch {}
-    setPendingSuggestion(null)
-  }
-
-  // Enhance draft
   const handleEnhance = async () => {
     if (!input.trim() || enhancing) return
     setEnhancing(true)
@@ -372,7 +459,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
   )
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-surface-base">
+    <div className="flex-1 flex flex-col h-full bg-surface-base overflow-hidden">
       {/* Header */}
       <div className="h-14 px-4 flex items-center gap-3 border-b border-neutral/10 bg-surface-base/90 backdrop-blur-xl shrink-0">
         <button onClick={onBack} className="lg:hidden p-1 text-neutral hover:text-on-surface"><ArrowLeft size={20} /></button>
@@ -385,78 +472,279 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
             {partnerTyping ? <span className="text-primary animate-pulse">typing...</span> : 'Twin-assisted chat'}
           </p>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-bold uppercase tracking-wider flex items-center gap-1">
-            <Sparkles size={10} /> Twin Active
+            <Sparkles size={10} /> Active
           </span>
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar py-4">
-        {loading ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 size={24} className="animate-spin text-primary" />
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center px-8">
-              <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                <Zap size={28} className="text-primary" />
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
+        <div className="flex-1 py-4">
+          {loading ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 size={24} className="animate-spin text-primary" />
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center px-8">
+                <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                  <Zap size={28} className="text-primary" />
+                </div>
+                <p className="text-sm font-semibold text-on-surface mb-1">Start the conversation</p>
+                <p className="text-xs text-neutral">Your AI Twin will assist with suggestions and actions</p>
               </div>
-              <p className="text-sm font-semibold text-on-surface mb-1">Start the conversation</p>
-              <p className="text-xs text-neutral">Your AI Twin will assist with suggestions and context</p>
             </div>
-          </div>
-        ) : (
-          <>
-            {messages.filter(m => m.status !== 'pending' && m.status !== 'rejected').map(msg => (
-              <MessageBubble key={msg.id} msg={msg} isOwn={msg.sender_id === user?.uid} />
-            ))}
-          </>
-        )}
-        {partnerTyping && (
-          <div className="flex items-center gap-2 px-4 mb-2">
-            <div className="bg-surface-container rounded-2xl rounded-bl-md px-4 py-2.5 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-neutral animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-1.5 h-1.5 rounded-full bg-neutral animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-1.5 h-1.5 rounded-full bg-neutral animate-bounce" style={{ animationDelay: '300ms' }} />
+          ) : (
+            messages.filter(m => m.status !== 'pending' && m.status !== 'rejected').map(msg => (
+              <MessageBubble key={msg.id} msg={msg} isOwn={msg.sender_id === user?.uid} onAction={handleActionClick} user={user} />
+            ))
+          )}
+          {partnerTyping && (
+            <div className="flex items-center gap-2 px-4 mb-2">
+              <div className="bg-surface-container rounded-2xl rounded-bl-md px-4 py-2 flex items-center gap-1">
+                <span className="w-1 h-1 rounded-full bg-neutral animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1 h-1 rounded-full bg-neutral animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1 h-1 rounded-full bg-neutral animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
             </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
 
-      {/* Suggestion Card */}
-      <AnimatePresence>
-        {pendingSuggestion && (
-          <SuggestionCard suggestion={pendingSuggestion} enrichment={pendingSuggestion.enrichment}
-            onApprove={handleApprove} onReject={handleReject} />
-        )}
-      </AnimatePresence>
-
-      {/* Input */}
-      <div className="p-3 border-t border-neutral/10 bg-surface-container/50 backdrop-blur-xl shrink-0">
-        <div className="flex items-end gap-2 max-w-4xl mx-auto">
-          <div className="flex-1 relative bg-surface-base rounded-xl border border-neutral/10 focus-within:border-primary/30 transition-colors">
-            <textarea value={input} onChange={e => handleInputChange(e.target.value)} onKeyDown={handleKeyDown}
-              rows={1} placeholder={`Message ${partnerName}...`}
-              className="w-full bg-transparent rounded-xl py-3 px-4 pr-10 text-sm text-on-surface outline-none resize-none max-h-32"
-              style={{ minHeight: '44px' }} />
-            {input.trim() && (
-              <button onClick={handleEnhance} disabled={enhancing}
-                className="absolute right-2 bottom-2 p-1.5 rounded-lg text-neutral hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                title="Enhance with AI Twin">
-                {enhancing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-              </button>
+        {/* Floating Suggestion Panel */}
+        <div className="px-4 shrink-0">
+          <AnimatePresence>
+            {pendingSuggestion && (
+              <SuggestionsPanel 
+                data={pendingSuggestion} 
+                partnerName={partnerName}
+                onApprove={handleApprove} 
+                onDismiss={() => setPendingSuggestion(null)} 
+              />
             )}
-          </div>
-          <button onClick={handleSend} disabled={!input.trim() || sending}
-            className="p-3 rounded-xl bg-primary text-white hover:brightness-110 active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0">
-            {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-          </button>
+          </AnimatePresence>
         </div>
       </div>
+
+      {/* Input Area */}
+      <div className="p-3 border-t border-neutral/10 bg-surface-base">
+        <input type="file" id="twin-file-upload" multiple className="hidden"
+          ref={fileInputRef}
+          onChange={async (e) => {
+            const files = Array.from(e.target.files);
+            const fileData = await Promise.all(files.map(file => new Promise(resolve => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve({ name: file.name, type: file.type, data: reader.result });
+              reader.readAsDataURL(file);
+            })));
+            setAttachedFiles(prev => [...prev, ...fileData]);
+            e.target.value = null;
+          }}
+        />
+        <div className="max-w-4xl mx-auto bg-surface-container/50 backdrop-blur-3xl rounded-2xl flex flex-col shadow-lg border border-neutral/10 focus-within:border-primary/30 transition-all">
+          {attachedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-2 p-3 px-4 pb-0">
+              {attachedFiles.map((f, i) => (
+                <div key={i} className="flex items-center gap-1.5 bg-primary/10 text-primary text-[10px] font-bold px-2.5 py-1 rounded-lg border border-primary/20">
+                  <FileIcon size={11} />
+                  <span className="truncate max-w-[100px]">{f.name}</span>
+                  <button type="button" onClick={() => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i))} className="hover:text-red-400 ml-0.5">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-end gap-2 pl-4 pr-2 py-2">
+            <div className="flex-1 relative">
+              <textarea
+                value={input}
+                onChange={e => handleInputChange(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                disabled={sending}
+                placeholder={`Message ${partnerName}... (Enter to send)`}
+                rows={1}
+                className="w-full bg-transparent py-2 pr-10 outline-none text-sm placeholder:text-neutral/40 resize-none min-h-[40px] max-h-[160px] overflow-y-auto"
+              />
+              {input.trim() && (
+                <button onClick={handleEnhance} disabled={enhancing}
+                  className="absolute right-0 bottom-2 p-1.5 rounded-lg text-neutral hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                  title="Enhance with AI Twin">
+                  {enhancing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                </button>
+              )}
+            </div>
+            
+            <div className="flex items-center gap-1 pb-1">
+              <button type="button" onClick={() => fileInputRef.current?.click()}
+                title="Attach file" className="p-2 text-neutral/60 hover:text-primary transition-colors rounded-lg hover:bg-primary/5">
+                <Paperclip size={17} />
+              </button>
+              <button
+                type="button"
+                title={isListening ? 'Stop voice input' : 'Voice input'}
+                onClick={() => {
+                  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+                  if (!SR) { alert('Speech recognition not supported in this browser.'); return; }
+                  if (isListening) {
+                    recognitionRef.current?.stop();
+                    setIsListening(false);
+                    return;
+                  }
+                  const r = new SR();
+                  r.continuous = false;
+                  r.interimResults = false;
+                  r.lang = 'en-US';
+                  r.onresult = (ev) => { setInput(prev => (prev + ' ' + ev.results[0][0].transcript).trim()); };
+                  r.onend = () => setIsListening(false);
+                  r.onerror = () => setIsListening(false);
+                  recognitionRef.current = r;
+                  r.start();
+                  setIsListening(true);
+                }}
+                className={`p-2 rounded-lg transition-all ${isListening ? 'text-red-500 bg-red-500/10 animate-pulse' : 'text-neutral/60 hover:text-primary hover:bg-primary/5'}`}
+              >
+                {isListening ? <MicOff size={17} /> : <MicIcon size={17} />}
+              </button>
+              <button onClick={handleSend} disabled={(!input.trim() && attachedFiles.length === 0) || sending}
+                className="bg-primary text-white h-9 w-9 rounded-xl flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 disabled:opacity-30 disabled:scale-100 transition-all ml-1">
+                {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SessionSidebar({ sessions, activeId, loading, onSelect, onNew }) {
+  const [search, setSearch] = useState('')
+  const filtered = sessions.filter(s => s.partner?.name?.toLowerCase().includes(search.toLowerCase()))
+
+  return (
+    <div className="flex flex-col h-full bg-surface-container/30 border-r border-neutral/10">
+      <div className="p-4 border-b border-neutral/10 flex items-center justify-between">
+        <h2 className="text-xl font-manrope font-extrabold text-on-surface">Twin Chat</h2>
+        <button onClick={onNew} className="p-2 rounded-xl bg-primary text-white hover:brightness-110 transition-all">
+          <Plus size={18} />
+        </button>
+      </div>
+
+      <div className="p-4">
+        <div className="relative group">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral group-focus-within:text-primary transition-colors" size={16} />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            className="w-full bg-surface-base border border-neutral/10 rounded-xl py-2 pl-10 pr-4 text-sm text-on-surface focus:outline-none focus:border-primary/30 transition-all"
+            placeholder="Search conversations..." />
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-2 space-y-1">
+        {loading ? (
+          [1,2,3].map(i => (
+            <div key={i} className="h-16 bg-surface-container animate-pulse rounded-xl mx-2" />
+          ))
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-10 px-4">
+            <MessageSquare size={32} className="mx-auto text-neutral/20 mb-2" />
+            <p className="text-xs text-neutral">No conversations found</p>
+          </div>
+        ) : (
+          filtered.map(s => {
+            const isActive = s.id === activeId
+            return (
+              <button key={s.id} onClick={() => onSelect(s.id)}
+                className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${isActive 
+                  ? 'bg-primary/10 border border-primary/20' 
+                  : 'hover:bg-surface-container/50 border border-transparent'}`}>
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold shrink-0 ${isActive ? 'bg-primary text-white' : 'bg-surface-container text-neutral'}`}>
+                  {(s.partner?.name || '?')[0].toUpperCase()}
+                </div>
+                <div className="flex-1 text-left min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className={`text-sm font-bold truncate ${isActive ? 'text-primary' : 'text-on-surface'}`}>{s.partner?.name}</p>
+                    <span className="text-[10px] text-neutral shrink-0">{s.last_message_at ? new Date(s.last_message_at).toLocaleDateString() : ''}</span>
+                  </div>
+                  <p className="text-xs text-neutral truncate">Twin Assistant active</p>
+                </div>
+              </button>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+}
+
+function NewChatModal({ onClose, onCreated }) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState([])
+  const [searching, setSearching] = useState(false)
+
+  const handleSearch = async (val) => {
+    setQuery(val)
+    if (val.length < 2) { setResults([]); return }
+    setSearching(true)
+    try {
+      const data = await apiFetch(`/twin-chat/users/search?q=${encodeURIComponent(val)}`)
+      setResults(data.users || [])
+    } catch {}
+    setSearching(false)
+  }
+
+  const handleStart = async (userId) => {
+    try {
+      const data = await apiFetch('/twin-chat/sessions', {
+        method: 'POST', body: JSON.stringify({ partner_id: userId })
+      })
+      onCreated(data.session)
+    } catch {}
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-surface-base/80 backdrop-blur-md">
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+        className="w-full max-w-md bg-surface-base border border-neutral/10 rounded-3xl shadow-2xl overflow-hidden">
+        <div className="p-6 border-b border-neutral/10 flex items-center justify-between">
+          <h3 className="text-xl font-manrope font-extrabold text-on-surface">Start New Chat</h3>
+          <button onClick={onClose} className="p-2 text-neutral hover:text-on-surface"><X size={20} /></button>
+        </div>
+        <div className="p-6">
+          <div className="relative mb-6">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" size={18} />
+            <input value={query} onChange={e => handleSearch(e.target.value)} autoFocus
+              className="w-full bg-surface-container border border-neutral/10 rounded-2xl py-3 pl-10 pr-4 text-sm text-on-surface focus:outline-none focus:border-primary/30"
+              placeholder="Search by name or email..." />
+          </div>
+
+          <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+            {searching ? (
+              <div className="text-center py-4"><Loader2 className="animate-spin mx-auto text-primary" /></div>
+            ) : results.length === 0 ? (
+              <p className="text-center py-4 text-neutral text-xs">{query.length < 2 ? 'Type at least 2 characters' : 'No users found'}</p>
+            ) : (
+              results.map(u => (
+                <button key={u.id} onClick={() => handleStart(u.id)}
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-primary/5 border border-transparent hover:border-primary/10 transition-all text-left">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+                    {u.name[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-on-surface">{u.name}</p>
+                    <p className="text-xs text-neutral">{u.email}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </motion.div>
     </div>
   )
 }
@@ -478,7 +766,7 @@ export default function TwinChat() {
   wsHandlersRef.current = (data) => {
     setLastWsEvent(data)
     
-    // Update session list in real-time (last message time, etc)
+    // Update session list in real-time
     if (data.event === 'new_message') {
       setSessions(prev => prev.map(s => {
         if (s.id === data.message.session_id) {
@@ -491,7 +779,6 @@ export default function TwinChat() {
 
   const { send: wsSend } = useTwinChatWS(token, wsHandlersRef)
 
-  // Fetch sessions
   const fetchSessions = useCallback(async () => {
     try {
       const data = await apiFetch('/twin-chat/sessions')
@@ -524,14 +811,12 @@ export default function TwinChat() {
   }
 
   return (
-    <div className="h-full flex overflow-hidden">
-      {/* Sidebar */}
+    <div className="h-full flex overflow-hidden bg-surface-base">
       <div className={`w-full lg:w-72 xl:w-80 shrink-0 ${mobileShowChat ? 'hidden lg:flex lg:flex-col' : 'flex flex-col'}`}>
         <SessionSidebar sessions={sessions} activeId={activeSessionId} loading={loadingSessions}
           onSelect={handleSelectSession} onNew={() => setShowNewChat(true)} />
       </div>
 
-      {/* Chat panel */}
       <div className={`flex-1 min-w-0 ${!mobileShowChat ? 'hidden lg:flex lg:flex-col' : 'flex flex-col'}`}>
         <ChatPanel 
           session={activeSession}
@@ -541,7 +826,6 @@ export default function TwinChat() {
         />
       </div>
 
-      {/* New chat modal */}
       <AnimatePresence>
         {showNewChat && <NewChatModal onClose={() => setShowNewChat(false)} onCreated={handleNewChatCreated} />}
       </AnimatePresence>
