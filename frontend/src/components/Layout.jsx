@@ -20,7 +20,6 @@ import {
     Shield,
     BookOpen,
     MoreHorizontal,
-    MessagesSquare,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 
@@ -193,26 +192,23 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, badge }) => (
 const FloatingTab = ({ icon: Icon, active, onClick, badge, isCenter }) => (
     <button
         onClick={onClick}
-        className={`relative flex items-center justify-center transition-all duration-300 ${
-            isCenter
-                ? 'w-[54px] h-[54px] -mt-7 rounded-[18px] bg-primary text-white active:scale-90'
-                : 'w-12 h-12 rounded-xl active:scale-90'
-        } ${
-            !isCenter && active ? 'text-primary' : !isCenter ? 'text-neutral/60' : ''
-        }`}
+        className={`relative flex items-center justify-center transition-all duration-300 ${isCenter
+            ? 'w-[54px] h-[54px] -mt-7 rounded-[18px] bg-primary text-white active:scale-90'
+            : 'w-12 h-12 rounded-xl active:scale-90'
+            } ${!isCenter && active ? 'text-primary' : !isCenter ? 'text-neutral/60' : ''
+            }`}
         style={isCenter ? {
             boxShadow: '0 0 20px rgba(var(--primary-rgb), 0.4), 0 4px 16px rgba(var(--primary-rgb), 0.3), 0 0 40px rgba(var(--primary-rgb), 0.15)'
         } : active ? {
             filter: 'drop-shadow(0 0 6px rgba(var(--primary-rgb), 0.3))'
         } : {}}
     >
-        <div className={`transition-all duration-200 ${
-            isCenter
-                ? ''
-                : active
-                    ? 'p-2 rounded-xl bg-primary/15 ring-1 ring-primary/20'
-                    : 'p-2'
-        }`}>
+        <div className={`transition-all duration-200 ${isCenter
+            ? ''
+            : active
+                ? 'p-2 rounded-xl bg-primary/15 ring-1 ring-primary/20'
+                : 'p-2'
+            }`}>
             <Icon size={isCenter ? 22 : 21} strokeWidth={isCenter || active ? 2.4 : 1.7} />
         </div>
         {badge > 0 && (
@@ -245,11 +241,10 @@ const MoreMenu = ({ items, currentView, setView, onClose }) => (
             <button
                 key={item.id}
                 onClick={() => { setView(item.id); onClose(); }}
-                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left transition-all ${
-                    currentView === item.id
-                        ? 'bg-primary/15 text-primary'
-                        : 'text-on-surface-variant hover:bg-surface-container-high'
-                }`}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left transition-all ${currentView === item.id
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-on-surface-variant hover:bg-surface-container-high'
+                    }`}
             >
                 <item.icon size={17} />
                 <span className="text-sm font-medium">{item.label}</span>
@@ -292,9 +287,8 @@ const Layout = ({ children, currentView, setView }) => {
     const navItems = [
         { id: 'home', icon: Home, label: 'Home' },
         { id: 'chat', icon: MessageSquare, label: 'Chat' },
-        { id: 'twin-chat', icon: MessagesSquare, label: 'Twin Chat' },
         { id: 'files', icon: HardDrive, label: 'Files' },
-        { id: 'workspace', icon: LayoutGrid, label: 'Workspace' },
+        { id: 'integrations', icon: LayoutGrid, label: 'Integrations' },
         { id: 'activity', icon: ActivityIcon, label: 'Activity' },
         { id: 'agents', icon: Users, label: 'Network', badge: agentUnread },
         { id: 'settings', icon: Settings, label: 'Settings' },
@@ -436,7 +430,7 @@ const Layout = ({ children, currentView, setView }) => {
 
             {/* ── FUTURISTIC FLOATING MOBILE NAV BAR ── */}
             <div className={`lg:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-center pointer-events-none ${isChatView ? 'hidden' : ''}`}
-                 style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+                style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
             >
                 <nav className="pointer-events-auto relative mx-5 w-full max-w-sm">
                     {/* More Menu Popover */}

@@ -10,18 +10,18 @@ import { apiFetch } from '../utils/apiClient'
 import { API_BASE } from '../config'
 
 // ─── WebSocket Manager ───────────────────────────────────────────
-function useTwinChatWS(sessionId, token, handlers) {
+function useTwinChatWS(token, handlers) {
   const wsRef = useRef(null)
   const reconnectRef = useRef(null)
 
   useEffect(() => {
-    if (!sessionId || !token) return
+    if (!token) return
     let alive = true
 
     const connect = () => {
       const proto = API_BASE.startsWith('https') ? 'wss' : 'ws'
       const host = API_BASE.replace(/^https?:\/\//, '')
-      const url = `${proto}://${host}/twin-chat/ws/${sessionId}?token=${encodeURIComponent(token)}`
+      const url = `${proto}://${host}/twin-chat/ws?token=${encodeURIComponent(token)}`
       const ws = new WebSocket(url)
       wsRef.current = ws
 
@@ -38,7 +38,7 @@ function useTwinChatWS(sessionId, token, handlers) {
     }
     connect()
     return () => { alive = false; wsRef.current?.close(); clearTimeout(reconnectRef.current) }
-  }, [sessionId, token])
+  }, [token])
 
   const send = useCallback((payload) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(payload))
@@ -246,10 +246,9 @@ function MessageBubble({ msg, isOwn }) {
 }
 
 // ─── Chat View (right panel) ─────────────────────────────────────
-function ChatPanel({ session, onBack }) {
+function ChatPanel({ session, onBack, wsSend, wsEvent }) {
   const { auth } = useStore()
   const user = auth.user
-  const token = user?.accessToken
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
@@ -259,27 +258,34 @@ function ChatPanel({ session, onBack }) {
   const [enhancing, setEnhancing] = useState(false)
   const messagesEndRef = useRef(null)
   const typingTimeoutRef = useRef(null)
-  const handlersRef = useRef(null)
 
   const partnerName = session?.partner?.name || 'Partner'
 
-  // WS event handler
-  handlersRef.current = (data) => {
-    if (data.event === 'new_message') {
+  // Handle WS events passed from parent
+  useEffect(() => {
+    if (!wsEvent || !session) return
+    
+    // Only process events for this session
+    if (wsEvent.message?.session_id && wsEvent.message.session_id !== session.id) return
+    if (wsEvent.session_id && wsEvent.session_id !== session.id) return
+
+    if (wsEvent.event === 'new_message') {
       setMessages(prev => {
-        if (prev.some(m => m.id === data.message.id)) return prev
-        return [...prev, data.message]
+        if (prev.some(m => m.id === wsEvent.message.id)) return prev
+        return [...prev, wsEvent.message]
       })
-    } else if (data.event === 'twin_suggestion') {
-      setPendingSuggestion({ suggestions: data.message.suggestions, enrichment: data.enrichment, msgId: data.message.id })
-    } else if (data.event === 'partner_typing') {
+    } else if (wsEvent.event === 'twin_suggestion') {
+      setPendingSuggestion({ 
+        suggestions: wsEvent.message.suggestions, 
+        enrichment: wsEvent.enrichment, 
+        msgId: wsEvent.message.id 
+      })
+    } else if (wsEvent.event === 'partner_typing') {
       setPartnerTyping(true)
-    } else if (data.event === 'partner_stop_typing') {
+    } else if (wsEvent.event === 'partner_stop_typing') {
       setPartnerTyping(false)
     }
-  }
-
-  const { send: wsSend } = useTwinChatWS(session?.id, token, handlersRef)
+  }, [wsEvent, session?.id])
 
   // Load messages
   useEffect(() => {
@@ -296,9 +302,11 @@ function ChatPanel({ session, onBack }) {
   // Typing indicator
   const handleInputChange = (val) => {
     setInput(val)
-    wsSend({ event: 'typing' })
+    if (session?.id) wsSend({ event: 'typing', session_id: session.id })
     clearTimeout(typingTimeoutRef.current)
-    typingTimeoutRef.current = setTimeout(() => wsSend({ event: 'stop_typing' }), 2000)
+    typingTimeoutRef.current = setTimeout(() => {
+      if (session?.id) wsSend({ event: 'stop_typing', session_id: session.id })
+    }, 2000)
   }
 
   // Send message
@@ -307,7 +315,7 @@ function ChatPanel({ session, onBack }) {
     if (!text || sending) return
     setSending(true)
     setInput('')
-    wsSend({ event: 'stop_typing' })
+    if (session?.id) wsSend({ event: 'stop_typing', session_id: session.id })
     try {
       const data = await apiFetch(`/twin-chat/sessions/${session.id}/messages`, {
         method: 'POST', body: JSON.stringify({ content: text })
@@ -461,14 +469,43 @@ export default function TwinChat() {
   const [loadingSessions, setLoadingSessions] = useState(true)
   const [mobileShowChat, setMobileShowChat] = useState(false)
 
+  const { twinChatActiveSessionId, setTwinChatActiveSessionId, auth } = useStore()
+  const token = auth.user?.accessToken
+  const [lastWsEvent, setLastWsEvent] = useState(null)
+  const wsHandlersRef = useRef(null)
+
+  // Handle global WS events
+  wsHandlersRef.current = (data) => {
+    setLastWsEvent(data)
+    
+    // Update session list in real-time (last message time, etc)
+    if (data.event === 'new_message') {
+      setSessions(prev => prev.map(s => {
+        if (s.id === data.message.session_id) {
+          return { ...s, last_message_at: data.message.created_at }
+        }
+        return s
+      }).sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0)))
+    }
+  }
+
+  const { send: wsSend } = useTwinChatWS(token, wsHandlersRef)
+
   // Fetch sessions
   const fetchSessions = useCallback(async () => {
     try {
       const data = await apiFetch('/twin-chat/sessions')
-      setSessions(data.sessions || [])
+      const fetchedSessions = data.sessions || []
+      setSessions(fetchedSessions)
+      
+      if (twinChatActiveSessionId) {
+        setActiveSessionId(twinChatActiveSessionId)
+        setMobileShowChat(true)
+        setTwinChatActiveSessionId(null)
+      }
     } catch {}
     setLoadingSessions(false)
-  }, [])
+  }, [twinChatActiveSessionId])
 
   useEffect(() => { fetchSessions() }, [fetchSessions])
 
@@ -496,8 +533,12 @@ export default function TwinChat() {
 
       {/* Chat panel */}
       <div className={`flex-1 min-w-0 ${!mobileShowChat ? 'hidden lg:flex lg:flex-col' : 'flex flex-col'}`}>
-        <ChatPanel session={activeSession}
-          onBack={() => setMobileShowChat(false)} />
+        <ChatPanel 
+          session={activeSession}
+          wsSend={wsSend}
+          wsEvent={lastWsEvent}
+          onBack={() => setMobileShowChat(false)} 
+        />
       </div>
 
       {/* New chat modal */}

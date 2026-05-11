@@ -210,6 +210,23 @@ const AgentCard = ({ agent, onSchedule }) => {
   const [showForm, setShowForm] = useState(false)
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
+  const { setView, setTwinChatActiveSessionId } = useStore()
+
+  const handleStartChat = async () => {
+    setSending(true)
+    try {
+      const data = await apiFetch('/twin-chat/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ partner_id: agent.user_id })
+      })
+      setTwinChatActiveSessionId(data.session.id)
+      setView('twin-chat')
+    } catch (err) {
+      alert(`Chat failed: ${err.message}`)
+    } finally {
+      setSending(false)
+    }
+  }
 
   const handleSchedule = async () => {
     if (!topic.trim()) return
@@ -323,14 +340,24 @@ const AgentCard = ({ agent, onSchedule }) => {
           <Check size={12} /> Proposal sent — awaiting their approval
         </p>
       ) : (
-        <button
-          onClick={() => setShowForm(!showForm)}
-          disabled={agent.status === 'do_not_disturb'}
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-primary/20 text-primary text-xs font-bold hover:bg-primary/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <Calendar size={13} />
-          {showForm ? 'Cancel' : 'Schedule Meeting'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowForm(!showForm)}
+            disabled={agent.status === 'do_not_disturb'}
+            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl border border-primary/20 text-primary text-xs font-bold hover:bg-primary/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Calendar size={13} />
+            {showForm ? 'Cancel' : 'Schedule'}
+          </button>
+          <button
+            onClick={handleStartChat}
+            disabled={sending}
+            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-all disabled:opacity-40"
+          >
+            <MessageSquare size={13} />
+            {sending ? '...' : 'Messaging'}
+          </button>
+        </div>
       )}
     </motion.div>
   )

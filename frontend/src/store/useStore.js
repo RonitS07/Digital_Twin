@@ -39,7 +39,7 @@ export const useStore = create(
             currentScreen: 'login', // Tracks onboarding / main app
             setCurrentScreen: (screen) => set({ currentScreen: screen }),
             
-            view: 'home', // Tracks dashboard tabs (home, chat, workspace, activity, settings)
+            view: 'home', // Tracks dashboard tabs (home, chat, integrations, activity, settings)
             setView: (view) => set({ view }),
 
             // Theme State ('light', 'dark', 'system')
@@ -75,6 +75,10 @@ export const useStore = create(
             setHighlightedActivityId: (id) => set({ highlightedActivityId: id }),
             activityFilter: 'All Activity',
             setActivityFilter: (filter) => set({ activityFilter: filter }),
+
+            // Twin Chat Navigation
+            twinChatActiveSessionId: null,
+            setTwinChatActiveSessionId: (id) => set({ twinChatActiveSessionId: id }),
         }),
         {
             name: 'ai-twin-storage', // key in localStorage

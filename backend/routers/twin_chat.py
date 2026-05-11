@@ -50,48 +50,45 @@ router = APIRouter(prefix="/twin-chat", tags=["twin-chat"])
 # ────────────────────────────────────────────────────────────────────
 
 class ConnectionManager:
-    """Manages active WebSocket connections per session."""
+    """Manages active WebSocket connections per user and per session."""
     def __init__(self):
-        # session_id -> {user_id: WebSocket}
-        self._sessions: dict[str, dict[str, WebSocket]] = {}
+        # user_id -> set of active WebSockets
+        self._user_connections: dict[str, set[WebSocket]] = {}
 
-    async def connect(self, session_id: str, user_id: str, ws: WebSocket):
+    async def connect(self, user_id: str, ws: WebSocket):
         await ws.accept()
-        if session_id not in self._sessions:
-            self._sessions[session_id] = {}
-        self._sessions[session_id][user_id] = ws
-        logger.info(f"[WS] {user_id} connected to session {session_id}")
+        if user_id not in self._user_connections:
+            self._user_connections[user_id] = set()
+        self._user_connections[user_id].add(ws)
+        logger.info(f"[WS] User {user_id} connected globally")
 
-    def disconnect(self, session_id: str, user_id: str):
-        if session_id in self._sessions:
-            self._sessions[session_id].pop(user_id, None)
-            if not self._sessions[session_id]:
-                del self._sessions[session_id]
-        logger.info(f"[WS] {user_id} disconnected from session {session_id}")
+    def disconnect(self, user_id: str, ws: WebSocket):
+        if user_id in self._user_connections:
+            self._user_connections[user_id].discard(ws)
+            if not self._user_connections[user_id]:
+                del self._user_connections[user_id]
+        logger.info(f"[WS] User {user_id} disconnected")
 
-    async def broadcast(self, session_id: str, payload: dict, exclude_user: Optional[str] = None):
-        """Send payload to all connected clients in a session."""
-        if session_id not in self._sessions:
+    async def send_to_user(self, user_id: str, payload: dict):
+        """Send payload to all connected WebSockets for a specific user."""
+        if user_id not in self._user_connections:
             return
         dead = []
-        for uid, ws in self._sessions[session_id].items():
-            if uid == exclude_user:
-                continue
+        for ws in self._user_connections[user_id]:
             try:
                 await ws.send_json(payload)
             except Exception:
-                dead.append(uid)
-        for uid in dead:
-            self._sessions[session_id].pop(uid, None)
+                dead.append(ws)
+        for ws in dead:
+            self._user_connections[user_id].discard(ws)
 
-    async def send_to_user(self, session_id: str, user_id: str, payload: dict):
-        """Send payload only to a specific user."""
-        ws = self._sessions.get(session_id, {}).get(user_id)
-        if ws:
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                self._sessions.get(session_id, {}).pop(user_id, None)
+    async def broadcast_to_session(self, session: DirectChatSession, payload: dict, exclude_user_id: Optional[str] = None):
+        """Send payload to all participants of a session."""
+        uids = [session.initiator_id, session.partner_id]
+        for uid in uids:
+            if uid == exclude_user_id:
+                continue
+            await self.send_to_user(uid, payload)
 
 manager = ConnectionManager()
 
@@ -352,7 +349,7 @@ async def send_message(
     serialized = _serialize_message(msg)
 
     # Broadcast new message to both participants
-    await manager.broadcast(session_id, {
+    await manager.broadcast_to_session(session, {
         "event": "new_message",
         "message": serialized,
     })
@@ -394,7 +391,7 @@ async def send_message(
                 db.refresh(twin_msg)
 
                 # Only send Twin suggestion to the partner
-                await manager.send_to_user(session_id, partner_id, {
+                await manager.send_to_user(partner_id, {
                     "event": "twin_suggestion",
                     "message": _serialize_message(twin_msg),
                     "enrichment": enrichment_data.get("enrichment", ""),
@@ -520,7 +517,7 @@ async def approve_twin_message(
     serialized = _serialize_message(msg)
 
     # Broadcast the approved message to both
-    await manager.broadcast(session_id, {
+    await manager.broadcast_to_session(session, {
         "event": "new_message",
         "message": serialized,
     })
@@ -625,32 +622,35 @@ def search_users(
 # WebSocket Endpoint
 # ────────────────────────────────────────────────────────────────────
 
-@router.websocket("/ws/{session_id}")
+@router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    session_id: str,
-    token: str = Query(...),
     db: Session = Depends(get_db),
 ):
     """
-    Real-time WebSocket for a twin-chat session.
+    Global real-time WebSocket for twin-chat.
     Client must pass `?token=<jwt>` in the query string.
 
     Events sent by server:
       - connected       → connection confirmed
-      - new_message     → new human message from partner
-      - twin_suggestion → Twin-generated suggestion for this user
-      - twin_typing     → typing indicator from partner's twin
+      - new_message     → new message in ANY session for this user
+      - twin_suggestion → Twin-generated suggestion
+      - partner_typing  → typing indicator from a partner
       - error           → error message
 
     Events sent by client (JSON):
-      - { "event": "typing" }         → user is typing
-      - { "event": "stop_typing" }    → user stopped typing
-      - { "event": "ping" }           → keepalive
+      - { "event": "typing", "session_id": "..." }
+      - { "event": "stop_typing", "session_id": "..." }
+      - { "event": "ping" }
     """
-    # Authenticate via token in query param
+    # Authenticate via token
     from db.auth import decode_token
     from security.firebase_config import verify_firebase_token
+
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001)
+        return
 
     user = None
     payload = decode_token(token)
@@ -664,49 +664,43 @@ async def websocket_endpoint(
         await websocket.close(code=4001)
         return
 
-    # Verify participant
-    session = db.query(DirectChatSession).filter(
-        DirectChatSession.id == session_id
-    ).first()
-    if not session or user.id not in (session.initiator_id, session.partner_id):
-        await websocket.close(code=4003)
-        return
-
-    await manager.connect(session_id, user.id, websocket)
+    await manager.connect(user.id, websocket)
     try:
-        await manager.send_to_user(session_id, user.id, {
+        await manager.send_to_user(user.id, {
             "event": "connected",
             "user_id": user.id,
-            "session_id": session_id,
         })
 
         while True:
             data = await websocket.receive_json()
             event = data.get("event")
+            sid = data.get("session_id")
 
             if event == "ping":
-                await manager.send_to_user(session_id, user.id, {"event": "pong"})
+                await manager.send_to_user(user.id, {"event": "pong"})
 
-            elif event == "typing":
-                # Broadcast typing indicator to partner only
-                await manager.broadcast(session_id, {
-                    "event": "partner_typing",
-                    "user_id": user.id,
-                    "user_name": user.name,
-                }, exclude_user=user.id)
+            elif event == "typing" and sid:
+                # Need to find session participants to broadcast typing
+                session = db.query(DirectChatSession).filter(DirectChatSession.id == sid).first()
+                if session and user.id in (session.initiator_id, session.partner_id):
+                    await manager.broadcast_to_session(session, {
+                        "event": "partner_typing",
+                        "session_id": sid,
+                        "user_id": user.id,
+                        "user_name": user.name,
+                    }, exclude_user_id=user.id)
 
-            elif event == "stop_typing":
-                await manager.broadcast(session_id, {
-                    "event": "partner_stop_typing",
-                    "user_id": user.id,
-                }, exclude_user=user.id)
+            elif event == "stop_typing" and sid:
+                session = db.query(DirectChatSession).filter(DirectChatSession.id == sid).first()
+                if session and user.id in (session.initiator_id, session.partner_id):
+                    await manager.broadcast_to_session(session, {
+                        "event": "partner_stop_typing",
+                        "session_id": sid,
+                        "user_id": user.id,
+                    }, exclude_user_id=user.id)
 
     except WebSocketDisconnect:
-        manager.disconnect(session_id, user.id)
-        await manager.broadcast(session_id, {
-            "event": "user_disconnected",
-            "user_id": user.id,
-        }, exclude_user=user.id)
+        manager.disconnect(user.id, websocket)
     except Exception as e:
-        logger.error(f"[WS] Error in session {session_id} for {user.id}: {e}")
-        manager.disconnect(session_id, user.id)
+        logger.error(f"[WS] Error for {user.id}: {e}")
+        manager.disconnect(user.id, websocket)

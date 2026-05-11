@@ -261,7 +261,7 @@ function App() {
                                         >
                                             {view === 'chat' && <Chat />}
                                             {view === 'files' && <Files />}
-                                            {view === 'workspace' && <Workspace />}
+                                            {view === 'integrations' && <Workspace />}
                                             {view === 'activity' && <Activity />}
                                             {view === 'settings' && <Settings />}
                                             {view === 'agents' && <AgentInbox />}

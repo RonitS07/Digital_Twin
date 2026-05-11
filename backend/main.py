@@ -74,7 +74,6 @@ from services.agent_registry import register_agent
 # ── Twin-to-Twin Direct Chat ───────────────────────────────────────────────
 from db.twin_chat_models import DirectChatSession, DirectChatMessage  # register models
 from routers.twin_chat import router as twin_chat_router
-from security.auth import get_current_user
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1117,7 +1116,7 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
         db_user = db.query(User).filter(User.id == effective_user_id).first()
         if not db_user:
             # Use specific email from token if available, otherwise fallback to UID
-            final_email = token_user.email if token_user and token_user.email else effective_user_id
+            final_email = current_user.email if current_user and current_user.email else effective_user_id
             db_user = User(id=effective_user_id, name=final_user_name, email=final_email)
             db.add(db_user)
             db.commit()
