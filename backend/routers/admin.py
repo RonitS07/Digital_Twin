@@ -4,19 +4,22 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from db.database import get_db
 from db.models import (
+    TaskLog,
+    User,
     AgentRegistry,
+    A2AMessageLog,
+    FileAsset,
     ArchiveMemory,
     IntegrationToken,
     ProcessedEmail,
     StructuredMemory,
-    TaskLog,
-    User,
 )
+from db.twin_chat_models import DirectChatSession, DirectChatMessage
 from memory.chroma import get_collection
 from security.auth import get_current_admin
 
@@ -244,6 +247,65 @@ def soft_delete_user(
     )
     db.commit()
     return {"status": "success", "message": f"User {user.email} soft deleted"}
+
+
+@router.delete("/users/{user_id}/permanent")
+def permanent_delete_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    if user_id == current_admin.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    email = user.email
+
+    # 1. Clear Vector Memory
+    _clear_user_chroma(user_id)
+
+    # 2. Delete from related tables (Manual cascade)
+    db.query(AgentRegistry).filter(AgentRegistry.user_id == user_id).delete()
+    db.query(IntegrationToken).filter(IntegrationToken.user_id == user_id).delete()
+    db.query(StructuredMemory).filter(StructuredMemory.user_id == user_id).delete()
+    db.query(ArchiveMemory).filter(ArchiveMemory.user_id == user_id).delete()
+    db.query(ProcessedEmail).filter(ProcessedEmail.user_id == user_id).delete()
+    db.query(FileAsset).filter(FileAsset.user_id == user_id).delete()
+    
+    # Delete A2A Messages (Sender or Receiver)
+    db.query(A2AMessageLog).filter(
+        or_(A2AMessageLog.sender_user_id == user_id, A2AMessageLog.receiver_user_id == user_id)
+    ).delete()
+
+    # Delete Twin Chat Data
+    # Messages in sessions where user was a participant
+    sessions = db.query(DirectChatSession).filter(
+        or_(DirectChatSession.initiator_id == user_id, DirectChatSession.partner_id == user_id)
+    ).all()
+    session_ids = [s.id for s in sessions]
+    if session_ids:
+        db.query(DirectChatMessage).filter(DirectChatMessage.session_id.in_(session_ids)).delete(synchronize_session=False)
+        db.query(DirectChatSession).filter(DirectChatSession.id.in_(session_ids)).delete(synchronize_session=False)
+
+    # Delete Logs
+    db.query(TaskLog).filter(TaskLog.user_id == user_id).delete()
+
+    # 3. Finally, delete the User
+    db.delete(user)
+    
+    _log_admin_action(
+        db=db,
+        actor_user_id=current_admin.id,
+        action_type="admin_user_permanently_deleted",
+        target_user_id=user_id,
+        details=f"PERMANENTLY DELETED user {email} and all associated data.",
+    )
+    
+    db.commit()
+    return {"status": "success", "message": f"User {email} has been permanently removed from the system."}
 
 
 @router.get("/logs")

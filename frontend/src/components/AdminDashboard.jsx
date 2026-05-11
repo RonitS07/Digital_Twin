@@ -112,10 +112,25 @@ const AdminDashboard = () => {
     }
 
     const handleDeleteUser = async (userId) => {
-        if (!window.confirm('Soft delete this user and revoke their integrations?')) return
+        if (!window.confirm('Soft delete this user and revoke their integrations? They will remain in the database but be inactive.')) return
         await apiFetch(`/admin/users/${userId}`, { method: 'DELETE' })
         await loadUsers(userSearch)
         await loadLogs()
+    }
+
+    const handlePermanentDelete = async (userId, email) => {
+        const confirm = window.prompt(`CRITICAL ACTION: This will PERMANENTLY DELETE user ${email} and ALL their associated data (memory, chats, tasks). This cannot be undone. Type "PERMANENT DELETE" to confirm:`)
+        if (confirm !== 'PERMANENT DELETE') return
+        
+        setLoading(true)
+        try {
+            await apiFetch(`/admin/users/${userId}/permanent`, { method: 'DELETE' })
+            await loadAll()
+        } catch (e) {
+            setError(e.message)
+        } finally {
+            setLoading(false)
+        }
     }
 
     const handleResetMemory = async (userId) => {
@@ -217,7 +232,8 @@ const AdminDashboard = () => {
                                             ) : (
                                                 <button onClick={() => handleRevoke(u.id)} className="text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-400">Revoke</button>
                                             )}
-                                            <button onClick={() => handleDeleteUser(u.id)} className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400">Delete</button>
+                                            <button onClick={() => handleDeleteUser(u.id)} className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400">Soft Delete</button>
+                                            <button onClick={() => handlePermanentDelete(u.id, u.email)} className="text-xs px-2 py-1 rounded bg-red-600 text-white font-bold hover:bg-red-700">Permanent Delete</button>
                                         </div>
                                     </td>
                                 </tr>
