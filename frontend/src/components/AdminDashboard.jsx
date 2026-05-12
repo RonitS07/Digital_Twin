@@ -118,6 +118,13 @@ const AdminDashboard = () => {
         await loadLogs()
     }
 
+    const handleRestoreUser = async (userId) => {
+        if (!window.confirm('Restore this user?')) return
+        await apiFetch(`/admin/users/${userId}/restore`, { method: 'POST' })
+        await loadUsers(userSearch)
+        await loadLogs()
+    }
+
     const handlePermanentDelete = async (userId, email) => {
         const confirm = window.prompt(`CRITICAL ACTION: This will PERMANENTLY DELETE user ${email} and ALL their associated data (memory, chats, tasks). This cannot be undone. Type "PERMANENT DELETE" to confirm:`)
         if (confirm !== 'PERMANENT DELETE') return
@@ -211,11 +218,15 @@ const AdminDashboard = () => {
                                         <div className="text-xs text-neutral">{u.telegram_chat_id_masked || 'No Telegram'}</div>
                                     </td>
                                     <td className="py-3 pr-3">
-                                        {u.is_admin ? (
-                                            <span className="text-[10px] px-2 py-1 rounded-full bg-primary/15 text-primary border border-primary/20 font-bold">ADMIN</span>
-                                        ) : (
-                                            <span className="text-[10px] px-2 py-1 rounded-full bg-neutral/15 text-neutral border border-neutral/20 font-bold">USER</span>
-                                        )}
+                                        <div className="flex gap-2">
+                                            {!u.is_active ? (
+                                                <span className="text-[10px] px-2 py-1 rounded-full bg-red-500/15 text-red-500 border border-red-500/20 font-bold">INACTIVE</span>
+                                            ) : u.is_admin ? (
+                                                <span className="text-[10px] px-2 py-1 rounded-full bg-primary/15 text-primary border border-primary/20 font-bold">ADMIN</span>
+                                            ) : (
+                                                <span className="text-[10px] px-2 py-1 rounded-full bg-neutral/15 text-neutral border border-neutral/20 font-bold">USER</span>
+                                            )}
+                                        </div>
                                     </td>
                                     <td className="py-3 pr-3">
                                         <div className="flex items-center gap-2">
@@ -226,14 +237,19 @@ const AdminDashboard = () => {
                                     </td>
                                     <td className="py-3 pr-3">{u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
                                     <td className="py-3 pr-3">
-                                        <div className="flex gap-2">
-                                            {!u.is_admin ? (
+                                        <div className="flex flex-wrap gap-2">
+                                            {u.is_active && !u.is_admin && (
                                                 <button onClick={() => handleElevate(u.id)} className="text-xs px-2 py-1 rounded bg-green-500/10 text-green-400">Elevate</button>
-                                            ) : (
+                                            )}
+                                            {u.is_active && u.is_admin && (
                                                 <button onClick={() => handleRevoke(u.id)} className="text-xs px-2 py-1 rounded bg-amber-500/10 text-amber-400">Revoke</button>
                                             )}
-                                            <button onClick={() => handleDeleteUser(u.id)} className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400">Soft Delete</button>
-                                            <button onClick={() => handlePermanentDelete(u.id, u.email)} className="text-xs px-2 py-1 rounded bg-red-600 text-white font-bold hover:bg-red-700">Permanent Delete</button>
+                                            {u.is_active ? (
+                                                <button onClick={() => handleDeleteUser(u.id)} className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400">Suspend</button>
+                                            ) : (
+                                                <button onClick={() => handleRestoreUser(u.id)} className="text-xs px-2 py-1 rounded bg-green-500/10 text-green-400">Restore</button>
+                                            )}
+                                            <button onClick={() => handlePermanentDelete(u.id, u.email)} className="text-xs px-2 py-1 rounded bg-red-600 text-white font-bold hover:bg-red-700">Wipe</button>
                                         </div>
                                     </td>
                                 </tr>

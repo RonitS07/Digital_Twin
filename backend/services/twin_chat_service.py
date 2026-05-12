@@ -70,10 +70,18 @@ def generate_twin_enrichment(
 2. Retrieve relevant context from {user_name}'s memory.
 3. Draft 2-3 natural, helpful suggested replies that {user_name} can send.
 
+INTEGRATIONS & ACTIONS:
+You have access to Calendar, Gmail, and Slack. 
+If the message implies an action (e.g., "let's meet", "send me that email", "post this to slack"):
+- Include an <action> block at the end of the "content" field for the relevant suggestion.
+- For meetings, suggest a specific slot (default to today if just a time is given).
+- For emails, draft the full body.
+
 RULES:
+- DO NOT just parrot or repeat what {partner_name} said.
 - Replies must sound like {user_name} (first-person, natural tone).
-- Vary length: one short (1 sentence), one medium (2-3 sentences), one detailed (if relevant).
-- Never fabricate facts. Only use provided context.
+- If suggesting an action, be proactive but concise. NEVER say "I have already sent this" or "I have scheduled it". You are drafting a PROPOSAL. Say "I will send this" or "Here is the drafted email".
+- Never fabricate facts or fake execution results. Only use provided context.
 - Keep suggestions concise and actionable.
 
 Return ONLY valid JSON in this exact format:
@@ -81,10 +89,16 @@ Return ONLY valid JSON in this exact format:
   "enrichment": "Brief AI insight about this message (1-2 sentences)",
   "suggestions": [
     {{"label": "Quick reply", "content": "..."}},
-    {{"label": "Detailed response", "content": "..."}},
+    {{"label": "Action: Schedule", "content": "I've drafted a meeting invite for today at 9 PM.\\n\\n<action>...JSON_HERE...</action>"}},
     {{"label": "Clarifying question", "content": "..."}}
   ]
-}}"""
+}}
+
+ACTION BLOCK FORMATS:
+- Calendar: <action>{{"intent": "calendar", "title": "...", "start_datetime": "ISO_STRING", "end_datetime": "ISO_STRING", "attendees": ["email@example.com"], "description": "..."}}</action>
+- Email: <action>{{"intent": "email", "to": "...", "subject": "...", "body": "..."}}</action>
+- Slack: <action>{{"intent": "slack", "channel_id": "...", "channel_name": "...", "text": "..."}}</action>
+"""
 
     user_prompt = f"""INCOMING MESSAGE from {partner_name}:
 "{incoming_message}"

@@ -324,17 +324,117 @@ async def send_message(
         raise HTTPException(status_code=403, detail="Not a participant")
 
     now = datetime.now(timezone.utc)
+    
+    partner_id = session.partner_id if session.initiator_id == current_user.id else session.initiator_id
+    partner = db.query(User).filter(User.id == partner_id).first()
+    partner_name = partner.name if partner else "Partner"
+
+    # 1. Pass message through AI classification layer
+    import re
+    from graph.graph import twin_graph
+    
+    recent_msgs = db.query(DirectChatMessage).filter(
+        DirectChatMessage.session_id == session_id,
+        DirectChatMessage.status.in_(["sent", "approved"]),
+    ).order_by(desc(DirectChatMessage.created_at)).limit(20).all()
+    
+    chat_history = []
+    for m in reversed(recent_msgs):
+        role = "user" if m.sender_id == current_user.id else "assistant"
+        chat_history.append({"role": role, "text": m.content})
+        
+    effective_input = body.content.strip()
+    if not effective_input and body.files:
+        effective_input = "Please analyze and describe the attached file(s)."
+
+    import base64
+    if body.files:
+        text_file_context = []
+        for f in body.files:
+            mime = f.get("type", "")
+            if not mime.startswith("image/"):
+                try:
+                    raw = f.get("data", "")
+                    encoded = raw.split(",", 1)[1] if "," in raw else raw
+                    content = base64.b64decode(encoded).decode("utf-8", errors="replace")
+                    text_file_context.append(f'--- File: {f["name"]} ---\n{content[:3000]}\n---')
+                except Exception:
+                    pass
+        if text_file_context:
+            effective_input = effective_input + "\n\n" + "\n".join(text_file_context)
+
+    initial_state = {
+        "user_id": current_user.id,
+        "user_name": current_user.name or "User",
+        "partner_name": partner_name,
+        "input": effective_input,
+        "chat_history": chat_history,
+        "intent": "other",
+        "output": "",
+        "task_plan": [],
+        "approval_required": False,
+        "response_type": "text",
+        "image_url": None,
+        "gmail_sync": True,
+        "calendar_sync": True,
+        "slack_sync": True,
+        "files": body.files or [],
+    }
+    
+    try:
+        final_state = twin_graph.invoke(initial_state)
+    except Exception as e:
+        logger.error(f"AI classification failed: {e}")
+        final_state = {"intent": "general", "output": body.content}
+        
+    intent = final_state.get("intent", "general")
+    ai_output = final_state.get("output", body.content)
+    
     metadata = {}
     if body.files:
         metadata["files"] = body.files
+        
+    msg_content = body.content
+    sender_type = "human"
+    
+    is_task = intent not in ["general", "other"]
+    
+    if is_task:
+        msg_content = ai_output
+        sender_type = "twin"
+        metadata["response_type"] = final_state.get("response_type", "text")
+        if final_state.get("image_url"):
+            metadata["image_url"] = final_state.get("image_url")
+        metadata["intent"] = intent
+        metadata["source"] = "ai_auto_executed"
+        
+        # Execute tasks if necessary (e.g. email)
+        action_match = re.search(r"<action>(.*?)</action>", msg_content, re.DOTALL)
+        if action_match:
+            try:
+                action_data = json.loads(action_match.group(1))
+                action_intent = action_data.get("intent")
+                if action_intent == "email":
+                    from tools.gmail_tool import send_email
+                    to = action_data.get("to")
+                    subject = action_data.get("subject")
+                    body_html = action_data.get("body")
+                    try:
+                        send_email(db, current_user.id, to, subject, body_html)
+                        msg_content = re.sub(r"<action>.*?</action>", "", msg_content, flags=re.DOTALL)
+                        msg_content += f"\n\n*I have sent you an email regarding the subject: {subject}*"
+                    except Exception as e:
+                        msg_content += f"\n\n*(Failed to send email: {str(e)})*"
+            except Exception:
+                pass
 
     msg = DirectChatMessage(
         id=str(uuid.uuid4()),
         session_id=session_id,
         sender_id=current_user.id,
-        sender_type="human",
+        sender_type=sender_type,
         status="sent",
-        content=body.content,
+        content=msg_content,
         metadata_json=json.dumps(metadata) if metadata else None,
         created_at=now,
         updated_at=now,
@@ -346,10 +446,6 @@ async def send_message(
     db.refresh(msg)
 
     # Index this message in sender's memory
-    partner_id = session.partner_id if session.initiator_id == current_user.id else session.initiator_id
-    partner = db.query(User).filter(User.id == partner_id).first()
-    partner_name = partner.name if partner else "Partner"
-
     store_message_in_memory(
         user_id=current_user.id,
         session_id=session_id,
@@ -370,7 +466,7 @@ async def send_message(
 
     # Generate Twin enrichment for the PARTNER (recipient)
     # This runs synchronously for now (can be moved to background task)
-    if session.twin_mode:
+    if not is_task and session.twin_mode:
         try:
             recent_msgs = db.query(DirectChatMessage).filter(
                 DirectChatMessage.session_id == session_id,
@@ -562,6 +658,34 @@ def reject_message(
     return {"ok": True}
 
 
+@router.delete("/sessions/{session_id}")
+def delete_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete an entire Twin Chat session and its messages."""
+    session = db.query(DirectChatSession).filter(
+        DirectChatSession.id == session_id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if current_user.id not in (session.initiator_id, session.partner_id):
+        raise HTTPException(status_code=403, detail="Not a participant")
+
+    # Delete all messages in the session
+    db.query(DirectChatMessage).filter(DirectChatMessage.session_id == session_id).delete()
+    # Delete the session itself
+    db.delete(session)
+    db.commit()
+    
+    # Optional: Delete associated vector DB documents. 
+    # Since they are tagged with session_id, we can attempt to delete them if needed.
+    # For now, deleting from Postgres ensures it vanishes from UI.
+    
+    return {"ok": True, "message": "Session deleted"}
+
+
 @router.post("/sessions/{session_id}/summarize")
 def summarize_session(
     session_id: str,
@@ -648,6 +772,7 @@ async def ai_process_in_chat(
     initial_state = {
         "user_id": current_user.id,
         "user_name": current_user.name or "User",
+        "partner_name": session.partner.name if session.partner else "Partner",
         "input": effective_input,
         "chat_history": chat_history,
         "intent": "other",

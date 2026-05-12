@@ -1154,7 +1154,10 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
         "gmail_sync": req.gmail_sync,
         "calendar_sync": req.calendar_sync,
         "slack_sync": req.slack_sync,
-        "files": req.files or []
+        "files": req.files or [],
+        "access_token": current_user.access_token if hasattr(current_user, "access_token") else "",
+        "generated_file": None,
+        "viz_config": None,
     }
 
     # Augment prompt with text file contents (PDFs decoded as text, etc.)
@@ -1261,6 +1264,7 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
                     {
                         "approval_required": final_state.get("approval_required", False),
                         "task_plan": final_state.get("task_plan", []),
+                        "files": req.files or []
                     },
                     ensure_ascii=False,
                 ),
@@ -1277,7 +1281,9 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
             "intent": final_state.get("intent"),
             "approval_required": final_state.get("approval_required", False),
             "response_type": final_state.get("response_type", "text"),
-            "image_url": final_state.get("image_url")
+            "image_url": final_state.get("image_url"),
+            "generated_file": final_state.get("generated_file"),
+            "viz_config": final_state.get("viz_config"),
         }
     except HTTPException:
         raise
@@ -1314,7 +1320,203 @@ def generate_chat_title(req: GenerateTitleRequest, current_user: User = Depends(
         logger.error(f"Title generation failed: {e}")
         return {"title": "New Discussion"}
 
+class GenerateFileRequest(BaseModel):
+    prompt: str
+    file_type: Optional[str] = None   # hint: "pdf", "xlsx", etc. (AI decides if None)
+    session_id: Optional[str] = None
+    files: Optional[List[dict]] = []  # uploaded source files for context
+
+@app.post("/ai/generate-file")
+async def generate_file_endpoint(
+    req: GenerateFileRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from tools.file_generator import generate_file, detect_file_type, MIME_MAP
+    from graph.llm_utils import _llm
+    from db.models import FileAsset
+
+    try:
+        # 1. Determine file type (AI or hint)
+        file_type = req.file_type
+        if not file_type:
+            decision = _llm(
+                system="You are a file-type expert. Determine the best file format for the user's request. Return ONLY one of: pdf, docx, xlsx, pptx, csv, json, yaml, md, txt, py, js, ts, html, sql, sh",
+                user=req.prompt,
+                force_fast=True
+            ).strip().lower().split()[0]
+            file_type = decision if decision in MIME_MAP else "txt"
+
+        # 2. Build context from uploaded source files
+        source_context = ""
+        if req.files:
+            for f in req.files:
+                if f.get("type", "").startswith("text") or f.get("name", "").endswith((".csv", ".json", ".md", ".txt")):
+                    try:
+                        import base64
+                        raw = base64.b64decode(f["data"].split(",")[-1]).decode("utf-8", errors="ignore")
+                        source_context += f"\n[SOURCE FILE: {f['name']}]\n{raw[:3000]}\n"
+                    except Exception:
+                        pass
+
+        # 3. Generate content via LLM
+        system_msg = f"""You are an expert document writer. 
+Generate complete, well-structured, professional content for a {file_type.upper()} file based on the user's request.
+
+For structured file types (xlsx/csv): respond in JSON format:
+{{"title":"...", "headers":["col1","col2",...], "rows":[["val1","val2",...],...]}}
+
+For presentation (pptx): respond in JSON format:
+{{"title":"...", "slides":[{{"title":"Slide Title","content":"bullet\\nbullet"}},...] }}
+
+For all other types: respond with clean content only (use markdown headings ## for sections). Include a proper title on the first line starting with # 
+
+{f'Use this source data as reference:{source_context}' if source_context else ''}
+"""
+        raw_content = _llm(system=system_msg, user=req.prompt)
+
+        # 4. Parse title + content / structured data
+        title = req.prompt[:50]
+        structured_data = None
+        content = raw_content
+
+        if file_type in ("xlsx", "csv", "pptx"):
+            try:
+                import re as _re
+                json_match = _re.search(r'\{.*\}', raw_content, _re.DOTALL)
+                if json_match:
+                    parsed = json.loads(json_match.group())
+                    title = parsed.get("title", title)
+                    structured_data = parsed
+                    content = raw_content
+            except Exception:
+                pass
+        else:
+            # Extract # title from markdown if present
+            lines = raw_content.strip().split("\n")
+            if lines and lines[0].startswith("# "):
+                title = lines[0][2:].strip()
+                content = "\n".join(lines[1:]).strip()
+
+        # 5. Generate the actual file
+        metadata = {
+            "Generated": datetime.utcnow().strftime("%B %d, %Y %H:%M UTC"),
+            "Author": current_user.name or current_user.email or "AI Twin User",
+            "AI Twin": "Aether Obsidian Intelligence"
+        }
+        storage_path, filename, mime_type = generate_file(
+            file_type=file_type,
+            title=title,
+            content=content,
+            structured_data=structured_data,
+            metadata=metadata if file_type in ("pdf", "docx", "xlsx") else None
+        )
+
+        # 6. Save FileAsset record
+        file_size = os.path.getsize(os.path.join(BACKEND_DIR, storage_path))
+        asset = FileAsset(
+            user_id=current_user.id,
+            name=filename,
+            file_type=mime_type,
+            size=file_size,
+            storage_path=storage_path,
+        )
+        db.add(asset)
+        db.commit()
+        db.refresh(asset)
+
+        logger.info(f"[FileGen] Created {filename} ({file_size} bytes) for user {current_user.id}")
+        return {
+            "file_id": str(asset.id),
+            "filename": filename,
+            "file_type": file_type,
+            "mime_type": mime_type,
+            "size": file_size,
+            "download_url": f"/ai/files/{asset.id}/download",
+            "title": title,
+            "message": f"✅ **{title}** generated successfully as `{filename}`"
+        }
+
+    except Exception as e:
+        logger.exception(f"[FileGen] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class VisualizeRequest(BaseModel):
+    prompt: str
+    files: Optional[List[dict]] = []   # CSV/JSON/XLSX source files
+    session_id: Optional[str] = None
+
+@app.post("/ai/visualize")
+async def visualize_endpoint(
+    req: VisualizeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    AI-powered visualization endpoint.
+    Returns Recharts-compatible config that the frontend renders interactively.
+    """
+    from graph.llm_utils import _llm
+    import base64
+
+    # Extract text from source files
+    source_data = ""
+    for f in req.files or []:
+        fname = f.get("name", "")
+        ftype = f.get("type", "")
+        if ftype.startswith("image/"):
+            continue
+        try:
+            raw_b64 = f.get("data", "").split(",")[-1]
+            raw = base64.b64decode(raw_b64).decode("utf-8", errors="ignore")
+            source_data += f"\n[FILE: {fname}]\n{raw[:4000]}\n"
+        except Exception:
+            pass
+
+    system = """You are an expert data visualization AI.
+Analyze the user's request and/or the provided data and return a complete Recharts chart config as JSON.
+
+Return ONLY valid JSON in this format:
+{
+  "chart_type": "bar|line|area|pie|scatter|composed|radar|treemap",
+  "title": "Chart title",
+  "description": "One sentence insight about the data",
+  "x_key": "field name for x-axis (for bar/line/area/scatter)",
+  "y_keys": [{"key":"fieldname","label":"Display Label","color":"#hexcolor"}],
+  "data": [ {... data rows ...} ],
+  "insights": ["Key insight 1", "Key insight 2", "Key insight 3"],
+  "drill_down": null
+}
+
+Rules:
+- Choose the BEST chart type for the data.
+- Use beautiful, harmonious hex colors (e.g. #6366f1, #a855f7, #10b981, #f59e0b, #3b82f6, #ef4444).
+- For pie charts, each data row must have "name" and "value" fields.
+- data array must have 5-20 rows for readability.
+- insights must contain 2-4 actionable takeaways.
+- Always generate concrete data if none provided (for demonstrations).
+"""
+
+    user_msg = req.prompt
+    if source_data:
+        user_msg += f"\n\nSource data:\n{source_data}"
+
+    try:
+        result = _llm(system=system, user=user_msg)
+        import re as _re
+        json_match = _re.search(r'\{.*\}', result, _re.DOTALL)
+        if not json_match:
+            raise ValueError("No JSON found in response")
+        config = json.loads(json_match.group())
+        return {"ok": True, "config": config}
+    except Exception as e:
+        logger.error(f"[Visualize] Error: {e}")
+        raise HTTPException(status_code=500, detail="Visualization generation failed")
+
+
 @app.get("/ai/files")
+
 def list_files(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from db.models import FileAsset
     files = db.query(FileAsset).filter(FileAsset.user_id == current_user.id).order_by(FileAsset.created_at.desc()).all()
@@ -1456,6 +1658,21 @@ def get_sessions(current_user: User = Depends(get_current_user), db: Session = D
     except Exception as e:
         logger.exception(f"Sessions Error: {e}")
         return {"sessions": []}
+
+@app.delete("/sessions/{session_id}")
+def delete_session(session_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        # Verify the logs belong to the current user and delete them
+        deleted_count = db.query(TaskLog).filter(
+            TaskLog.session_id == session_id,
+            TaskLog.user_id == current_user.id
+        ).delete()
+        db.commit()
+        
+        return {"ok": True, "deleted": deleted_count}
+    except Exception as e:
+        logger.exception(f"Delete Session Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete session")
 
 @app.get("/calendar/events")
 def list_calendar(max_results: int = 20, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):

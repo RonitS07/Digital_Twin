@@ -13,7 +13,7 @@ FAST_MODEL = "llama-3.1-8b-instant"
 SMART_MODEL = "llama-3.3-70b-versatile"
 
 # Vision model
-VISION_MODEL = "llama-3.2-11b-vision-preview"
+VISION_MODEL = "llama-3.2-90b-vision-preview"
 
 # Intents that need the heavy model for quality JSON/reasoning
 _SMART_INTENTS = {
@@ -76,8 +76,8 @@ def _llm(system: str, user: str, intent: str = "", force_fast: bool = False, ima
                 else:
                     logger.error(f"[LLM] {model} call failed after {retries} attempts: {e}")
                 
-                # Fallback to fast model if smart/vision model fails (strip images for fallback)
-                if model in (SMART_MODEL, VISION_MODEL):
+                # Fallback to fast model if smart model fails (but not vision, as fast model hallucinates on images)
+                if model == SMART_MODEL:
                     try:
                         resp = client.chat.completions.create(
                             messages=[
@@ -92,5 +92,7 @@ def _llm(system: str, user: str, intent: str = "", force_fast: bool = False, ima
                     except Exception as e2:
                         logger.error(f"[LLM] Fallback also failed: {e2}")
                         raise
+                elif model == VISION_MODEL:
+                    return "Visual analysis is temporarily unavailable due to high server load. Please try again in a few moments."
                 raise
     return ""

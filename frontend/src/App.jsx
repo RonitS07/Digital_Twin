@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from './config'
 import { AnimatePresence, motion } from 'framer-motion'
+import { Analytics } from "@vercel/analytics/react"
 
 
 import { Login, Signup, ForgotPassword } from './components/Auth'
@@ -275,6 +276,7 @@ function App() {
                     </motion.div>
                 )}
             </AnimatePresence>
+            <Analytics />
         </div>
     )
 }

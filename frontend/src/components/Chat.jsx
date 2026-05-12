@@ -24,6 +24,8 @@ import {
     X
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
+import VisualizationRenderer from './VisualizationRenderer'
+import FileDownloadCard from './FileDownloadCard'
 
 // Lightweight zero-dep markdown renderer
 const SimpleMarkdown = ({ children }) => {
@@ -250,11 +252,20 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                                             <span className="text-[10px] font-bold uppercase tracking-widest text-white bg-black/50 px-2 py-1 rounded-lg">🔍 View</span>
                                         </div>
                                     </div>
-                                ) : (
-                                    <div key={idx} className="flex items-center gap-2 bg-white/10 p-3 rounded-xl text-[10px] border border-white/5">
-                                        <FileIcon size={16} className="text-white/70" />
-                                        <span className="max-w-[120px] truncate">{at.name}</span>
+                                ) : at.type?.startsWith('video/') ? (
+                                    <div key={idx} className="w-full max-w-sm rounded-2xl overflow-hidden border border-white/20 bg-black/50">
+                                        <video src={at.data} controls className="w-full h-auto max-h-[300px]" />
                                     </div>
+                                ) : at.type?.startsWith('audio/') ? (
+                                    <div key={idx} className="w-full max-w-xs">
+                                        <audio src={at.data} controls className="w-full" />
+                                    </div>
+                                ) : (
+                                    <a key={idx} href={at.data} download={at.name} className="flex items-center gap-2 bg-white/10 hover:bg-white/20 transition-colors p-3 rounded-xl text-[10px] border border-white/5">
+                                        <FileIcon size={16} className="text-white/70" />
+                                        <span className="max-w-[120px] truncate font-medium">{at.name}</span>
+                                        <ExternalLink size={12} className="text-white/50" />
+                                    </a>
                                 )
                             ))}
                         </div>
@@ -278,6 +289,14 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                         <div className="text-sm leading-relaxed break-words">
                             <SimpleMarkdown>{cleanText}</SimpleMarkdown>
                         </div>
+                    )}
+
+                    {/* Generated file card */}
+                    {msg.generatedFile && <FileDownloadCard fileData={msg.generatedFile} />}
+
+                    {/* Interactive visualization */}
+                    {(msg.responseType === 'visualization' || msg.response_type === 'visualization') && msg.vizConfig && (
+                        <VisualizationRenderer config={msg.vizConfig} />
                     )}
 
                     {actionData && (
@@ -438,15 +457,22 @@ const Chat = () => {
         try {
             const data = await apiFetch(`/history?session_id=${sid}`);
             if (data.history) {
-                const mapped = data.history.map(h => ({
-                    id: h.id,
-                    role: h.kind === 'prompt' ? 'user' : 'ai',
-                    text: h.kind === 'prompt' ? h.input : h.output,
-                    time: new Date(h.timestamp).toLocaleTimeString([], { timeStyle: 'short' }),
-                    source: h.intent?.toUpperCase() || 'AI',
-                    responseType: h.response_type,
-                    imageUrl: h.image_url
-                }));
+                const mapped = data.history.map(h => {
+                    let parsedMeta = {}
+                    if (h.metadata) {
+                        try { parsedMeta = JSON.parse(h.metadata) } catch(e){}
+                    }
+                    return {
+                        id: h.id,
+                        role: h.kind === 'prompt' ? 'user' : 'ai',
+                        text: h.kind === 'prompt' ? h.input : h.output,
+                        time: new Date(h.timestamp).toLocaleTimeString([], { timeStyle: 'short' }),
+                        source: h.intent?.toUpperCase() || 'AI',
+                        responseType: h.response_type,
+                        imageUrl: h.image_url,
+                        attachments: parsedMeta.files || []
+                    }
+                });
                 
                 if (mapped.length > 0) {
                     setMessages(mapped);
@@ -497,10 +523,17 @@ const Chat = () => {
         if (window.innerWidth < 1024) setIsSidebarOpen(false);
     }
 
-    const handleDeleteSession = (e, id) => {
+    const handleDeleteSession = async (e, id) => {
         e.stopPropagation()
         setSessions(prev => prev.filter(s => s.id !== id))
         localStorage.removeItem(`chat_history_${user.uid}_${id}`)
+        
+        try {
+            await apiFetch(`/sessions/${id}`, { method: 'DELETE' })
+        } catch (err) {
+            console.error("Failed to delete session from backend", err)
+        }
+
         if (sessionId === id) {
             const rem = sessions.filter(s => s.id !== id)
             if (rem.length > 0) setSessionId(rem[0].id)
@@ -564,7 +597,9 @@ const Chat = () => {
             const aiMsg = {
                 id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: 'ai', sender: 'Twin Assistant',
                 text: data.output, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
-                source: data.intent?.toUpperCase() || 'AI', responseType: data.response_type, imageUrl: data.image_url
+                source: data.intent?.toUpperCase() || 'AI', responseType: data.response_type, imageUrl: data.image_url,
+                generatedFile: data.generated_file || null,
+                vizConfig: data.viz_config || null,
             }
             setMessages(prev => {
                 const newMessages = [...prev, aiMsg];
@@ -762,8 +797,8 @@ const Chat = () => {
                                 {[
                                     { icon: Mail, label: 'Summarize my inbox', prompt: 'Show me my most important unread emails' },
                                     { icon: Calendar, label: 'Check my schedule', prompt: "What meetings do I have today?" },
-                                    { icon: Zap, label: 'Send a Slack message', prompt: 'Send a quick update to my team channel on Slack' },
-                                    { icon: Sparkles, label: 'Generate an image', prompt: 'Generate a futuristic workspace image' },
+                                    { icon: Zap, label: 'Generate a report', prompt: 'Generate a PDF report on my AI Twin activity for this month' },
+                                    { icon: Sparkles, label: 'Visualize data', prompt: 'Create a bar chart showing monthly revenue trends for a SaaS company' },
                                 ].map(({ icon: Icon, label, prompt }) => (
                                     <button
                                         key={label}

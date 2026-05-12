@@ -5,7 +5,7 @@ import {
   Sparkles, Zap, Wand2, Shield, Loader2, Users, 
   MessageSquare, HardDrive, Settings, Activity as ActivityIcon,
   Home, Check, X, Clock, Paperclip, Mic as MicIcon, MicOff,
-  File as FileIcon, Calendar, Mail, ExternalLink, Image
+  File as FileIcon, Calendar, Mail, ExternalLink, Image, Trash2
 } from 'lucide-react'
 import { apiFetch } from '../utils/apiClient'
 import { useStore } from '../store/useStore'
@@ -175,7 +175,7 @@ function MessageBubble({ msg, isOwn, onAction, user }) {
           
           {hasImage && metadata.image_url ? (
             <div className="space-y-3">
-              <SimpleMarkdown>{cleanText}</SimpleMarkdown>
+              {cleanText && <SimpleMarkdown>{cleanText}</SimpleMarkdown>}
               <ImageLoader src={metadata.image_url} />
               <div className="flex justify-end mt-2">
                 <a href={metadata.image_url} target="_blank" rel="noreferrer" 
@@ -185,8 +185,43 @@ function MessageBubble({ msg, isOwn, onAction, user }) {
               </div>
             </div>
           ) : (
-            <div className="break-words">
-              <SimpleMarkdown>{cleanText}</SimpleMarkdown>
+            cleanText ? (
+              <div className="break-words">
+                <SimpleMarkdown>{cleanText}</SimpleMarkdown>
+              </div>
+            ) : null
+          )}
+
+          {metadata.files && metadata.files.length > 0 && (
+            <div className="flex flex-col gap-2 mt-3">
+              {metadata.files.map((f, i) => {
+                const isImage = f.type?.startsWith('image/')
+                const isVideo = f.type?.startsWith('video/')
+                const isAudio = f.type?.startsWith('audio/')
+                return (
+                  <div key={i} className="w-full">
+                    {isImage ? (
+                      <div className="rounded-xl overflow-hidden border border-white/10">
+                        <img src={f.data} alt={f.name} className="w-full h-auto max-h-[300px] object-cover" />
+                      </div>
+                    ) : isVideo ? (
+                      <div className="rounded-xl overflow-hidden border border-white/10 bg-black/50">
+                        <video src={f.data} controls className="w-full h-auto max-h-[300px]" />
+                      </div>
+                    ) : isAudio ? (
+                      <div className="w-full">
+                        <audio src={f.data} controls className="w-full" />
+                      </div>
+                    ) : (
+                      <a href={f.data} download={f.name} className="flex items-center gap-2 p-2.5 rounded-xl bg-black/20 hover:bg-black/30 border border-white/10 transition-colors">
+                        <FileIcon size={16} className="text-primary" />
+                        <span className="text-xs truncate flex-1 font-semibold">{f.name}</span>
+                        <ExternalLink size={12} className="text-white/50" />
+                      </a>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
 
@@ -198,28 +233,40 @@ function MessageBubble({ msg, isOwn, onAction, user }) {
                  actionData.intent === 'telegram' ? <MessageSquare size={14} className="text-secondary" /> : 
                  <Calendar size={14} className="text-secondary" />}
                 <span className="text-[10px] font-bold uppercase tracking-widest text-white/60">
-                  {actionData.intent} Suggestion
+                  {actionData.intent} Proposal
                 </span>
               </div>
               <h4 className="text-xs font-bold text-white mb-1">{actionData.subject || actionData.title || 'Action'}</h4>
               <p className="text-[10px] text-white/50 line-clamp-2 italic mb-3">{actionData.body || actionData.description}</p>
               
-              {isExecuted ? (
+              {isOwn ? (
+                <div className="py-1.5 text-[10px] font-bold rounded-lg flex items-center justify-center gap-2 border bg-black/10 text-white/50 border-white/10">
+                  <Clock size={12} /> Waiting for partner to accept
+                </div>
+              ) : isExecuted ? (
                 <div className="py-1.5 text-[10px] font-bold rounded-lg flex items-center justify-center gap-2 border bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-                  <Check size={12} /> Executed
+                  <Check size={12} /> Accepted & Executed
                 </div>
               ) : (
-                <button
-                  disabled={isProcessing}
-                  onClick={async () => {
-                    setIsProcessing(true)
-                    await onAction('approve', actionData, msg.id)
-                    setIsExecuted(true)
-                    setIsProcessing(false)
-                  }}
-                  className="w-full py-1.5 text-white text-[10px] font-bold rounded-lg bg-primary hover:brightness-110 flex items-center justify-center gap-2 transition-all">
-                  {isProcessing ? <Loader2 size={12} className="animate-spin" /> : 'Execute Action'}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    disabled={isProcessing}
+                    onClick={async () => {
+                      setIsProcessing(true)
+                      await onAction('approve', actionData, msg.id)
+                      setIsExecuted(true)
+                      setIsProcessing(false)
+                    }}
+                    className="flex-1 py-1.5 text-white text-[10px] font-bold rounded-lg bg-primary hover:brightness-110 flex items-center justify-center gap-2 transition-all">
+                    {isProcessing ? <Loader2 size={12} className="animate-spin" /> : 'Accept'}
+                  </button>
+                  <button
+                    disabled={isProcessing}
+                    onClick={() => setIsExecuted(true)}
+                    className="py-1.5 px-3 text-white text-[10px] font-bold rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 flex items-center justify-center gap-2 transition-all">
+                    Decline
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -296,7 +343,7 @@ function SuggestionsPanel({ data, onApprove, onDismiss, partnerName }) {
 }
 
 // ─── Chat View (right panel) ─────────────────────────────────────
-function ChatPanel({ session, onBack, wsSend, wsEvent }) {
+function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
   const { auth, preferences } = useStore()
   const user = auth.user
   const [messages, setMessages] = useState([])
@@ -455,7 +502,8 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
         setPendingSuggestion({
           suggestions: data.suggestion.suggestions_json ? JSON.parse(data.suggestion.suggestions_json) : [],
           msgId: data.suggestion.id,
-          respondingTo: text
+          respondingTo: text,
+          isEnhancement: true
         })
       }
     } catch (e) { console.error(e) }
@@ -493,6 +541,17 @@ function ChatPanel({ session, onBack, wsSend, wsEvent }) {
           <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-bold uppercase tracking-wider flex items-center gap-1">
             <Sparkles size={10} /> Active
           </span>
+          <button 
+            onClick={() => {
+              if (window.confirm('Are you sure you want to permanently delete this Twin Chat conversation?')) {
+                onDeleteSession(session.id)
+              }
+            }}
+            className="p-1.5 text-red-400 hover:bg-red-400/10 rounded-lg transition-colors ml-1"
+            title="Delete Chat"
+          >
+            <Trash2 size={15} />
+          </button>
         </div>
       </div>
 
@@ -849,6 +908,16 @@ export default function TwinChat() {
           wsSend={wsSend}
           wsEvent={lastWsEvent}
           onBack={() => setMobileShowChat(false)} 
+          onDeleteSession={async (id) => {
+            try {
+              await apiFetch(`/twin-chat/sessions/${id}`, { method: 'DELETE' })
+              setSessions(prev => prev.filter(s => s.id !== id))
+              setActiveSessionId(null)
+              setMobileShowChat(false)
+            } catch (err) {
+              console.error("Failed to delete chat", err)
+            }
+          }}
         />
       </div>
 

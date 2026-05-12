@@ -248,6 +248,27 @@ def soft_delete_user(
     db.commit()
     return {"status": "success", "message": f"User {user.email} soft deleted"}
 
+@router.post("/users/{user_id}/restore")
+def restore_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_active = True
+    _log_admin_action(
+        db=db,
+        actor_user_id=current_admin.id,
+        action_type="admin_user_restored",
+        target_user_id=user_id,
+        details=f"Restored user {user_id}",
+    )
+    db.commit()
+    return {"status": "success", "message": f"User {user.email} restored"}
+
 
 @router.delete("/users/{user_id}/permanent")
 def permanent_delete_user(

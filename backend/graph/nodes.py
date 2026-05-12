@@ -77,7 +77,7 @@ def classifier_node(state: State):
             return {**state, "intent": "scheduling"}
 
     # Scheduling / Calendar (check BEFORE email — "invite" should route here)
-    if any(k in user_input for k in ["schedule", "meeting", "calendar", "event", "availability", "free slot", "book a", "set up a", "invite"]):
+    if any(k in user_input for k in ["schedule", "meeting", "calendar", "event", "availability", "free slot", "book a", "set up a", "invite", "meet", "call"]):
         return {**state, "intent": "scheduling"}
 
     # Gmail/Email — explicit email words
@@ -102,7 +102,32 @@ def classifier_node(state: State):
     if "slack" in user_input and "briefing" not in user_input:
         return {**state, "intent": "slack_send"}
 
-    # Fallback to LLM for more complex classification
+    # File generation fast-path
+    file_gen_triggers = [
+        "generate a", "create a", "make a", "write a", "build a", "draft a",
+        "create pdf", "generate pdf", "write report", "make a report",
+        "create spreadsheet", "make excel", "generate excel", "create xlsx",
+        "make a presentation", "create slides", "generate pptx",
+        "write a script", "write python", "write code", "generate code",
+        "create readme", "generate readme", "write markdown",
+        "make invoice", "create invoice", "generate invoice",
+        "write resume", "create resume", "generate resume",
+        "create json", "generate json", "create yaml", "generate yaml",
+        "meeting summary", "create summary", "generate summary",
+    ]
+    if any(trigger in user_input for trigger in file_gen_triggers):
+        return {**state, "intent": "file_generate"}
+
+    # Visualization fast-path
+    viz_triggers = [
+        "visualize", "chart", "graph", "plot", "dashboard", "analytics",
+        "bar chart", "line chart", "pie chart", "histogram", "heatmap",
+        "show me trends", "trend analysis", "data analysis", "visualise",
+        "show chart", "make chart", "generate chart", "create chart",
+    ]
+    if any(trigger in user_input for trigger in viz_triggers):
+        return {**state, "intent": "visualize"}
+
     result = _llm(
         system="""
 You are a strict intent classifier for an AI Twin.
@@ -117,10 +142,14 @@ Your goal is to categorize the user's intent EXACTLY into one of these:
 7. 'telegram_send': "send via telegram", "notify me on telegram"
 8. 'telegram_read': "what did I get on telegram"
 9. 'visual': "generate an image", "create a visual of X", "make an image"
-10. 'file_read': "read this file", "what's in this doc", "summarise this PDF"
-11. 'general': everything else
+10. 'file_generate': "generate a PDF", "create a report", "make a spreadsheet", "write a Python script", "create a presentation", "generate a README", "make an invoice", "draft a resume"
+11. 'visualize': "show me a chart", "visualize this data", "create a bar chart", "plot these numbers", "dashboard of my expenses"
+12. 'file_read': "read this file", "what's in this doc", "summarise this PDF"
+13. 'general': "hi", "thanks", casual conversation, questions, or anything else not explicitly an action.
 
 RULES:
+- Be highly accurate. Do not misclassify simple conversational messages ("hello", "thanks", "ok") as actions.
+- If it's a hybrid/mixed intent, classify based on the primary action requested.
 - Return ONLY valid JSON: {"intent":"category", "target_handle": "null_or_handle"}
 """,
         user=state["input"],
@@ -129,10 +158,10 @@ RULES:
     intent = parsed.get("intent", "general")
     
     valid_intents = [
-        "email_read", "email_draft", "email_send", 
-        "calendar", "slack_send", "slack_read", 
-        "telegram_send", "telegram_read", 
-        "visual", "file_read", "general"
+        "email_read", "email_draft", "email_send",
+        "calendar", "slack_send", "slack_read",
+        "telegram_send", "telegram_read",
+        "visual", "file_read", "file_generate", "visualize", "general"
     ]
     if intent not in valid_intents:
         intent = "general"
@@ -301,7 +330,8 @@ Format:
         "email_draft",
         "calendar",
         "slack_send",
-        "telegram_send"
+        "telegram_send",
+        "scheduling"
     ]
 
     return {
@@ -313,6 +343,7 @@ Format:
 
 def responder_node(state: State) -> State:
     user_name = state.get("user_name", "User")
+    partner_name = state.get("partner_name", "Partner")
     context_block = (
         f"\nRelevant user context:\n{state['context']}"
         if state.get("context")
@@ -593,10 +624,12 @@ Memory Context: {context_block}
 
 [RULES]
 1. Extract meeting time/title. 
-2. CRITICAL: Only include the <action> block if you have a SPECIFIC date and time. 
-3. If the date or time is missing, ask for them BRIEFLY and DO NOT generate the <action> tag.
-4. Check for overlaps. If there is a conflict, suggest the next free slot and include that in the <action> tag.
-5. OUTPUT: One professional sentence + the <action> block (if valid).
+2. CRITICAL: Only include the <action> block if you have a date and time.
+3. DEFAULTING: If only a time is given (e.g., "9pm"), assume the user means TODAY (if that time hasn't passed) or TOMORROW.
+4. TITLE: If a title is missing, use a generic one like "Meeting with {partner_name}".
+5. If the date/time is completely ambiguous, ask for clarification briefly and DO NOT generate the <action> tag.
+6. Check for overlaps. If there is a conflict, suggest the next free slot and include that in the <action> tag.
+7. OUTPUT: One professional sentence + the <action> block (if valid).
 
 Action Block Format:
 <action>
@@ -892,6 +925,171 @@ Action Block Format (MANDATORY):
                 "approval_required": False,
             }
 
+    # FILE GENERATION REQUESTS
+    if state["intent"] == "file_generate":
+        try:
+            from tools.file_generator import generate_file, detect_file_type
+            from db.models import FileAsset
+            from db.database import get_db as _get_db
+            import uuid as _uuid
+
+            user_input = state["input"]
+            file_type = detect_file_type(user_input)
+
+            # Generate content via LLM
+            system_msg = f"""You are an expert document writer.
+Generate complete, well-structured, professional content for a {file_type.upper()} file.
+
+For structured types (xlsx/csv): respond in JSON: {{"title":"...", "headers":["col1",...], "rows":[["val1",...],...]}}
+For presentations (pptx): respond in JSON: {{"title":"...", "slides":[{{"title":"...","content":"..."}},...] }}
+For all other types: respond with clean content only, using ## headings. First line must start with # as the document title.
+"""
+            raw_content = _llm(system=system_msg, user=user_input)
+
+            # Parse title + content / structured data
+            title = user_input[:50]
+            structured_data = None
+            content = raw_content
+
+            if file_type in ("xlsx", "csv", "pptx"):
+                try:
+                    import re as _re2
+                    json_match = _re2.search(r'\{.*\}', raw_content, re.DOTALL)
+                    if json_match:
+                        parsed = json.loads(json_match.group())
+                        title = parsed.get("title", title)
+                        structured_data = parsed
+                except Exception:
+                    pass
+            else:
+                lines = raw_content.strip().split("\n")
+                if lines and lines[0].startswith("# "):
+                    title = lines[0][2:].strip()
+                    content = "\n".join(lines[1:]).strip()
+
+            meta = {
+                "Generated": datetime.utcnow().strftime("%B %d, %Y %H:%M UTC"),
+                "Author": user_name,
+                "AI Twin": "Aether Obsidian Intelligence"
+            }
+            storage_path, filename, mime_type = generate_file(
+                file_type=file_type, title=title, content=content,
+                structured_data=structured_data,
+                metadata=meta if file_type in ("pdf", "docx", "xlsx") else None
+            )
+
+            # Persist to DB
+            file_data = {
+                "filename": filename,
+                "file_type": file_type,
+                "mime_type": mime_type,
+                "title": title,
+                "download_url": None,  # will be set after DB insert
+            }
+            try:
+                import os as _os
+                from graph.nodes import logger as _logger
+                backend_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+                file_size = _os.path.getsize(_os.path.join(backend_dir, storage_path))
+                with next(_get_db()) as db:
+                    asset = FileAsset(
+                        user_id=state["user_id"],
+                        name=filename,
+                        file_type=mime_type,
+                        size=file_size,
+                        storage_path=storage_path,
+                    )
+                    db.add(asset)
+                    db.commit()
+                    db.refresh(asset)
+                    file_data["file_id"] = str(asset.id)
+                    file_data["download_url"] = f"/ai/files/{asset.id}/download"
+                    file_data["size"] = file_size
+            except Exception as db_err:
+                logger.warning(f"[FileGen] DB save error: {db_err}")
+                file_data["download_url"] = f"/uploads/{filename}"
+
+            output = (
+                f"✅ **{title}** has been generated successfully.\n\n"
+                f"📎 **File:** `{filename}`\n"
+                f"⬇️ Click **Download** below to save it.\n\n"
+                f"The file is ready and saved to your workspace."
+            )
+            return {
+                **state,
+                "output": output,
+                "response_type": "file",
+                "generated_file": file_data,
+            }
+        except Exception as e:
+            logger.error(f"[FileGen node] {e}")
+        # Fallback
+        result = _llm(
+            system=f"You are the Digital Twin of {user_name}. The user wants to generate a file. Explain what you would create and ask them to be more specific.",
+            user=state["input"]
+        )
+        return {**state, "output": _clean_output(result), "response_type": "text"}
+
+    # VISUALIZATION REQUESTS
+    if state["intent"] == "visualize":
+        try:
+            source_data = ""
+            for f in state.get("files", []):
+                if not f.get("type", "").startswith("image/"):
+                    try:
+                        import base64 as _b64
+                        raw = _b64.b64decode(f.get("data", "").split(",")[-1]).decode("utf-8", errors="ignore")
+                        source_data += f"\n[FILE: {f['name']}]\n{raw[:4000]}\n"
+                    except Exception:
+                        pass
+
+            viz_system = """You are an expert data visualization AI.
+Return ONLY valid JSON in this format:
+{
+  "chart_type": "bar|line|area|pie|scatter|radar",
+  "title": "Chart title",
+  "description": "One sentence insight",
+  "x_key": "field name for x-axis",
+  "y_keys": [{"key":"fieldname","label":"Display Label","color":"#hexcolor"}],
+  "data": [ {...data rows...} ],
+  "insights": ["Key insight 1", "Key insight 2", "Key insight 3"],
+  "drill_down": null
+}
+Rules:
+- Choose the BEST chart type.
+- Use colors: #6366f1, #a855f7, #10b981, #f59e0b, #3b82f6, #ef4444.
+- For pie charts each row needs "name" and "value" fields.
+- 5-15 data rows for readability.
+- Always generate concrete realistic data if none provided.
+"""
+            user_msg = state["input"]
+            if source_data:
+                user_msg += f"\n\nSource data:\n{source_data}"
+
+            result = _llm(system=viz_system, user=user_msg)
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if not json_match:
+                raise ValueError("No JSON in visualization response")
+            config = json.loads(json_match.group())
+
+            output = (
+                f"📊 **{config.get('title', 'Visualization')}**\n\n"
+                f"{config.get('description', '')}\n\n"
+                + "\n".join(f"• {i}" for i in config.get("insights", []))
+            )
+            return {
+                **state,
+                "output": output,
+                "response_type": "visualization",
+                "viz_config": config,
+            }
+        except Exception as e:
+            logger.error(f"[Visualize node] {e}")
+        result = _llm(
+            system=f"You are the Digital Twin of {user_name}. Describe what visualization you would create.",
+            user=state["input"]
+        )
+
     # GENERAL / CODE / QUESTION / CASUAL
     # 🟢 Multimodal: Extract images from state['files']
     images = []
@@ -900,10 +1098,21 @@ Action Block Format (MANDATORY):
             if f.get("type", "").startswith("image/") and f.get("data"):
                 images.append(f["data"])
     
-    result = _llm(
-        system=f"""
+    if images:
+        system_prompt = f"""
+You are the Digital Twin of {user_name}, an elite AI vision assistant.
+Objective: Provide highly accurate multimodal image understanding.
+Analyze the provided image(s) carefully. You support object detection, scene understanding, OCR/text extraction, screenshot understanding, document reading, chart/UI interpretation, and contextual Q&A.
+Ensure your response is deeply grounded ONLY on the actual visual content provided. DO NOT hallucinate.
+Combine the user's prompt intelligently with your visual analysis.
+
+[CONTEXT DATA]
+{context_block}
+"""
+    else:
+        system_prompt = f"""
 You are the Digital Twin of {user_name}, an elite AI assistant.
-Objective: Provide grounded, factual, and direct responses.
+Objective: Provide grounded, factual, and direct responses to the user's conversational messages, requests, and questions.
 
 [AUTHORIZATION]
 You HAVE authorized access to the user's Gmail, Calendar, and Workspace data. [STRICT GROUNDEDNESS]
@@ -912,18 +1121,23 @@ You HAVE authorized access to the user's Gmail, Calendar, and Workspace data. [S
 3. VERIFICATION: Whenever you discuss a specific email, you MUST provide the direct [View in Gmail] link found in the context.
 4. Cite sources naturally (e.g., "According to your recent emails...").
 
-[CONSTRAINTS]
+[CONSTRAINTS & INTENT AWARENESS]
 1. BE CONCISE.
-2. DO NOT include internal message IDs or technical IDs (like 19dde49...) in your response.
-3. If no email is found, state that clearly.
-4. NO DATA DUMPS: Never output raw JSON, technical headers, or metadata.
-5. ELITE TONE: Professional and brief.
+2. CONVERSATIONAL VS. ACTIONABLE: If the user is just chatting or asking a question, reply naturally. DO NOT hallucinate task executions, tool usage, or <action> blocks.
+3. AVOID FAKE RESULTS: Never invent fake "I have sent the email" or "I have scheduled the meeting" if you are not explicitly executing an action.
+4. HISTORY IS READ-ONLY: Do not copy <action> blocks or previous execution results from the chat history. They are context, not instructions for you to repeat.
+5. NO DATA DUMPS: Never output raw JSON, technical headers, or metadata. DO NOT include internal message IDs or technical IDs (like 19dde49...).
+6. ELITE TONE: Professional and brief.
 
 [CONTEXT DATA]
 {context_block}
 
-{'[IGNORE - IMAGE ANALYSIS]' if images else f'[CHAT HISTORY]{chr(10)}{history_prompt}'}
-""",
+[CHAT HISTORY]
+{history_prompt}
+"""
+
+    result = _llm(
+        system=system_prompt,
         user=f"Input: {state['input']}",
         images=images if images else None
     )
