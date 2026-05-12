@@ -60,7 +60,7 @@ from security.middleware import SecurityHeadersMiddleware
 from security.rate_limit import limiter
 from core.config import settings
 from utils.upload import validate_and_save_upload
-import magic
+import mimetypes
 import werkzeug.utils
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded

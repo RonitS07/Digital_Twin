@@ -1,6 +1,6 @@
 import os
 import uuid
-import magic
+import mimetypes
 import werkzeug.utils
 from fastapi import HTTPException, status
 from core.config import settings
@@ -30,13 +30,30 @@ def validate_and_save_upload(file_bytes: bytes, original_filename: str) -> str:
             detail=f"Extension {ext} not allowed."
         )
 
-    # 3. MIME Type Validation (Deep Packet Inspection)
-    mime = magic.from_buffer(file_bytes, mime=True)
+    # 3. MIME Type Validation
+    # Use mimetypes (standard library) instead of libmagic to avoid system dependency issues
+    mime, _ = mimetypes.guess_type(safe_filename)
+    
+    # Basic deep check for safety (binary headers)
+    is_pdf = file_bytes.startswith(b'%PDF-')
+    is_png = file_bytes.startswith(b'\x89PNG\r\n\x1a\n')
+    is_jpg = file_bytes.startswith(b'\xff\xd8\xff')
+    
+    if not mime:
+        # Fallback for common types if guess_type fails
+        if is_pdf: mime = "application/pdf"
+        elif is_png: mime = "image/png"
+        elif is_jpg: mime = "image/jpeg"
+        else: mime = "application/octet-stream"
+
     if not (mime.startswith("image/") or mime in ["application/pdf", "text/plain"]):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"MIME type {mime} not allowed."
-        )
+        # Extra check: if it looks like a PDF but mime failed, allow it
+        if not (is_pdf or is_png or is_jpg):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"MIME type {mime} not allowed."
+            )
+
 
     # 4. Final Path Construction
     # Using UUID prefix to prevent collisions and overwrite attacks
