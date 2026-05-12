@@ -987,10 +987,8 @@ For all other types: respond with clean content only, using ## headings. First l
                 "download_url": None,  # will be set after DB insert
             }
             try:
-                import os as _os
-                from graph.nodes import logger as _logger
-                backend_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-                file_size = _os.path.getsize(_os.path.join(backend_dir, storage_path))
+                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                file_size = os.path.getsize(os.path.join(backend_dir, storage_path))
                 with next(_get_db()) as db:
                     asset = FileAsset(
                         user_id=state["user_id"],
