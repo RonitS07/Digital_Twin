@@ -116,7 +116,7 @@ Generate the enrichment and suggested replies now."""
 
     # ── 4. Call LLM ──────────────────────────────────────────────────
     try:
-        raw = _llm(system=system_prompt, user=user_prompt, intent="other")
+        raw = _llm(system=system_prompt, user=user_prompt, intent="other", force_fast=True)
         # Strip markdown fences if present
         cleaned = raw.strip()
         if "```json" in cleaned:

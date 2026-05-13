@@ -27,6 +27,17 @@ import { useStore } from '../store/useStore'
 import VisualizationRenderer from './VisualizationRenderer'
 import FileDownloadCard from './FileDownloadCard'
 
+const INTENT_OPTIONS = [
+    { key: 'general', label: 'General' },
+    { key: 'email', label: 'Email' },
+    { key: 'calendar', label: 'Schedule' },
+    { key: 'visual', label: 'Image' },
+    { key: 'file_generate', label: 'Create File' },
+    { key: 'file_read', label: 'Analyze File' },
+    { key: 'slack', label: 'Slack' },
+    { key: 'telegram', label: 'Telegram' },
+]
+
 // Lightweight zero-dep markdown renderer
 const SimpleMarkdown = ({ children }) => {
     if (!children) return null
@@ -226,7 +237,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
             <div className={`flex flex-col gap-1.5 lg:gap-2 max-w-[85%] lg:max-w-2xl ${isAi ? '' : 'items-end'}`}>
                 <div className={`flex items-center gap-2 lg:gap-3 ${isAi ? '' : 'flex-row-reverse'}`}>
                     <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral/70">
-                        {isAi ? 'Twin Assistant' : 'Executive User'}
+                        {isAi ? 'Assistant' : 'Executive User'}
                     </span>
                     {msg.status && (
                         <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary/10 border border-primary/20">
@@ -274,16 +285,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                         <div className="space-y-3 lg:space-y-4">
                             <SimpleMarkdown>{cleanText}</SimpleMarkdown>
                             <ImageLoader src={msg.imageUrl} />
-                            <div className="flex justify-end mt-2">
-                                <a 
-                                    href={msg.imageUrl} 
-                                    target="_blank" 
-                                    rel="noreferrer" 
-                                    className="text-[10px] font-black uppercase tracking-widest text-primary/60 hover:text-primary transition-colors flex items-center gap-1.5"
-                                >
-                                    <ExternalLink size={10} /> View Full Image
-                                </a>
-                            </div>
+                            
                         </div>
                     ) : (
                         <div className="text-sm leading-relaxed break-words">
@@ -292,7 +294,9 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                     )}
 
                     {/* Generated file card */}
-                    {msg.generatedFile && <FileDownloadCard fileData={msg.generatedFile} />}
+                    {msg.generatedFile && msg.responseType !== 'visual' && msg.response_type !== 'visual' && (
+                        <FileDownloadCard fileData={msg.generatedFile} />
+                    )}
 
                     {/* Interactive visualization */}
                     {(msg.responseType === 'visualization' || msg.response_type === 'visualization') && msg.vizConfig && (
@@ -410,6 +414,7 @@ const Chat = () => {
     const user = auth.user || {}
     const [messages, setMessages] = useState([])
     const [input, setInput] = useState('')
+    const [selectedIntent, setSelectedIntent] = useState('general')
     const [loading, setLoading] = useState(false)
     const [attachedFiles, setAttachedFiles] = useState([])
     const endRef = useRef(null)
@@ -419,7 +424,7 @@ const Chat = () => {
         const saved = localStorage.getItem(`chat_sessions_${user.uid}`)
         return saved ? JSON.parse(saved) : []
     })
-    const [sessionId, setSessionId] = useState('')
+    const [sessionId, setSessionId] = useState(() => localStorage.getItem(`chat_active_session_${user.uid || 'anon'}`) || '')
     const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024)
     const [sessionSearch, setSessionSearch] = useState('')
     const [isListening, setIsListening] = useState(false)
@@ -478,8 +483,8 @@ const Chat = () => {
                     setMessages(mapped);
                 } else {
                     setMessages([{
-                        id: 'init', role: 'ai', sender: 'Twin Assistant',
-                        text: `Hello ${user.name?.split(' ')[0] || 'there'}. I'm your AI Twin. How can I assist you?`,
+                        id: 'init', role: 'ai', sender: 'Assistant',
+                        text: `Hello ${user.name?.split(' ')[0] || 'there'}. How can I assist you?`,
                         time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
                     }]);
                 }
@@ -504,6 +509,12 @@ const Chat = () => {
     }, [sessionId, loadMessages]);
 
     useEffect(() => {
+        if (user.uid && sessionId) {
+            localStorage.setItem(`chat_active_session_${user.uid}`, sessionId);
+        }
+    }, [user.uid, sessionId]);
+
+    useEffect(() => {
         endRef.current?.scrollIntoView({ behavior: 'smooth' })
     }, [messages])
 
@@ -511,8 +522,8 @@ const Chat = () => {
         const sid = newSessionId()
         setSessionId(sid)
         const initMsg = [{
-            id: 'init', role: 'ai', sender: 'Twin Assistant',
-            text: `Hello. I'm your AI Twin. Start New Session.`,
+            id: 'init', role: 'ai', sender: 'Assistant',
+            text: `Hello. Start a new session whenever you're ready.`,
             time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
         }]
         setMessages(initMsg)
@@ -591,11 +602,13 @@ const Chat = () => {
                     session_id: sessionId,
                     gmail_sync: preferences.gmailSync !== false,
                     calendar_sync: preferences.calendarSync !== false,
-                    files: currentFiles
+                    slack_sync: preferences.slackSync !== false,
+                    files: currentFiles,
+                    intent_hint: selectedIntent
                 })
             })
             const aiMsg = {
-                id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: 'ai', sender: 'Twin Assistant',
+                id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: 'ai', sender: 'Assistant',
                 text: data.output, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
                 source: data.intent?.toUpperCase() || 'AI', responseType: data.response_type, imageUrl: data.image_url,
                 generatedFile: data.generated_file || null,
@@ -624,7 +637,7 @@ const Chat = () => {
     const handleAction = async (action, actionData) => {
         if (action === 'reject') {
             setMessages(prev => [...prev, {
-                role: 'ai', sender: 'Twin Assistant', 
+                role: 'ai', sender: 'Assistant', 
                 text: `### ❌ Task Cancelled\n\n*The proposed action (${actionData.intent}) has been rejected and will not be executed.*`,
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
             }])
@@ -634,7 +647,7 @@ const Chat = () => {
 
         if (!token) {
             setMessages(prev => [...prev, {
-                role: 'ai', sender: 'Twin Assistant',
+                role: 'ai', sender: 'Assistant',
                 text: '⚠️ **Session expired.** Please refresh the page and sign in again.',
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
             }]);
@@ -656,7 +669,7 @@ const Chat = () => {
             })
 
             setMessages(prev => [...prev, {
-                role: 'ai', sender: 'Twin Assistant', 
+                role: 'ai', sender: 'Assistant', 
                 text: `### ✅ Execution Successful\n\n**Action:** ${
                     actionData.intent === 'email' ? 'Email sent to ' + actionData.to : 
                     actionData.intent === 'slack' ? 'Slack message posted to #' + (actionData.channel_name || actionData.channel_id) :
@@ -667,7 +680,7 @@ const Chat = () => {
             }])
         } catch (err) {
             setMessages(prev => [...prev, {
-                role: 'ai', sender: 'Twin Assistant',
+                role: 'ai', sender: 'Assistant',
                 text: `❌ **Execution Failed:** ${err.message}`,
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
             }])
@@ -707,7 +720,7 @@ const Chat = () => {
                             </button>
                             <button
                                 onClick={() => {
-                                    const text = messages.map(m => `${m.role === 'ai' ? 'AI Twin' : 'You'} (${m.time}):\n${m.text}`).join('\n\n---\n\n');
+                                    const text = messages.map(m => `${m.role === 'ai' ? 'Assistant' : 'You'} (${m.time}):\n${m.text}`).join('\n\n---\n\n');
                                     const blob = new Blob([text], { type: 'text/plain' });
                                     const url = URL.createObjectURL(blob);
                                     const a = document.createElement('a'); a.href = url;
@@ -778,7 +791,7 @@ const Chat = () => {
                             <img src="/logo.png" alt="Logo" className="w-full h-full object-cover" />
                         </div>
                         <div>
-                            <h2 className="font-manrope font-extrabold text-base tracking-tight">AI Twin</h2>
+                            <h2 className="font-manrope font-extrabold text-base tracking-tight">Assistant</h2>
                             <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" /><span className="text-[10px] text-neutral font-bold uppercase tracking-widest">{sessions.find(s => s.id === sessionId)?.title || 'New Conversation'}</span></div>
                         </div>
                     </div>
@@ -797,7 +810,7 @@ const Chat = () => {
                                 {[
                                     { icon: Mail, label: 'Summarize my inbox', prompt: 'Show me my most important unread emails' },
                                     { icon: Calendar, label: 'Check my schedule', prompt: "What meetings do I have today?" },
-                                    { icon: Zap, label: 'Generate a report', prompt: 'Generate a PDF report on my AI Twin activity for this month' },
+                                    { icon: Zap, label: 'Generate a report', prompt: 'Generate a PDF report on my assistant activity for this month' },
                                     { icon: Sparkles, label: 'Visualize data', prompt: 'Create a bar chart showing monthly revenue trends for a SaaS company' },
                                 ].map(({ icon: Icon, label, prompt }) => (
                                     <button
@@ -845,6 +858,16 @@ const Chat = () => {
                                     ))}
                                 </div>
                             )}
+                            <div className="flex flex-wrap gap-2 px-4 pt-3 pb-2">
+                                {INTENT_OPTIONS.map(option => (
+                                    <button key={option.key}
+                                        type="button"
+                                        onClick={() => setSelectedIntent(option.key)}
+                                        className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-all ${selectedIntent === option.key ? 'bg-primary text-white' : 'bg-surface-container text-on-surface hover:bg-primary/10'}`}>
+                                        {option.label}
+                                    </button>
+                                ))}
+                            </div>
                             <div className="flex items-end gap-2 pl-4 lg:pl-5 pr-2 py-2">
                                 <textarea
                                     ref={textareaRef}

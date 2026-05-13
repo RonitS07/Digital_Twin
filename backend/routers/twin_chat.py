@@ -20,6 +20,7 @@ Endpoints:
 import json
 import logging
 import uuid
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -31,7 +32,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, desc
 
-from db.database import get_db
+from db.database import get_db, SessionLocal
 from db.models import User
 from db.twin_chat_models import DirectChatSession, DirectChatMessage
 from security.auth import get_current_user
@@ -90,6 +91,68 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+
+async def _generate_partner_suggestion_async(
+    session_id: str,
+    partner_id: str,
+    sender_id: str,
+    incoming_message: str,
+):
+    """Generate suggestions without blocking send-message response."""
+    db = SessionLocal()
+    try:
+        session = db.query(DirectChatSession).filter(DirectChatSession.id == session_id).first()
+        partner = db.query(User).filter(User.id == partner_id).first()
+        sender = db.query(User).filter(User.id == sender_id).first()
+        if not session or not partner or not sender:
+            return
+
+        recent_msgs = db.query(DirectChatMessage).filter(
+            DirectChatMessage.session_id == session_id,
+            DirectChatMessage.status != "rejected",
+        ).order_by(desc(DirectChatMessage.created_at)).limit(10).all()
+        history = _get_history_dicts(list(reversed(recent_msgs)))
+
+        enrichment_data = await asyncio.to_thread(
+            generate_twin_enrichment,
+            partner,
+            incoming_message,
+            history,
+            sender.name or "Sender",
+            sender.id,
+        )
+
+        suggestions = enrichment_data.get("suggestions") or []
+        if not suggestions:
+            return
+
+        twin_msg = DirectChatMessage(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            sender_id=partner_id,
+            sender_type="twin",
+            status="pending",
+            content=suggestions[0]["content"],
+            suggestions_json=json.dumps(suggestions),
+            memory_context=enrichment_data.get("enrichment", ""),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(twin_msg)
+        db.commit()
+        db.refresh(twin_msg)
+
+        await manager.send_to_user(partner_id, {
+            "event": "twin_suggestion",
+            "message": _serialize_message(twin_msg),
+            "enrichment": enrichment_data.get("enrichment", ""),
+            "responding_to": incoming_message,
+        })
+    except Exception as e:
+        logger.error(f"[TwinChat] Async partner enrichment failed: {e}")
+    finally:
+        db.close()
+
 # ────────────────────────────────────────────────────────────────────
 # Pydantic schemas
 # ────────────────────────────────────────────────────────────────────
@@ -103,6 +166,7 @@ class SendMessageRequest(BaseModel):
     sender_type: str = "human"   # human | twin
     status: str = "sent"
     files: Optional[List[dict]] = None
+    intent_hint: Optional[str] = None
 
 class SuggestRequest(BaseModel):
     incoming_message: str
@@ -122,6 +186,7 @@ class AIProcessRequest(BaseModel):
     gmail_sync: bool = True
     calendar_sync: bool = True
     slack_sync: bool = True
+    intent_hint: Optional[str] = None
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -368,6 +433,7 @@ async def send_message(
         "input": effective_input,
         "chat_history": chat_history,
         "intent": "other",
+        "intent_hint": body.intent_hint,
         "output": "",
         "task_plan": [],
         "approval_required": False,
@@ -462,51 +528,16 @@ async def send_message(
         "message": serialized,
     })
 
-    # Generate Twin enrichment for the PARTNER (recipient)
-    # This runs synchronously for now (can be moved to background task)
+    # Generate Twin enrichment for the partner asynchronously for faster UX.
     if not is_task and session.twin_mode:
-        try:
-            recent_msgs = db.query(DirectChatMessage).filter(
-                DirectChatMessage.session_id == session_id,
-                DirectChatMessage.status != "rejected",
-            ).order_by(desc(DirectChatMessage.created_at)).limit(10).all()
-            history = _get_history_dicts(list(reversed(recent_msgs)))
-
-            enrichment_data = generate_twin_enrichment(
-                user=partner,
+        asyncio.create_task(
+            _generate_partner_suggestion_async(
+                session_id=session_id,
+                partner_id=partner_id,
+                sender_id=current_user.id,
                 incoming_message=body.content,
-                conversation_history=history,
-                partner_name=current_user.name or "Sender",
-                partner_id=current_user.id,
             )
-
-            # Create a pending Twin suggestion message visible only to partner
-            if enrichment_data.get("suggestions"):
-                twin_msg = DirectChatMessage(
-                    id=str(uuid.uuid4()),
-                    session_id=session_id,
-                    sender_id=partner_id,
-                    sender_type="twin",
-                    status="pending",
-                    content=enrichment_data["suggestions"][0]["content"],
-                    suggestions_json=json.dumps(enrichment_data["suggestions"]),
-                    memory_context=enrichment_data.get("enrichment", ""),
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
-                )
-                db.add(twin_msg)
-                db.commit()
-                db.refresh(twin_msg)
-
-                # Only send Twin suggestion to the partner
-                await manager.send_to_user(partner_id, {
-                    "event": "twin_suggestion",
-                    "message": _serialize_message(twin_msg),
-                    "enrichment": enrichment_data.get("enrichment", ""),
-                    "responding_to": body.content,
-                })
-        except Exception as e:
-            logger.error(f"[TwinChat] Partner enrichment failed: {e}")
+        )
 
     return {"message": serialized}
 
@@ -774,6 +805,7 @@ async def ai_process_in_chat(
         "input": effective_input,
         "chat_history": chat_history,
         "intent": "other",
+        "intent_hint": body.intent_hint,
         "output": "",
         "task_plan": [],
         "approval_required": False,

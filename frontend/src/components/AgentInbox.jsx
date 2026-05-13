@@ -636,7 +636,7 @@ const AgentInbox = () => {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-sm font-bold text-on-surface truncate">{msg.sender?.name || 'Partner'}</p>
+                          <p className="text-sm font-bold text-on-surface truncate">{msg.sender_name || msg.sender?.name || 'Contact'}</p>
                           <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-widest">New Message</span>
                         </div>
                         <p className="text-sm text-on-surface-variant line-clamp-2">{msg.content}</p>

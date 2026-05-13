@@ -96,8 +96,10 @@ export const useStore = create(
                 theme: state.theme, 
                 preferences: state.preferences,
                 currentScreen: state.currentScreen,
+                view: state.view,
                 tasks: state.tasks,
                 unreadTwinChats: state.unreadTwinChats,
+                twinChatActiveSessionId: state.twinChatActiveSessionId,
             }),
         }
     )

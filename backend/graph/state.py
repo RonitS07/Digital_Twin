@@ -29,3 +29,7 @@ class State(TypedDict, total=False):
     viz_config: Optional[dict]
     # ── Auth passthrough for internal API calls ──────────────────────────────
     access_token: Optional[str]
+    # ── MCP executor output (Sprint 3) ───────────────────────────────────────
+    tool_result: Optional[dict]
+    execution_error: Optional[str]
+    style_context: Optional[str]

@@ -57,7 +57,7 @@ const HelpModal = ({ onClose }) => (
                 </div>
 
                 <div>
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral mb-3 flex items-center gap-2"><Zap size={14} /> AI Twin Commands</h3>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral mb-3 flex items-center gap-2"><Zap size={14} /> Assistant Commands</h3>
                     <div className="space-y-2">
                         {[
                             ['"Draft an email to..."', 'Compose & send email'],
@@ -141,7 +141,7 @@ const TaskModal = ({ onClose }) => {
                     </div>
                     <div>
                         <label className="text-[10px] uppercase font-bold text-neutral tracking-widest pl-1 mb-1 block">Description</label>
-                        <textarea value={desc} onChange={e => setDesc(e.target.value)} rows="2" className="w-full bg-surface-base border-none rounded-xl py-3 px-4 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none resize-none" placeholder="Provide context for the AI twin..." />
+                        <textarea value={desc} onChange={e => setDesc(e.target.value)} rows="2" className="w-full bg-surface-base border-none rounded-xl py-3 px-4 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none resize-none" placeholder="Provide context for the assistant..." />
                     </div>
                     <div>
                         <label className="text-[10px] uppercase font-bold text-neutral tracking-widest pl-1 mb-1 block">Priority</label>
@@ -161,7 +161,7 @@ const TaskModal = ({ onClose }) => {
                         </div>
                     </div>
                     <button type="submit" disabled={isDelegating} className="w-full py-4 bg-primary text-surface-base font-bold rounded-xl hover:brightness-110 active:scale-95 transition-transform flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest outline-none disabled:opacity-50">
-                        {isDelegating ? 'Delegating to AI Twin...' : 'Save Task'}
+                        {isDelegating ? 'Delegating to assistant...' : 'Save Task'}
                     </button>
                 </form>
             </motion.div>
@@ -267,6 +267,7 @@ const Layout = ({ children, currentView, setView }) => {
     const [agentUnread, setAgentUnread] = useState(0);
     const [isMoreOpen, setMoreOpen] = useState(false);
     const [isNotificationsOpen, setNotificationsOpen] = useState(false);
+    const [popupNotification, setPopupNotification] = useState(null);
     const wsRef = useRef(null);
 
     // Global Twin Chat WebSocket
@@ -291,12 +292,20 @@ const Layout = ({ children, currentView, setView }) => {
 
                         if (!(isViewingChat && isActiveSession)) {
                             addUnreadTwinChat(data.message);
+                            setPopupNotification({
+                                id: data.message.id,
+                                senderName: data.message.sender_name || 'New message',
+                                content: data.message.content || '',
+                            });
+                            setTimeout(() => {
+                                setPopupNotification(prev => (prev?.id === data.message.id ? null : prev));
+                            }, 3500);
                         }
                     }
                 } catch (err) {}
             };
             ws.onclose = () => {
-                if (alive) setTimeout(connect, 5000);
+                if (alive) setTimeout(connect, 1200);
             };
         };
         connect();
@@ -317,7 +326,7 @@ const Layout = ({ children, currentView, setView }) => {
             } catch { }
         };
         checkInbox();
-        const id = setInterval(checkInbox, 30000);
+        const id = setInterval(checkInbox, 10000);
         return () => clearInterval(id);
     }, [auth.user?.accessToken]);
 
@@ -347,16 +356,33 @@ const Layout = ({ children, currentView, setView }) => {
             <AnimatePresence>
                 {isTaskModalOpen && <TaskModal onClose={() => setTaskModalOpen(false)} />}
                 {isHelpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+                {popupNotification && (
+                    <motion.button
+                        key={popupNotification.id}
+                        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                        onClick={() => {
+                            setPopupNotification(null);
+                            setNotificationsOpen(true);
+                        }}
+                        className="fixed top-4 right-4 z-[120] w-[320px] text-left bg-surface-container/95 backdrop-blur-xl border border-neutral/15 rounded-2xl shadow-2xl p-3"
+                    >
+                        <p className="text-[10px] uppercase tracking-widest font-black text-primary mb-1">New Message</p>
+                        <p className="text-sm font-semibold text-on-surface truncate">{popupNotification.senderName}</p>
+                        <p className="text-xs text-on-surface-variant truncate">{popupNotification.content}</p>
+                    </motion.button>
+                )}
             </AnimatePresence>
 
             {/* ── DESKTOP SIDEBAR (hidden on mobile) ── */}
             <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-64 bg-surface-container border-r border-neutral/10 flex-col p-5 z-40">
                 <div className="flex items-center gap-3 mb-8 px-2">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden ai-glow">
-                        <img src="/logo.png" alt="AI Twin Logo" className="w-full h-full object-cover" />
+                        <img src="/logo.png" alt="Assistant Logo" className="w-full h-full object-cover" />
                     </div>
                     <div>
-                        <h1 className="text-primary font-manrope font-extrabold tracking-tighter text-base leading-tight uppercase">AI Twin</h1>
+                        <h1 className="text-primary font-manrope font-extrabold tracking-tighter text-base leading-tight uppercase">Assistant</h1>
                         <p className="text-[9px] text-neutral font-bold uppercase tracking-widest opacity-60">Control Center</p>
                     </div>
                 </div>
@@ -393,7 +419,7 @@ const Layout = ({ children, currentView, setView }) => {
                     {/* Mobile: logo + view title */}
                     <div className="flex items-center gap-3 lg:hidden">
                         <div className="w-8 h-8 rounded-xl flex items-center justify-center overflow-hidden ai-glow">
-                            <img src="/logo.png" alt="AI Twin Logo" className="w-full h-full object-cover" />
+                            <img src="/logo.png" alt="Assistant Logo" className="w-full h-full object-cover" />
                         </div>
                         <h1 className="text-on-surface font-manrope font-bold">{viewLabel}</h1>
                     </div>
@@ -467,14 +493,14 @@ const Layout = ({ children, currentView, setView }) => {
                                                         className="w-full text-left p-3 hover:bg-surface-base rounded-xl transition-colors flex items-start gap-3 group"
                                                     >
                                                         <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0 font-bold text-primary group-hover:bg-primary group-hover:text-white transition-colors">
-                                                            {msg.sender?.name?.[0] || '?'}
+                                                            {(msg.sender_name || msg.sender?.name || '?')[0]}
                                                         </div>
                                                         <div className="flex-1 min-w-0">
                                                             <p className="text-xs font-bold uppercase tracking-widest text-primary mb-0.5 flex justify-between">
                                                                 Twin Message
                                                                 <span className="text-[9px] text-neutral normal-case opacity-60">Just now</span>
                                                             </p>
-                                                            <p className="text-sm font-semibold text-on-surface truncate">{msg.sender?.name || 'Partner'}</p>
+                                                            <p className="text-sm font-semibold text-on-surface truncate">{msg.sender_name || msg.sender?.name || 'Contact'}</p>
                                                             <p className="text-xs text-on-surface-variant truncate">{msg.content}</p>
                                                         </div>
                                                     </button>

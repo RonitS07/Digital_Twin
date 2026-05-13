@@ -74,6 +74,9 @@ from services.agent_registry import register_agent
 # ── Twin-to-Twin Direct Chat ───────────────────────────────────────────────
 from db.twin_chat_models import DirectChatSession, DirectChatMessage  # register models
 from routers.twin_chat import router as twin_chat_router
+from mcp.servers import register_all_servers
+from mcp.registry import mcp_registry
+
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -830,6 +833,11 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 AI Twin Backend is starting up...")
+    register_all_servers()
+    logger.info(
+        f"[MCP] {len(mcp_registry.list_all_tools())} tools registered across "
+        f"{len(mcp_registry._servers)} servers"
+    )
     
     # 0. Initialize Firebase (CRITICAL for Auth)
     from security.firebase_config import initialize_firebase
@@ -879,6 +887,7 @@ class ProcessRequest(BaseModel):
     slack_sync: bool = True
     files: Optional[List[dict]] = Field(default_factory=list) # [{ name, type, data }]
     file_path: Optional[str] = None
+    intent_hint: Optional[str] = None
 
 class MemoryRequest(BaseModel):
     user_id: str
@@ -1166,6 +1175,7 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
         "input": effective_input,
         "chat_history": req.chat_history,
         "intent": "other",
+        "intent_hint": req.intent_hint,
         "output": "",
         "task_plan": [],
         "approval_required": False,

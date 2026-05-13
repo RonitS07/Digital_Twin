@@ -11,6 +11,17 @@ import { apiFetch } from '../utils/apiClient'
 import { useStore } from '../store/useStore'
 import { API_BASE } from '../config'
 
+const TWIN_INTENT_OPTIONS = [
+  { key: 'general', label: 'General' },
+  { key: 'email', label: 'Email' },
+  { key: 'calendar', label: 'Schedule' },
+  { key: 'visual', label: 'Image' },
+  { key: 'file_generate', label: 'Create File' },
+  { key: 'file_read', label: 'Analyze File' },
+  { key: 'slack', label: 'Slack' },
+  { key: 'telegram', label: 'Telegram' },
+]
+
 // ─── WebSocket Manager ───────────────────────────────────────────
 function useTwinChatWS(token, handlers) {
   const wsRef = useRef(null)
@@ -34,7 +45,7 @@ function useTwinChatWS(token, handlers) {
         } catch {}
       }
       ws.onclose = () => {
-        if (alive) reconnectRef.current = setTimeout(connect, 3000)
+        if (alive) reconnectRef.current = setTimeout(connect, 1200)
       }
       ws.onerror = () => ws.close()
     }
@@ -177,12 +188,7 @@ function MessageBubble({ msg, isOwn, onAction, user }) {
             <div className="space-y-3">
               {cleanText && <SimpleMarkdown>{cleanText}</SimpleMarkdown>}
               <ImageLoader src={metadata.image_url} />
-              <div className="flex justify-end mt-2">
-                <a href={metadata.image_url} target="_blank" rel="noreferrer" 
-                   className="text-[10px] font-black uppercase tracking-widest text-primary hover:text-primary-variant transition-colors flex items-center gap-1.5">
-                   <ExternalLink size={10} /> View Full Image
-                </a>
-              </div>
+              
             </div>
           ) : (
             cleanText ? (
@@ -356,6 +362,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
   
   // New features state
   const [attachedFiles, setAttachedFiles] = useState([])
+  const [selectedIntent, setSelectedIntent] = useState('general')
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -363,7 +370,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
   const messagesEndRef = useRef(null)
   const typingTimeoutRef = useRef(null)
 
-  const partnerName = session?.partner?.name || 'Partner'
+  const partnerName = session?.partner?.name || 'Contact'
 
   // Handle WS events passed from parent
   useEffect(() => {
@@ -426,18 +433,38 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
     setAttachedFiles([])
     setPendingSuggestion(null) 
     if (session?.id) wsSend({ event: 'stop_typing', session_id: session.id })
+
+    const optimisticId = `local-${Date.now()}`
+    const optimisticMessage = {
+      id: optimisticId,
+      session_id: session?.id,
+      sender_id: user?.uid,
+      sender_type: 'human',
+      status: 'sent',
+      content: text,
+      metadata: currentFiles.length > 0 ? { files: currentFiles } : {},
+      created_at: new Date().toISOString(),
+    }
+    setMessages(prev => [...prev, optimisticMessage])
     
     try {
       const data = await apiFetch(`/twin-chat/sessions/${session.id}/messages`, {
         method: 'POST', body: JSON.stringify({ 
           content: text,
-          files: currentFiles
+          files: currentFiles,
+          intent_hint: selectedIntent
         })
       })
       if (data.message) {
-        setMessages(prev => prev.some(m => m.id === data.message.id) ? prev : [...prev, data.message])
+        setMessages(prev => {
+          const withoutOptimistic = prev.filter(m => m.id !== optimisticId)
+          return withoutOptimistic.some(m => m.id === data.message.id) ? withoutOptimistic : [...withoutOptimistic, data.message]
+        })
       }
-    } catch (e) { console.error(e) }
+    } catch (e) {
+      setMessages(prev => prev.filter(m => m.id !== optimisticId))
+      console.error(e)
+    }
     setSending(false)
   }
 
@@ -494,7 +521,8 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
           files: currentFiles,
           gmail_sync: preferences?.gmailSync !== false,
           calendar_sync: preferences?.calendarSync !== false,
-          slack_sync: preferences?.slackSync !== false
+          slack_sync: preferences?.slackSync !== false,
+          intent_hint: selectedIntent
         })
       })
       // The AI response comes back as a suggestion, so we display it in the pending panel
@@ -569,7 +597,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
                   <Zap size={28} className="text-primary" />
                 </div>
                 <p className="text-sm font-semibold text-on-surface mb-1">Start the conversation</p>
-                <p className="text-xs text-neutral">Your AI Twin will assist with suggestions and actions</p>
+                <p className="text-xs text-neutral">Your assistant will help with suggestions and actions</p>
               </div>
             </div>
           ) : (
@@ -640,6 +668,16 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
               ))}
             </div>
           )}
+          <div className="flex flex-wrap gap-2 px-4 pt-3 pb-2">
+            {TWIN_INTENT_OPTIONS.map(option => (
+              <button key={option.key}
+                type="button"
+                onClick={() => setSelectedIntent(option.key)}
+                className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all ${selectedIntent === option.key ? 'bg-primary text-white' : 'bg-surface-container text-on-surface hover:bg-primary/10'}`}>
+                {option.label}
+              </button>
+            ))}
+          </div>
           <div className="flex items-end gap-2 pl-4 pr-2 py-2">
             <div className="flex-1 relative">
               <textarea
@@ -659,7 +697,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
               {input.trim() && (
                 <button onClick={handleEnhance} disabled={enhancing}
                   className="absolute right-0 bottom-2 p-1.5 rounded-lg text-neutral hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                  title="Enhance with AI Twin">
+                  title="Enhance with assistant">
                   {enhancing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
                 </button>
               )}
@@ -756,7 +794,7 @@ function SessionSidebar({ sessions, activeId, loading, onSelect, onNew }) {
                     <p className={`text-sm font-bold truncate ${isActive ? 'text-primary' : 'text-on-surface'}`}>{s.partner?.name}</p>
                     <span className="text-[10px] text-neutral shrink-0">{s.last_message_at ? new Date(s.last_message_at).toLocaleDateString() : ''}</span>
                   </div>
-                  <p className="text-xs text-neutral truncate">Twin Assistant active</p>
+                  <p className="text-xs text-neutral truncate">Assistant active</p>
                 </div>
               </button>
             )

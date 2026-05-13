@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 from .llm_utils import _llm
 
+# ─── Sprint 3: MCP feature flag ────────────────────────────────────────────
+MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
+
 def generate_hf_image(prompt: str) -> str:
     import urllib.parse
     encoded_prompt = urllib.parse.quote(prompt)
@@ -58,6 +61,38 @@ def classifier_node(state: State):
     """Categorizes user intent and extracts cross-twin context."""
     user_input = state["input"].lower()
     history = state.get("chat_history") or []
+
+    # Use explicit intent hints from the UI when available.
+    intent_hint = (state.get("intent_hint") or "").strip().lower()
+    intent_map = {
+        "email": "email_draft",
+        "email_draft": "email_draft",
+        "email_read": "email_read",
+        "email_send": "email_send",
+        "schedule": "calendar",
+        "scheduling": "calendar",
+        "calendar": "calendar",
+        "meeting": "calendar",
+        "image": "visual",
+        "image_creation": "visual",
+        "visual": "visual",
+        "create_image": "visual",
+        "file": "file_generate",
+        "file_generate": "file_generate",
+        "file_read": "file_read",
+        "visualize": "visualize",
+        "slack": "slack_send",
+        "slack_send": "slack_send",
+        "slack_read": "slack_read",
+        "telegram": "telegram_send",
+        "telegram_send": "telegram_send",
+        "telegram_read": "telegram_read",
+        "general": "general",
+        "other": "general",
+        "files": "file_read",
+    }
+    if intent_hint in intent_map:
+        return {**state, "intent": intent_map[intent_hint]}
 
     # ⚡ FAST-PATH: Images uploaded → always route to 'question' (vision model handles it)
     uploaded_files = state.get("files", [])
@@ -186,14 +221,62 @@ def memory_node(state: State) -> State:
         )
         logger.info(f"[Memory] Contextualized Query: {query}")
 
-    chat_context = retrieve_memory(user_id=state["user_id"], query=query, type="chat")
-    structured_context = retrieve_memory(user_id=state["user_id"], query=query, type="structured")
-
+    user_id = state["user_id"]
+    intent = state.get("intent", "general")
     context = ""
-    if structured_context:
-        context += "\n[LEARNED USER MEMORY]\n" + structured_context.strip() + "\n"
-    if chat_context:
-        context += "\n[RELEVANT CHAT MEMORY]\n" + chat_context.strip() + "\n"
+
+    if MCP_ENABLED:
+        # ── MCP PATH ───────────────────────────────────────────────────────────
+        import asyncio as _asyncio
+        from mcp.executor import mcp_executor
+
+        def _run(coro):
+            """Run a coroutine from a sync context safely."""
+            try:
+                loop = _asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(_asyncio.run, coro)
+                        return future.result()
+                return loop.run_until_complete(coro)
+            except RuntimeError:
+                return _asyncio.run(coro)
+
+        mem_result = _run(mcp_executor.execute(
+            intent="_memory_retrieve",
+            args={"user_id": user_id, "query": query, "n": 3},
+            user_id=user_id,
+        ))
+        context_docs = mem_result.get("result", {}).get("results", [])
+        if isinstance(context_docs, list):
+            if context_docs:
+                context += "\n[RELEVANT CHAT MEMORY]\n" + "\n".join(context_docs) + "\n"
+
+        # Writing-style context for email drafts
+        if intent in ("email_draft", "email_send"):
+            style_result = _run(mcp_executor.execute(
+                intent="_memory_retrieve",
+                args={
+                    "user_id": user_id,
+                    "query": state["input"],
+                    "n": 3,
+                    "memory_type": "sent_mail",
+                },
+                user_id=user_id,
+            ))
+            style_docs = style_result.get("result", {}).get("results", [])
+            if isinstance(style_docs, list):
+                state = {**state, "style_context": "\n".join(style_docs)}
+
+    else:
+        # ── LEGACY PATH ────────────────────────────────────────────────────────
+        chat_context = retrieve_memory(user_id=user_id, query=query, type="chat")
+        structured_context = retrieve_memory(user_id=user_id, query=query, type="structured")
+        if structured_context:
+            context += "\n[LEARNED USER MEMORY]\n" + structured_context.strip() + "\n"
+        if chat_context:
+            context += "\n[RELEVANT CHAT MEMORY]\n" + chat_context.strip() + "\n"
 
     is_calendar_query = any(k in state["input"].lower() for k in ["schedule", "meeting", "calendar", "event", "availability", "meet", "met", "who", "when"]) or state.get("intent") in ("calendar", "calendar_lookup", "scheduling")
     if is_calendar_query:
@@ -308,6 +391,129 @@ Output ONLY the Gmail search query string, nothing else.""",
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# EXECUTOR NODE  (Sprint 3 — MCP cutover)
+# Routes all tool calls through MCPExecutor when MCP_ENABLED=true.
+# Falls back to direct calls via _legacy_executor_node when false.
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def executor_node(state: State) -> State:
+    """Routes tool execution through MCP or falls back to legacy direct calls."""
+    intent = state.get("intent", "general")
+    user_id = state.get("user_id")
+
+    if not MCP_ENABLED:
+        # LEGACY PATH — unchanged direct tool calls (no-op passthrough for now)
+        logger.info(f"[Executor] MCP_ENABLED=false — legacy path for intent={intent}")
+        return state
+
+    # MCP PATH
+    from mcp.executor import mcp_executor
+
+    # Only dispatch for intents that have an MCP mapping
+    dispatchable = [
+        "email_read", "email_draft", "email_send",
+        "calendar", "calendar_create", "calendar_freebusy",
+        "slack_send", "slack_read",
+        "telegram_send", "telegram_read",
+        "visual", "file_read",
+    ]
+    if intent not in dispatchable:
+        logger.info(f"[Executor] intent={intent} not in MCP dispatch list — skip")
+        return state
+
+    args = _build_args_for_intent(intent, state)
+
+    execution = await mcp_executor.execute(
+        intent=intent,
+        args=args,
+        user_id=user_id,
+    )
+
+    new_state = dict(state)
+    new_state["tool_result"] = execution.get("result", {})
+    new_state["execution_error"] = execution.get("error")
+    new_state["approval_required"] = execution.get("requires_hitl", False)
+
+    logger.info(
+        f"[Executor] intent={intent} ok={execution['ok']} "
+        f"hitl={new_state['approval_required']}"
+    )
+    return new_state
+
+
+def _build_args_for_intent(intent: str, state: dict) -> dict:
+    """
+    Extracts the right fields from LangGraph state for each intent's MCP tool call.
+    task_plan is a list in the planner, so we check both list[0] (old) and dict (new).
+    """
+    user_id = state.get("user_id")
+    raw_plan = state.get("task_plan", {})
+    # Normalise: planner currently stores a list of strings; MCP callers expect a dict.
+    task_plan = raw_plan if isinstance(raw_plan, dict) else {}
+    base = {"user_id": user_id}
+
+    if intent == "email_read":
+        return {**base, "max_results": 5}
+
+    elif intent in ("email_draft", "email_send"):
+        return {
+            **base,
+            "to": task_plan.get("to", ""),
+            "subject": task_plan.get("subject", ""),
+            "body": task_plan.get("body", ""),
+            "context": task_plan.get("context", ""),
+        }
+
+    elif intent == "calendar":
+        return {**base, "max_results": 20}
+
+    elif intent == "calendar_create":
+        return {
+            **base,
+            "summary": task_plan.get("summary", ""),
+            "start_datetime": task_plan.get("start", ""),
+            "end_datetime": task_plan.get("end", ""),
+            "attendees": task_plan.get("attendees", ""),
+            "description": task_plan.get("description", ""),
+        }
+
+    elif intent == "slack_send":
+        return {
+            **base,
+            "channel_id": task_plan.get("channel_id", ""),
+            "channel_name": task_plan.get("channel_name", ""),
+            "text": task_plan.get("text", ""),
+        }
+
+    elif intent == "slack_read":
+        return {
+            **base,
+            "channel_id": task_plan.get("channel_id", ""),
+            "limit": 10,
+        }
+
+    elif intent == "telegram_send":
+        return {
+            **base,
+            "text": task_plan.get("text", state.get("input", "")),
+        }
+
+    elif intent == "visual":
+        return {
+            **base,
+            "prompt": task_plan.get("prompt", state.get("input", "")),
+        }
+
+    elif intent == "file_read":
+        return {
+            **base,
+            "file_path": state.get("file_path", ""),
+        }
+
+    return base
+
+
 def planner_node(state: State) -> State:
     result = _llm(
         system="""
@@ -367,32 +573,51 @@ def responder_node(state: State) -> State:
         for step in state.get("task_plan", [])
     )
 
+    # (d) Error response — always checked first regardless of MCP flag
+    if state.get("execution_error"):
+        err_output = (
+            f"I wasn't able to complete that action. "
+            f"{state['execution_error']}"
+        )
+        return {**state, "output": err_output, "response_type": "text"}
+
+    tool_result = state.get("tool_result") or {}
+
     # VISUAL REQUESTS
     if state["intent"] == "visual":
-        try:
-            image_url = generate_hf_image(state["input"])
+        # (c) Visual: prefer MCP tool_result URL, fall back to direct generation
+        image_url = tool_result.get("url") if tool_result else None
+        if not image_url:
+            try:
+                image_url = generate_hf_image(state["input"])
+            except Exception as e:
+                logger.error(f"Image generation failed: {e}")
+                return {
+                    **state,
+                    "output": "Image generation is temporarily unavailable.",
+                    "response_type": "text"
+                }
 
-            output_text = "Image generated successfully."
+        output_text = "Image generated successfully."
 
-            # Proactive: if user mentioned telegram, add action block
-            if "telegram" in state["input"].lower():
-                output_text += f'\n\nI am also transmitting this visual to your Telegram.\n\n<action>\n{{\n  "intent": "telegram",\n  "title": "Visual Generation",\n  "message": "Generated image based on: {state["input"]}",\n  "image_url": "{image_url}"\n}}\n</action>'
+        # Proactive: if user mentioned telegram, add action block
+        if "telegram" in state["input"].lower():
+            output_text += (
+                f'\n\nI am also transmitting this visual to your Telegram.\n\n'
+                f'<action>\n{{\n  "intent": "telegram",\n  "title": "Visual Generation",\n'
+                f'  "message": "Generated image based on: {state["input"]}",\n'
+                f'  "image_url": "{image_url}"\n}}\n</action>'
+            )
 
-            logger.info(f"[Responder] Visual Response: {output_text} | URL: {image_url}")
-            return {
-                **state,
-                "output": output_text,
-                "response_type": "visual",
-                "image_url": image_url
-            }
-
-        except Exception as e:
-            logger.error(f"Image generation failed: {e}")
-            return {
-                **state,
-                "output": "Image generation is temporarily unavailable.",
-                "response_type": "text"
-            }
+        # (e) Strip action tags from visible output
+        visible_out = re.sub(r'<action>.*?</action>', '', output_text, flags=re.DOTALL).strip()
+        logger.info(f"[Responder] Visual Response: {visible_out} | URL: {image_url}")
+        return {
+            **state,
+            "output": output_text,   # keep raw with action so frontend can parse
+            "response_type": "visual",
+            "image_url": image_url,
+        }
 
     # FILE READ REQUESTS
     if state["intent"] == "file_read":
@@ -430,9 +655,29 @@ def responder_node(state: State) -> State:
                 "output": "Action blocked: Gmail sync is currently paused in your web dashboard settings.",
                 "response_type": "text"
             }
-            
-        sent_mail_examples = retrieve_memory(user_id=state["user_id"], query=state["input"], n=3, type="sent_mail")
-        sent_mail_context = f"\n[WRITING STYLE EXAMPLES — HOW THIS USER WRITES]\n{sent_mail_examples}\n" if sent_mail_examples else ""
+
+        # (a) Email read response from MCP tool_result
+        if state["intent"] == "email_read" and tool_result.get("emails"):
+            emails = tool_result["emails"]
+            lines = []
+            for i, m in enumerate(emails, 1):
+                lines.append(
+                    f"{i}. **{m.get('subject', '(no subject)')}** — From: {m.get('from', '?')}\n"
+                    f"   {m.get('snippet', '')}"
+                )
+            readable = "\n".join(lines)
+            output = f"Here are your recent emails:\n\n{readable}"
+            output = re.sub(r'<action>.*?</action>', '', output, flags=re.DOTALL).strip()
+            return {**state, "output": output, "response_type": "text"}
+
+        # Use MCP-fetched writing style or fall back to legacy chroma retrieve
+        style_context_raw = state.get("style_context") or ""
+        if not style_context_raw:
+            style_context_raw = retrieve_memory(user_id=state["user_id"], query=state["input"], n=3, type="sent_mail") or ""
+        sent_mail_context = (
+            f"\n[WRITING STYLE EXAMPLES — HOW THIS USER WRITES]\n{style_context_raw}\n"
+            if style_context_raw else ""
+        )
 
         result = _llm(
             system=f"""
@@ -477,15 +722,29 @@ Include this at the very end ONLY if you have a recipient and subject.
 
     # CALENDAR LOOKUP (Search/List)
     if state["intent"] == "calendar_lookup":
-        # Fetch actual events for the LLM to use in response
-        events = []
-        if state.get("calendar_sync", True):
+        # (b) Prefer MCP tool_result events when available
+        events = tool_result.get("events", []) if tool_result else []
+        if not events and state.get("calendar_sync", True):
             try:
                 with next(get_db()) as db:
                     events = get_upcoming_events(db, state["user_id"], max_results=50)
             except Exception:
                 pass
-        
+
+        # Conflict detected via MCP create_event
+        if tool_result.get("conflict"):
+            alts = tool_result.get("alternatives", [])
+            alt_lines = ""
+            for i, a in enumerate(alts, 1):
+                alt_lines += f"\n  Option {i}: {a.get('start_datetime', '')} – {a.get('end_datetime', '')}"
+            conflict_output = (
+                f"You have a conflict with **{tool_result.get('conflict_with', 'an existing event')}**. "
+                f"Here are 3 alternatives:{alt_lines}"
+            )
+            # (e) strip action tags
+            conflict_output = re.sub(r'<action>.*?</action>', '', conflict_output, flags=re.DOTALL).strip()
+            return {**state, "output": conflict_output, "response_type": "text"}
+
         events_str = json.dumps(events, indent=2)
         
         # Privacy Enforcement: Check if user is asking about someone else
