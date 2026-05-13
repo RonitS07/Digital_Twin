@@ -86,9 +86,21 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title=settings.PROJECT_NAME)
 
 logger.info(f"🚀 CORS Allowed Origins: {settings.BACKEND_CORS_ORIGINS}")
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# 1. Security Headers first (Innermost)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# 2. CORS second (Outermost - handles preflight)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://digital-twin-ten-sand.vercel.app",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -812,6 +824,11 @@ def _migrate_structured_to_archive(user_id, db):
         db.delete(rec)
     db.commit()
     logger.info(f"Archived {len(old_records)} records: Structured→Archive for {user_id}")
+
+@app.get("/")
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "AI Twin API"}
 
 @app.on_event("startup")
 async def startup_event():
