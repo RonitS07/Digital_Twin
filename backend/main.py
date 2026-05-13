@@ -831,6 +831,10 @@ async def health_check():
 async def startup_event():
     logger.info("🚀 AI Twin Backend is starting up...")
     
+    # 0. Initialize Firebase (CRITICAL for Auth)
+    from security.firebase_config import initialize_firebase
+    initialize_firebase()
+    
     # 1. Startup Logic switches
     if os.getenv("ENABLE_EMAIL_MONITOR") == "true":
         logger.info("📧 Starting Email Monitor...")
