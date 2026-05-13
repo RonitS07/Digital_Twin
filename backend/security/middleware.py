@@ -13,7 +13,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "img-src 'self' data: https:; "
-            "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.google-analytics.com wss://*.ngrok-free.dev; "
+            "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.google-analytics.com wss:; "
             "font-src 'self' https://fonts.gstatic.com; "
             "frame-ancestors 'none';"
         )

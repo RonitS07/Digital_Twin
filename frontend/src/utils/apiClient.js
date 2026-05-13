@@ -35,7 +35,6 @@ export const apiFetch = async (endpoint, options = {}) => {
     const fullUrl = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
     const headers = {
         'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true',
         ...options.headers,
     };
 
@@ -97,7 +96,6 @@ export const apiFetch = async (endpoint, options = {}) => {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',
-                            'ngrok-skip-browser-warning': 'true',
                             'X-Firebase-Token': fbToken,
                         },
                         body: JSON.stringify({

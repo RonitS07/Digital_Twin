@@ -15,7 +15,6 @@ const FileCard = ({ file, onDelete }) => {
             const token = useStore.getState().auth?.user?.accessToken
             const res = await fetch(`${API_BASE}/ai/files/${file.id}/download`, {
                 headers: {
-                    'ngrok-skip-browser-warning': 'true',
                     ...(token ? { Authorization: `Bearer ${token}` } : {})
                 }
             })
