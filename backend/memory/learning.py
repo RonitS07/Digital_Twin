@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session
 
 from db.models import StructuredMemory
 from memory.chroma import store_memory
+from core.config import settings
 
 
-MODEL = os.getenv("LEARNING_MODEL", "llama-3.1-8b-instant")
+MODEL = settings.LEARNING_MODEL or "llama-3.1-8b-instant"
 
 
 def _safe_json(text: str) -> dict:
@@ -27,7 +28,7 @@ def _safe_json(text: str) -> dict:
 
 
 def _get_client() -> Optional[Groq]:
-    key = os.getenv("GROQ_API_KEY")
+    key = settings.GROQ_API_KEY
     if not key:
         return None
     return Groq(api_key=key)

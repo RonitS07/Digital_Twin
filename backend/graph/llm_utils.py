@@ -1,10 +1,10 @@
-import os
 import logging
 from groq import Groq
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+client = Groq(api_key=settings.GROQ_API_KEY)
 
 # Small model — fast, cheap: intent classification, memory queries, casual chat
 FAST_MODEL = "llama-3.1-8b-instant"

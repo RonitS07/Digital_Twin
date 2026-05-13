@@ -3,10 +3,11 @@ import requests
 import httpx
 import logging
 import asyncio
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_BOT_TOKEN = settings.TELEGRAM_BOT_TOKEN
 
 def send_telegram_message(chat_id: str, text: str):
     if not TELEGRAM_BOT_TOKEN:

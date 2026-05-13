@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     
     # Firebase
     FIREBASE_CREDENTIALS_FILE: str = "firebase-credentials.json"
+    GOOGLE_CREDENTIALS_FILE: str = "credentials.json"
     
     # External APIs
     GOOGLE_GENAI_API_KEY: Optional[str] = None
@@ -37,6 +38,10 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 5 * 1024 * 1024 # 5MB
     ALLOWED_UPLOAD_EXTENSIONS: List[str] = [".jpg", ".jpeg", ".png", ".pdf", ".txt"]
     UPLOAD_DIR: str = "/srv/digital_twin_uploads"
+    
+    # Advanced
+    LEARNING_MODEL: str = "llama-3.1-8b-instant"
+    CHROMA_PER_USER_COLLECTION: bool = True
 
     # Additional Env Vars (from logs)
     HUGGINGFACE_API_KEY: Optional[str] = None

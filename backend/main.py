@@ -88,10 +88,10 @@ app = FastAPI(title=settings.PROJECT_NAME)
 logger.info(f"🚀 CORS Allowed Origins: {settings.BACKEND_CORS_ORIGINS}")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*", "X-Firebase-Token"],
+    allow_headers=["*"],
     expose_headers=["*"],
 )
 

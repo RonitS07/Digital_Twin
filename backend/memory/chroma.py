@@ -1,12 +1,9 @@
-import os
 import logging
 import chromadb
 from chromadb.utils import embedding_functions
 from datetime import datetime, timezone, timedelta
-
-# VERCEL COMPATIBILITY: Switched from local SentenceTransformer (1GB+) 
-# to Google Generative AI embeddings (Cloud API) to keep the bundle size small.
-GOOGLE_API_KEY = os.getenv("GOOGLE_GENAI_API_KEY")
+from core.config import settings
+GOOGLE_API_KEY = settings.GOOGLE_GENAI_API_KEY
 
 if GOOGLE_API_KEY:
     embedder = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
@@ -21,8 +18,8 @@ else:
 
 client = chromadb.PersistentClient(path="./chroma_store")
 
-USE_PER_USER_COLLECTION = os.getenv("CHROMA_PER_USER_COLLECTION", "true").lower() == "true"
-SHARED_COLLECTION_NAME = os.getenv("CHROMA_SHARED_COLLECTION", "twin_memory")
+USE_PER_USER_COLLECTION = True 
+SHARED_COLLECTION_NAME = "twin_memory"
 
 def get_collection(user_id: str):
     name = f"user_{user_id}_memory" if USE_PER_USER_COLLECTION else SHARED_COLLECTION_NAME

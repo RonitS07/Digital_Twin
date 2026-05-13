@@ -4,15 +4,16 @@ import requests
 from datetime import datetime
 from typing import Optional, List, Dict
 from sqlalchemy.orm import Session
+from core.config import settings
 
 from db.models import IntegrationToken
 from security.token_crypto import encrypt_str, decrypt_str
 
 logger = logging.getLogger(__name__)
 
-SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
-SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
-SLACK_REDIRECT_URI = os.getenv("SLACK_OAUTH_REDIRECT_URI", "http://127.0.0.1:8000/oauth/slack/callback")
+SLACK_CLIENT_ID = settings.SLACK_CLIENT_ID
+SLACK_CLIENT_SECRET = settings.SLACK_CLIENT_SECRET
+SLACK_REDIRECT_URI = settings.SLACK_OAUTH_REDIRECT_URI or "http://127.0.0.1:8000/oauth/slack/callback"
 
 def get_slack_token(db: Session, user_id: str) -> str:
     row = (

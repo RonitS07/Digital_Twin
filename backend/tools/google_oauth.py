@@ -11,11 +11,12 @@ from google.auth.exceptions import RefreshError, TransportError
 
 from db.models import IntegrationToken
 from security.token_crypto import encrypt_str, decrypt_str
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_OAUTH_REDIRECT_URI", "http://127.0.0.1:8000/oauth/google/callback")
+GOOGLE_CREDENTIALS_FILE = settings.GOOGLE_CREDENTIALS_FILE or "credentials.json"
+GOOGLE_REDIRECT_URI = settings.GOOGLE_OAUTH_REDIRECT_URI or "http://127.0.0.1:8000/oauth/google/callback"
 
 
 GMAIL_SCOPES = [
