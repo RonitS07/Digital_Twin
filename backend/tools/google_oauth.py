@@ -16,7 +16,10 @@ from core.config import settings
 logger = logging.getLogger(__name__)
 
 GOOGLE_CREDENTIALS_FILE = settings.GOOGLE_CREDENTIALS_FILE or "credentials.json"
-GOOGLE_REDIRECT_URI = settings.GOOGLE_OAUTH_REDIRECT_URI or "http://127.0.0.1:8000/oauth/google/callback"
+
+# Dynamic Redirect URI: Prioritize BACKEND_URL for production, fallback to localhost
+_base_url = settings.BACKEND_URL.rstrip("/") if settings.BACKEND_URL else "http://127.0.0.1:8000"
+GOOGLE_REDIRECT_URI = f"{_base_url}/oauth/google/callback"
 
 
 GMAIL_SCOPES = [
