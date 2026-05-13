@@ -71,16 +71,14 @@ class ConnectionManager:
 
     async def send_to_user(self, user_id: str, payload: dict):
         """Send payload to all connected WebSockets for a specific user."""
-        if user_id not in self._user_connections:
-            return
-        dead = []
-        for ws in self._user_connections[user_id]:
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self._user_connections[user_id].discard(ws)
+        if user_id in self._user_connections:
+            # Use a copy to avoid "Set changed size during iteration" errors
+            connections = list(self._user_connections[user_id])
+            for ws in connections:
+                try:
+                    await ws.send_json(payload)
+                except Exception:
+                    self._user_connections[user_id].discard(ws)
 
     async def broadcast_to_session(self, session: DirectChatSession, payload: dict, exclude_user_id: Optional[str] = None):
         """Send payload to all participants of a session."""

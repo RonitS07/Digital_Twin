@@ -35,12 +35,22 @@ COMBINED_SCOPES = list(set(GMAIL_SCOPES + CALENDAR_SCOPES))
 
 
 def _load_client_config() -> dict:
+    # 1. Try to load from environment variable first (Production/Railway)
+    google_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    if google_json:
+        try:
+            return json.loads(google_json)
+        except Exception as e:
+            logger.error(f"Failed to parse GOOGLE_CREDENTIALS_JSON: {e}")
+
+    # 2. Fallback to file (Local Development)
     try:
         with open(GOOGLE_CREDENTIALS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         raise RuntimeError(
-            f"Google credentials file not found: {GOOGLE_CREDENTIALS_FILE}. "
+            f"Google Credentials not found. Please set GOOGLE_CREDENTIALS_JSON env var or "
+            f"ensure {GOOGLE_CREDENTIALS_FILE} exists. "
             "Download it from Google Cloud Console and place it at the project root."
         )
 
