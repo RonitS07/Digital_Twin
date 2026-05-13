@@ -85,7 +85,9 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
-logger.info(f"🚀 CORS Allowed Origins: {settings.BACKEND_CORS_ORIGINS}")
+# Exception Handlers and Middleware
+from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -96,20 +98,12 @@ app.add_middleware(SecurityHeadersMiddleware)
 # 2. CORS second (Outermost - handles preflight)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://digital-twin-ten-sand.vercel.app",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
-
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SecurityHeadersMiddleware)
 
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
