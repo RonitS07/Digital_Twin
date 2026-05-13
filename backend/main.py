@@ -92,24 +92,24 @@ from sqlalchemy.exc import SQLAlchemyError
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# 1. Security Headers first (Innermost)
-app.add_middleware(SecurityHeadersMiddleware)
-
-# 2. CORS second (Outermost - handles preflight)
+# 1. CORS Configuration (Strict for production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-    "https://digital-twin-ten-sand.vercel.app",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",],
+        "https://digital-twin-ten-sand.vercel.app",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
 
-from fastapi.exceptions import RequestValidationError
-from sqlalchemy.exc import SQLAlchemyError
+# 2. Manual OPTIONS handler for additional stability
+@app.options("/{full_path:path}")
+async def preflight_handler(full_path: str):
+    return {"ok": True}
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -829,27 +829,29 @@ async def health_check():
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Initializing AI Twin Background services...")
-    initialize_firebase()
+    logger.info("🚀 AI Twin Backend is starting up...")
     
-    # Track tasks for clean shutdown
-    t1 = asyncio.create_task(monitor_emails())
-    t2 = asyncio.create_task(monitor_telegram())
-    t3 = asyncio.create_task(monitor_calendar())
-    t4 = asyncio.create_task(daily_briefing_task())
-    t5 = asyncio.create_task(calendar_index_task())
-    t6 = asyncio.create_task(run_memory_lifecycle())
-    
-    background_tasks.add(t1)
-    background_tasks.add(t2)
-    background_tasks.add(t3)
-    background_tasks.add(t4)
-    background_tasks.add(t5)
-    background_tasks.add(t6)
-    
-    # Inject auth dependency into agent broker (avoids circular import)
+    # 1. Startup Logic switches
+    if os.getenv("ENABLE_EMAIL_MONITOR") == "true":
+        logger.info("📧 Starting Email Monitor...")
+        background_tasks.add(asyncio.create_task(monitor_emails()))
+        
+    if os.getenv("ENABLE_TELEGRAM_MONITOR") == "true":
+        logger.info("📱 Starting Telegram Monitor...")
+        background_tasks.add(asyncio.create_task(monitor_telegram()))
+        
+    if os.getenv("ENABLE_CALENDAR_MONITOR") == "true":
+        logger.info("📅 Starting Calendar Monitor...")
+        background_tasks.add(asyncio.create_task(monitor_calendar()))
+
+    if os.getenv("ENABLE_MEMORY_LIFECYCLE", "true") == "true":
+        logger.info("🧠 Starting Memory Lifecycle...")
+        background_tasks.add(asyncio.create_task(run_memory_lifecycle()))
+
+    # 2. Inject auth dependency into agent broker (avoids circular import)
     set_auth_dependency(get_current_user)
-    logger.info("Startup complete.")
+    
+    logger.info("✅ Startup complete.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
