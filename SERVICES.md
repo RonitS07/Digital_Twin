@@ -2,9 +2,9 @@
 
 | Service              | Port | Start command          |
 |----------------------|------|------------------------|
-| FastAPI backend      | 8000 | uvicorn main:app       |
-| React frontend       | 5173 | npm run dev            |
-| WhatsApp bridge      | 3001 | bash scripts/start_wa_bridge.sh |
+| FastAPI backend      | 8080 | uvicorn main:app       | https://digitaltwin-production-7b7d.up.railway.app |
+| React frontend       | 5173 | npm run dev            | https://digital-twin-ten-sand.vercel.app |
+| WhatsApp bridge      | 3001 | bash scripts/start_wa_bridge.sh | |
 | ChromaDB             | —    | embedded               |
 | Telegram bot         | —    | auto (startup)         |
 
