@@ -78,15 +78,15 @@ const WhatsAppModal = ({ onClose }) => {
                     ) : qr ? (
                         <div className="flex flex-col items-center gap-6">
                             <div className="p-4 bg-white rounded-2xl shadow-xl">
-                                <img 
-                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`} 
+                                <img
+                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`}
                                     alt="WhatsApp QR Code"
                                     className="w-[200px] h-[200px]"
                                 />
                             </div>
                             <div className="text-center">
                                 <p className="text-sm font-bold text-on-surface">Scan this QR Code</p>
-                                <p className="text-xs text-neutral mt-1">Open WhatsApp &gt; Linked Devices &gt; Link a Device</p>
+                                <p className="text-xs text-neutral mt-1">Open WhatsApp {'{>}'} Linked Devices {'>'} Link a Device</p>
                             </div>
                         </div>
                     ) : (
@@ -382,7 +382,7 @@ const Layout = ({ children, currentView, setView }) => {
                             }, 3500);
                         }
                     }
-                } catch (err) {}
+                } catch (err) { }
             };
             ws.onclose = () => {
                 if (alive) setTimeout(connect, 1200);
@@ -489,14 +489,14 @@ const Layout = ({ children, currentView, setView }) => {
                         New Task
                     </button>
                     <div className="grid grid-cols-2 gap-2">
-                        <button 
+                        <button
                             onClick={() => setWAOpen(true)}
                             className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-surface-container hover:bg-surface-container-high transition-colors border border-neutral/5"
                         >
                             <MessageSquare size={16} className="text-emerald-500" />
                             <span className="text-[9px] font-black uppercase tracking-tighter text-neutral">WhatsApp</span>
                         </button>
-                        <button 
+                        <button
                             onClick={() => setHelpOpen(true)}
                             className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-surface-container hover:bg-surface-container-high transition-colors border border-neutral/5"
                         >
@@ -547,7 +547,7 @@ const Layout = ({ children, currentView, setView }) => {
                             </span>
                         </div>
                         <div className="relative">
-                            <button 
+                            <button
                                 onClick={() => setNotificationsOpen(!isNotificationsOpen)}
                                 className={`text-neutral hover:text-on-surface transition-colors p-2 rounded-xl relative ${isNotificationsOpen ? 'bg-surface-container' : ''}`}
                             >
