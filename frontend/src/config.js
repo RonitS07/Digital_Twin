@@ -9,4 +9,4 @@
  *   VITE_API_BASE=https://your-railway-backend.up.railway.app
  */
 export const API_BASE =
-    import.meta.env.VITE_API_BASE?.replace(/\/+$/, '') || ''
+    (import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL)?.replace(/\/+$/, '') || ''
