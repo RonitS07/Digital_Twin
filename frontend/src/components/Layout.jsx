@@ -86,7 +86,7 @@ const WhatsAppModal = ({ onClose }) => {
                             </div>
                             <div className="text-center">
                                 <p className="text-sm font-bold text-on-surface">Scan this QR Code</p>
-                                <p className="text-xs text-neutral mt-1">Open WhatsApp > Linked Devices > Link a Device</p>
+                                <p className="text-xs text-neutral mt-1">Open WhatsApp &gt; Linked Devices &gt; Link a Device</p>
                             </div>
                         </div>
                     ) : (
