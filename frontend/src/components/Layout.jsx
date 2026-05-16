@@ -24,6 +24,85 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 
+const WhatsAppModal = ({ onClose }) => {
+    const [qr, setQr] = useState(null);
+    const [ready, setReady] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const checkStatus = async () => {
+            try {
+                // The WA bridge runs on port 3001
+                const res = await fetch('http://localhost:3001/status');
+                const data = await res.json();
+                setReady(data.ready);
+                setQr(data.qr);
+                setLoading(false);
+            } catch (err) {
+                console.error("WA Bridge unreachable", err);
+                setLoading(false);
+            }
+        };
+
+        checkStatus();
+        const interval = setInterval(checkStatus, 5000);
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+        <div className="fixed inset-0 bg-surface-base/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <motion.div
+                initial={{ y: '100%', opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: '100%', opacity: 0 }}
+                className="bg-surface-container w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 border border-neutral/10 shadow-2xl relative"
+            >
+                <button onClick={onClose} className="absolute right-5 top-5 text-neutral hover:text-on-surface transition-colors p-1"><X size={20} /></button>
+                <h2 className="text-xl sm:text-2xl font-manrope font-extrabold text-on-surface mb-2">WhatsApp Connection</h2>
+                <p className="text-sm text-on-surface-variant mb-6">Link your WhatsApp to allow your Twin to send notifications and read messages.</p>
+
+                <div className="flex flex-col items-center justify-center py-8 bg-surface-base rounded-2xl border border-neutral/5">
+                    {loading ? (
+                        <div className="flex flex-col items-center gap-3">
+                            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                            <p className="text-xs text-neutral">Connecting to Bridge...</p>
+                        </div>
+                    ) : ready ? (
+                        <div className="flex flex-col items-center gap-3 text-emerald-500">
+                            <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center">
+                                <Zap size={32} fill="currentColor" />
+                            </div>
+                            <p className="font-bold">WhatsApp Connected</p>
+                            <p className="text-xs text-emerald-500/60">Your Twin is online</p>
+                        </div>
+                    ) : qr ? (
+                        <div className="flex flex-col items-center gap-6">
+                            <div className="p-4 bg-white rounded-2xl shadow-xl">
+                                <img 
+                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`} 
+                                    alt="WhatsApp QR Code"
+                                    className="w-[200px] h-[200px]"
+                                />
+                            </div>
+                            <div className="text-center">
+                                <p className="text-sm font-bold text-on-surface">Scan this QR Code</p>
+                                <p className="text-xs text-neutral mt-1">Open WhatsApp > Linked Devices > Link a Device</p>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center gap-3 text-red-500">
+                            <p className="text-sm font-bold">Bridge Offline</p>
+                            <p className="text-xs text-neutral text-center px-6">Make sure the WhatsApp Bridge is running in your terminal.</p>
+                        </div>
+                    )}
+                </div>
+
+                <button onClick={onClose} className="w-full mt-6 py-3 bg-primary text-white font-bold rounded-xl hover:brightness-110 transition-all">Done</button>
+            </motion.div>
+        </div>
+    );
+};
+
 const HelpModal = ({ onClose }) => (
     <div className="fixed inset-0 bg-surface-base/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
         <motion.div
@@ -264,6 +343,7 @@ const Layout = ({ children, currentView, setView }) => {
     const user = auth.user || {};
     const [isTaskModalOpen, setTaskModalOpen] = useState(false);
     const [isHelpOpen, setHelpOpen] = useState(false);
+    const [isWAOpen, setWAOpen] = useState(false);
     const [agentUnread, setAgentUnread] = useState(0);
     const [isMoreOpen, setMoreOpen] = useState(false);
     const [isNotificationsOpen, setNotificationsOpen] = useState(false);
@@ -356,6 +436,7 @@ const Layout = ({ children, currentView, setView }) => {
             <AnimatePresence>
                 {isTaskModalOpen && <TaskModal onClose={() => setTaskModalOpen(false)} />}
                 {isHelpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+                {isWAOpen && <WhatsAppModal onClose={() => setWAOpen(false)} />}
                 {popupNotification && (
                     <motion.button
                         key={popupNotification.id}
@@ -407,7 +488,22 @@ const Layout = ({ children, currentView, setView }) => {
                         <Plus size={14} />
                         New Task
                     </button>
-                    <SidebarItem icon={HelpCircle} label="Help & Docs" onClick={() => setHelpOpen(true)} />
+                    <div className="grid grid-cols-2 gap-2">
+                        <button 
+                            onClick={() => setWAOpen(true)}
+                            className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-surface-container hover:bg-surface-container-high transition-colors border border-neutral/5"
+                        >
+                            <MessageSquare size={16} className="text-emerald-500" />
+                            <span className="text-[9px] font-black uppercase tracking-tighter text-neutral">WhatsApp</span>
+                        </button>
+                        <button 
+                            onClick={() => setHelpOpen(true)}
+                            className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-surface-container hover:bg-surface-container-high transition-colors border border-neutral/5"
+                        >
+                            <HelpCircle size={16} className="text-primary" />
+                            <span className="text-[9px] font-black uppercase tracking-tighter text-neutral">Support</span>
+                        </button>
+                    </div>
                 </div>
             </aside>
 
