@@ -28,7 +28,12 @@ const IntelligenceHub = () => {
                 const data = await apiFetch('/intelligence/insights');
                 setInsights(data || []);
             } catch (err) {
-                console.error("Failed to fetch insights", err);
+                if (err.message?.includes('<!DOCTYPE') || err.message?.includes('not valid JSON') || err.message?.includes('Endpoint returned HTML')) {
+                    console.warn('Intelligence endpoint not available');
+                    setInsights([]);
+                } else {
+                    console.error("Failed to fetch insights", err);
+                }
             } finally {
                 setLoading(false);
             }

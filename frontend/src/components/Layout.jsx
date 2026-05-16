@@ -275,8 +275,8 @@ const Layout = ({ children, currentView, setView }) => {
         if (!user?.accessToken) return;
         let alive = true;
         const connect = () => {
-            const proto = API_BASE.startsWith('https') ? 'wss' : 'ws';
-            const host = API_BASE.replace(/^https?:\/\//, '');
+            const proto = (API_BASE ? API_BASE.startsWith('https') : window.location.protocol === 'https:') ? 'wss' : 'ws';
+            const host = API_BASE ? API_BASE.replace(/^https?:\/\//, '') : window.location.host;
             const url = `${proto}://${host}/twin-chat/ws?token=${encodeURIComponent(user.accessToken)}`;
             const ws = new WebSocket(url);
             wsRef.current = ws;

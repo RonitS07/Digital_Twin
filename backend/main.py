@@ -96,13 +96,36 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # 1. CORS Configuration (Strict for production)
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class RemoveCOOPMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        # Allow popups for OAuth flows
+        response.headers['Cross-Origin-Opener-Policy'] = 'unsafe-none'
+        return response
+
+app.add_middleware(RemoveCOOPMiddleware)
+
+def _get_allowed_origins() -> list[str]:
+    origins = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "https://digital-twin-ten-sand.vercel.app"
+    ]
+    frontend_url = os.getenv("FRONTEND_URL")
+    if frontend_url:
+        origins.append(frontend_url)
+    extra = os.getenv("EXTRA_ALLOWED_ORIGINS", "")
+    if extra:
+        origins.extend([o.strip() for o in extra.split(",") if o.strip()])
+    return origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://digital-twin-ten-sand.vercel.app",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=_get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -181,7 +204,7 @@ def extract_reply(text: str) -> str:
 # Setup Background Task
 AUTO_SEND = os.getenv("AUTO_SEND", "false").lower() == "true"
 
-def process_new_emails():
+async def process_new_emails():
     """Shared logic to check and process new emails for all connected users."""
     processed_count = 0
     try:
@@ -360,7 +383,7 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                                     "approval_required": True,
                                     "context": f"EMAIL DETAILS:\nFrom: {info['from']}\nSubject: {info['subject']}\nBody: {info['body'][:1000]}\n\nSCHEDULE CONTEXT:\n{schedule_context}"
                                 }
-                                res = twin_graph.invoke(initial_state)
+                                res = await twin_graph.ainvoke(initial_state)
                                 clean_reply = extract_reply(res["output"])
                                 if clean_reply.strip():
                                     draft_email(db=db, user_id=uid, to=info["from"], subject=f"Re: {info['subject']}", body=clean_reply)
@@ -485,8 +508,7 @@ async def run_sent_mail_backfill(user_id: str):
 async def monitor_emails():
     try:
         while True:
-            # Run the heavy sync processing in a thread to keep event loop free
-            await asyncio.to_thread(process_new_emails)
+            await process_new_emails()
             await asyncio.sleep(60)
     except asyncio.CancelledError:
         logger.info("[Monitor] Email monitor stopping...")
@@ -586,7 +608,7 @@ async def monitor_telegram():
                             "gmail_sync": prefs.get("gmailSync", True),
                             "calendar_sync": prefs.get("calendarSync", True)
                         }
-                        res = twin_graph.invoke(initial_state)
+                        res = await twin_graph.ainvoke(initial_state)
                         clean_res = extract_reply(res["output"])
                         
                         if res.get("response_type") == "visual" and res.get("image_url"):
@@ -888,6 +910,7 @@ class ProcessRequest(BaseModel):
     files: Optional[List[dict]] = Field(default_factory=list) # [{ name, type, data }]
     file_path: Optional[str] = None
     intent_hint: Optional[str] = None
+    approved: bool = False
 
 class MemoryRequest(BaseModel):
     user_id: str
@@ -1000,7 +1023,18 @@ def _decode_oauth_state(state: str, db: Session) -> Optional[str]:
 
 @app.get("/integrations/google/status")
 def google_integration_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return {"connected": is_connected(db=db, user_id=current_user.id)}
+    token = db.query(IntegrationToken).filter(
+        IntegrationToken.user_id == current_user.id, 
+        IntegrationToken.provider == "google"
+    ).first()
+    if not token:
+        return {"gmail_connected": False, "calendar_connected": False, "scopes": []}
+    scopes = token.scope.split() if token.scope else []
+    return {
+        "gmail_connected": any("gmail" in s for s in scopes),
+        "calendar_connected": any("calendar" in s for s in scopes),
+        "scopes": scopes
+    }
 
 
 @app.get("/oauth/google/start")
@@ -1127,7 +1161,7 @@ def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
 
 @app.post("/ai/process")
 @limiter.limit("10/minute")
-def process(request: Request, req: ProcessRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def process(request: Request, req: ProcessRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # Allow image-only messages — if files are attached but no text, use a default prompt
     has_files = bool(req.files)
     effective_input = req.input.strip()
@@ -1177,6 +1211,7 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
         "intent": "other",
         "intent_hint": req.intent_hint,
         "output": "",
+        "approved": req.approved,
         "task_plan": [],
         "approval_required": False,
         "response_type": "text",
@@ -1243,7 +1278,7 @@ def process(request: Request, req: ProcessRequest, current_user: User = Depends(
             initial_state["input"] = "Summarise this file"
 
     try:
-        final_state = twin_graph.invoke(initial_state)
+        final_state = await twin_graph.ainvoke(initial_state)
 
         # 2.3 Structured learning (best-effort; never block response)
         try:
@@ -1627,48 +1662,61 @@ def get_history(session_id: str = None, current_user: User = Depends(get_current
         query = db.query(TaskLog).filter(TaskLog.user_id == current_user.id)
         if session_id:
             query = query.filter(TaskLog.session_id == session_id)
-        
+
         logs = query.order_by(TaskLog.created_at.asc()).all()
-        return {
-            "history": [
-                {
-                    "id": str(log.id),
-                    "input": log.input,
+
+        messages = []
+        for log in logs:
+            ts = log.created_at.isoformat() if log.created_at else None
+
+            # User message
+            messages.append({
+                "id": str(log.id) + "_user",
+                "role": "user",
+                "content": log.input,
+                "intent": log.intent,
+                "session_id": getattr(log, "session_id", None),
+                "timestamp": ts,
+            })
+
+            # Assistant response — only emit if output was saved
+            if log.output:
+                response_type = getattr(log, "response_type", "text") or "text"
+                image_url = getattr(log, "image_url", None)
+                content = log.output
+
+                # Try to unwrap structured JSON output saved by older code paths
+                try:
+                    out = json.loads(log.output)
+                    if isinstance(out, dict):
+                        content = out.get("text", out.get("output", log.output))
+                        response_type = out.get("response_type", response_type)
+                        image_url = out.get("image_url", image_url)
+                except Exception:
+                    pass
+
+                messages.append({
+                    "id": str(log.id) + "_assistant",
+                    "role": "assistant",
+                    "content": content,
                     "intent": log.intent,
-                    "output": log.output,
-                    "approved": log.approved,
-                    "kind": getattr(log, "kind", "prompt"),
+                    "response_type": response_type,
+                    "image_url": image_url,
                     "session_id": getattr(log, "session_id", None),
-                    "response_type": getattr(log, "response_type", None),
-                    "image_url": getattr(log, "image_url", None),
-                    "metadata": log.metadata_json,
-                    "timestamp": log.created_at.isoformat()
-                } for log in logs
-            ]
-        }
+                    "timestamp": ts,
+                })
+
+        return messages
     except Exception as e:
         logger.exception(f"History Error: {e}")
-        return {"history": []}
+        return []
 
 @app.get("/sessions")
 def get_sessions(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
         # Get unique session IDs and their latest message timestamp
         from sqlalchemy import func
-        sessions_raw = (
-            db.query(
-                TaskLog.session_id,
-                func.max(TaskLog.created_at).label("last_active"),
-                func.first_value(TaskLog.input).over(
-                    partition_by=TaskLog.session_id,
-                    order_by=TaskLog.created_at.desc()
-                ).label("last_msg")
-            )
-            .filter(TaskLog.user_id == current_user.id)
-            .filter(TaskLog.session_id.isnot(None))
-            .distinct(TaskLog.session_id)
-            .all()
-        )
+        # Let's use a simple approach for compatibility and to avoid grouping errors.
         
         # Note: SQLite doesn't support distinct on column or first_value easily in some versions.
         # Let's use a simpler approach for broad compatibility.
@@ -1807,8 +1855,6 @@ def api_send_telegram(request: Request, req: TelegramSendRequest, current_user: 
             elif any(p in img_url.lower() for p in hallucinated_patterns) and "http" in img_url.lower() and "example.com" in img_url.lower():
                 img_url = None
             
-        success = False
-        import re
         formatted_msg = req.message
         # Convert **bold** to *bold* for standard Telegram Markdown mode
         formatted_msg = re.sub(r'\*\*(.*?)\*\*', r'*\1*', formatted_msg)
@@ -2091,7 +2137,12 @@ def slack_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
 
 @app.get("/integrations/slack/status")
 def slack_status(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return {"connected": is_slack_connected(db, current_user.id)}
+    token = db.query(IntegrationToken).filter(IntegrationToken.user_id == current_user.id, IntegrationToken.provider == "slack").first()
+    return {
+        "connected": token is not None,
+        "workspace": "Slack" if token else None,
+        "bot_name": "Digital Twin" if token else None
+    }
 
 @app.post("/integrations/slack/disconnect")
 def slack_disconnect(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -2123,7 +2174,6 @@ def send_msg(req: dict, current_user: User = Depends(get_current_user), db: Sess
     if not channel_id or not text:
         raise HTTPException(status_code=400, detail="Missing channel_id or text")
     # 🟢 Convert standard Markdown to Slack's mrkdwn (e.g. **bold** -> *bold*)
-    import re
     formatted_text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
     formatted_text = re.sub(r'### (.*)', r'*\1*', formatted_text) # Headers to bold
     
@@ -2186,7 +2236,7 @@ async def slack_events(request: Request, db: Session = Depends(get_db)):
             
             # Run graph in background or sync? 
             # For Slack, we should probably respond quickly, but let's try sync first for simplicity
-            res = twin_graph.invoke(initial_state)
+            res = await twin_graph.ainvoke(initial_state)
             clean_res = extract_reply(res["output"])
             
             # Send reply back to Slack
@@ -2205,9 +2255,12 @@ async def webhooks_receiver(request: Request):
 
 @app.get("/settings/telegram")
 def get_telegram(current_user: User = Depends(get_current_user)):
+    chat_id = current_user.telegram_chat_id
+    masked = f"{chat_id[:2]}****{chat_id[-2:]}" if chat_id and len(chat_id) > 4 else chat_id
     return {
-        "chat_id": current_user.telegram_chat_id,
-        "enabled": current_user.telegram_enabled
+        "chat_id": masked,
+        "enabled": current_user.telegram_enabled,
+        "username": None
     }
 
 @app.put("/settings/preferences")
@@ -2364,6 +2417,117 @@ async def get_insights(db: Session = Depends(get_db), current_user: User = Depen
     except Exception as e:
         logger.error(f"Failed to fetch insights: {e}")
         return []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# File Upload Endpoint (used by Chat.jsx Paperclip button)
+# ─────────────────────────────────────────────────────────────────────────────
+from fastapi import File, UploadFile
+
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    import uuid as _uuid
+    safe_name = os.path.basename(file.filename or "upload")
+    filename = f"{_uuid.uuid4()}_{safe_name}"
+    save_path = os.path.join("uploads", filename)
+    full_path = os.path.join(BACKEND_DIR, save_path)
+    os.makedirs(os.path.join(BACKEND_DIR, "uploads"), exist_ok=True)
+
+    contents = await file.read()
+    with open(full_path, "wb") as f:
+        f.write(contents)
+
+    return {
+        "file_path": save_path,
+        "file_name": safe_name,
+        "size_bytes": len(contents)
+    }
+
+@app.get("/mcp/whatsapp/qr")
+async def get_wa_qr(current_user: User = Depends(get_current_user)):
+    import httpx
+    import os
+    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{bridge_url}/qr")
+            return r.json()
+    except Exception:
+        return {"qr": None, "ready": False, "error": "Bridge not running"}
+
+@app.post("/ai/approve/{action_id}")
+async def approve_action(
+    action_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    task = db.query(TaskLog).filter(
+        TaskLog.id == action_id, 
+        TaskLog.user_id == current_user.id
+    ).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Action not found")
+        
+    if task.approved:
+        return {"status": "success", "result": {"output": "Action already executed"}}
+        
+    try:
+        from mcp.executor import mcp_executor
+        from graph.nodes import _build_args_for_intent
+        import json
+        
+        state = {
+            "user_id": current_user.id,
+            "input": task.input,
+            "intent": task.intent,
+        }
+        
+        if task.metadata_json:
+            meta = json.loads(task.metadata_json)
+            state["task_plan"] = meta.get("task_plan", {})
+            
+        args = _build_args_for_intent(task.intent, state)
+        res = await mcp_executor.execute(task.intent, args, current_user.id)
+        
+        if res.get("ok"):
+            task.approved = True
+            db.commit()
+            return {"status": "success", "result": {"output": "Action executed successfully"}}
+        else:
+            raise HTTPException(status_code=400, detail=res.get("error") or "Execution failed")
+            
+    except Exception as e:
+        logger.error(f"Approval execution error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public MCP Status (non-admin, name + status + tool_count only)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.get("/mcp/status")
+def get_mcp_status_public(
+    current_user: User = Depends(get_current_user)
+):
+    servers = []
+    try:
+        for name, server in mcp_registry._servers.items():
+            try:
+                tools = server.list_tools() if hasattr(server, "list_tools") else []
+                servers.append({
+                    "name": name,
+                    "status": "ok",
+                    "tool_count": len(tools)
+                })
+            except Exception:
+                servers.append({
+                    "name": name,
+                    "status": "error",
+                    "tool_count": 0
+                })
+    except Exception as e:
+        logger.error(f"MCP public status error: {e}")
+    return {"servers": servers}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Smart Proxy: Route everything else to the Frontend Dev Server (port 5173)

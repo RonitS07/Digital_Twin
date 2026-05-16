@@ -21,6 +21,8 @@ import json
 import logging
 import uuid
 import asyncio
+import re
+import base64
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -353,7 +355,8 @@ def get_session(
     )
     if before:
         q = q.filter(DirectChatMessage.created_at < before)
-    messages = q.order_by(DirectChatMessage.created_at).limit(limit).all()
+    messages = q.order_by(desc(DirectChatMessage.created_at)).limit(limit).all()
+    messages.reverse()
 
     return {
         "session": _serialize_session(session, current_user.id),
@@ -393,7 +396,6 @@ async def send_message(
     partner_name = partner.name if partner else "Partner"
 
     # 1. Pass message through AI classification layer
-    import re
     from graph.graph import twin_graph
     
     recent_msgs = db.query(DirectChatMessage).filter(
@@ -410,7 +412,6 @@ async def send_message(
     if not effective_input and body.files:
         effective_input = "Please analyze and describe the attached file(s)."
 
-    import base64
     if body.files:
         text_file_context = []
         for f in body.files:
@@ -446,7 +447,7 @@ async def send_message(
     }
     
     try:
-        final_state = twin_graph.invoke(initial_state)
+        final_state = await twin_graph.ainvoke(initial_state)
     except Exception as e:
         logger.error(f"AI classification failed: {e}")
         final_state = {"intent": "general", "output": body.content}
@@ -457,78 +458,106 @@ async def send_message(
     metadata = {}
     if body.files:
         metadata["files"] = body.files
-        
-    msg_content = body.content
-    sender_type = "human"
     
-    is_task = intent not in ["general", "other"]
-    
-    if is_task:
-        msg_content = ai_output
-        sender_type = "twin"
-        metadata["response_type"] = final_state.get("response_type", "text")
-        if final_state.get("image_url"):
-            metadata["image_url"] = final_state.get("image_url")
-        metadata["intent"] = intent
-        metadata["source"] = "ai_auto_executed"
-        
-        # Execute tasks if necessary (e.g. email)
-        action_match = re.search(r"<action>(.*?)</action>", msg_content, re.DOTALL)
+    # 2. Persist the HUMAN message first
+    human_msg = DirectChatMessage(
+        id=str(uuid.uuid4()),
+        session_id=session_id,
+        sender_id=current_user.id,
+        sender_type="human",
+        status="sent",
+        content=body.content,
+        metadata_json=json.dumps(metadata) if metadata else None,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(human_msg)
+    db.commit()
+    db.refresh(human_msg)
+
+    # 3. If it was a task, or even if it was general, save the AI response as a separate message
+    ai_msg = None
+    if ai_output and ai_output.strip() != body.content.strip():
+        # Execute tasks if necessary (e.g. email) before saving
+        final_ai_content = ai_output
+        action_match = re.search(r"<action>(.*?)</action>", final_ai_content, re.DOTALL)
         if action_match:
             try:
                 action_data = json.loads(action_match.group(1))
-                action_intent = action_data.get("intent")
-                if action_intent == "email":
+                if action_data.get("intent") == "email":
                     from tools.gmail_tool import send_email
                     to = action_data.get("to")
                     subject = action_data.get("subject")
                     body_html = action_data.get("body")
                     try:
                         send_email(db, current_user.id, to, subject, body_html)
-                        msg_content = re.sub(r"<action>.*?</action>", "", msg_content, flags=re.DOTALL)
-                        msg_content += f"\n\n*I have sent you an email regarding the subject: {subject}*"
+                        final_ai_content = re.sub(r"<action>.*?</action>", "", final_ai_content, flags=re.DOTALL)
+                        final_ai_content += f"\n\n*I have sent you an email regarding the subject: {subject}*"
                     except Exception as e:
-                        msg_content += f"\n\n*(Failed to send email: {str(e)})*"
+                        final_ai_content += f"\n\n*(Failed to send email: {str(e)})*"
             except Exception:
                 pass
 
-    msg = DirectChatMessage(
-        id=str(uuid.uuid4()),
-        session_id=session_id,
-        sender_id=current_user.id,
-        sender_type=sender_type,
-        status="sent",
-        content=msg_content,
-        metadata_json=json.dumps(metadata) if metadata else None,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(msg)
-    session.updated_at = now
-    session.last_message_at = now
-    db.commit()
-    db.refresh(msg)
+        ai_metadata = {
+            "intent": intent,
+            "response_type": final_state.get("response_type", "text"),
+            "image_url": final_state.get("image_url"),
+            "viz_config": final_state.get("viz_config"),
+            "generated_file": final_state.get("generated_file"),
+            "source": "ai_response"
+        }
+        
+        # Determine status: if it requires approval, set to pending
+        msg_status = "sent"
+        if final_state.get("approval_required"):
+            msg_status = "pending"
 
-    # Index this message in sender's memory
+        ai_msg = DirectChatMessage(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            sender_id=current_user.id, # Still owned by the user
+            sender_type="twin",
+            status=msg_status,
+            content=final_ai_content,
+            metadata_json=json.dumps(ai_metadata),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(ai_msg)
+        db.commit()
+        db.refresh(ai_msg)
+
+    # Update session last_message_at
+    session.last_message_at = datetime.utcnow()
+    db.commit()
+
+    # Index human message in memory
     store_message_in_memory(
         user_id=current_user.id,
         session_id=session_id,
-        message_id=msg.id,
+        message_id=human_msg.id,
         content=body.content,
         sender_name=current_user.name or "You",
         partner_name=partner_name,
         is_outgoing=True,
     )
 
-    serialized = _serialize_message(msg)
-
-    # Broadcast new message to both participants
+    # Broadcast BOTH messages
+    human_serialized = _serialize_message(human_msg)
     await manager.broadcast_to_session(session, {
         "event": "new_message",
-        "message": serialized,
+        "message": human_serialized,
     })
 
+    if ai_msg:
+        ai_serialized = _serialize_message(ai_msg)
+        await manager.broadcast_to_session(session, {
+            "event": "new_message",
+            "message": ai_serialized,
+        })
+
     # Generate Twin enrichment for the partner asynchronously for faster UX.
+    is_task = intent not in ["general", "other"]
     if not is_task and session.twin_mode:
         asyncio.create_task(
             _generate_partner_suggestion_async(
@@ -539,7 +568,10 @@ async def send_message(
             )
         )
 
-    return {"message": serialized}
+    return {
+        "message": human_serialized,
+        "ai_response": _serialize_message(ai_msg) if ai_msg else None
+    }
 
 
 @router.post("/sessions/{session_id}/suggest")
@@ -761,7 +793,6 @@ async def ai_process_in_chat(
 ):
     """
     Route a Twin Chat message through the FULL AI pipeline (LangGraph).
-    Supports: image generation, email drafting, calendar events, file analysis, etc.
     The response is stored as a twin-generated message in the session.
     """
     import base64
@@ -776,11 +807,20 @@ async def ai_process_in_chat(
         raise HTTPException(status_code=403, detail="Not a participant")
 
     now = datetime.now(timezone.utc)
-    partner_id = session.partner_id if session.initiator_id == current_user.id else session.initiator_id
 
-    # We DO NOT save the user's prompt as a message in the chat history, 
-    # because this is an "Enhance" / "AI Action" request by the current user.
-    # The prompt is only used to guide the AI graph.
+    # 1. Persist the HUMAN prompt so it's visible in the history
+    human_msg = DirectChatMessage(
+        id=str(uuid.uuid4()),
+        session_id=session_id,
+        sender_id=current_user.id,
+        sender_type="human",
+        status="sent",
+        content=body.content,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(human_msg)
+    db.commit()
 
     # 2. Build conversation history for the AI graph
     recent_msgs = db.query(DirectChatMessage).filter(
@@ -807,6 +847,7 @@ async def ai_process_in_chat(
         "intent": "other",
         "intent_hint": body.intent_hint,
         "output": "",
+        "approved": False,
         "task_plan": [],
         "approval_required": False,
         "response_type": "text",
@@ -817,25 +858,9 @@ async def ai_process_in_chat(
         "files": body.files or [],
     }
 
-    # Augment with text file contents
-    if body.files:
-        text_file_context = []
-        for f in body.files:
-            mime = f.get("type", "")
-            if not mime.startswith("image/"):
-                try:
-                    raw = f.get("data", "")
-                    encoded = raw.split(",", 1)[1] if "," in raw else raw
-                    content = base64.b64decode(encoded).decode("utf-8", errors="replace")
-                    text_file_context.append(f'--- File: {f["name"]} ---\n{content[:3000]}\n---')
-                except Exception:
-                    pass
-        if text_file_context:
-            initial_state["input"] = effective_input + "\n\n" + "\n".join(text_file_context)
-
     # 4. Invoke the LangGraph twin pipeline
     try:
-        final_state = twin_graph.invoke(initial_state)
+        final_state = await twin_graph.ainvoke(initial_state)
     except Exception as e:
         logger.error(f"[TwinChat AI] Graph error: {e}")
         final_state = {"output": f"❌ AI processing error: {str(e)}", "intent": "error", "response_type": "text"}

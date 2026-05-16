@@ -131,6 +131,18 @@ input, textarea, select, button {
    FLOATING MOBILE NAV — Premium Glassmorphic Glow
    ══════════════════════════════════════════════════ */
 
+/* Popup menu animation */
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Glow animation keyframes */
 @keyframes navGlowPulse {
   0%, 100% {
@@ -263,4 +275,34 @@ input, textarea, select, button {
   background: radial-gradient(ellipse, rgba(103, 96, 253, 0.35) 0%, transparent 70%);
   height: 28px;
   filter: blur(14px);
+}
+
+/* ── Mobile Layout Fixes ── */
+@media (max-width: 640px) {
+  .chat-bubble-container {
+    @apply max-w-[92%] px-3 py-2;
+  }
+  .chat-action-card {
+    @apply mx-[-8px] rounded-none border-x-0;
+  }
+  .header-blur {
+    @apply backdrop-blur-xl bg-surface-base/90;
+  }
+}
+
+/* Hide scrollbar on mobile but allow scrolling */
+@media (max-width: 1024px) {
+  .custom-scrollbar {
+    scrollbar-width: none;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Fix for mobile keyboard pushing content */
+@supports (-webkit-touch-callout: none) {
+  .h-screen {
+    height: -webkit-fill-available;
+  }
 }

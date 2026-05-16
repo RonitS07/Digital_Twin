@@ -417,8 +417,9 @@ const AgentInbox = () => {
     if (!userId || !accessToken) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
-    const wsBase = API_BASE.replace('http://', 'ws://').replace('https://', 'wss://')
-    const ws = new WebSocket(`${wsBase}/agent/ws/${userId}?token=${accessToken}`)
+    const proto = API_BASE.startsWith('https') ? 'wss' : (window.location.protocol === 'https:' ? 'wss' : 'ws');
+    const host = API_BASE ? API_BASE.replace(/^https?:\/\//, '') : window.location.host;
+    const ws = new WebSocket(`${proto}://${host}/agent/ws/${userId}?token=${accessToken}`)
     wsRef.current = ws
 
     ws.onopen = () => {

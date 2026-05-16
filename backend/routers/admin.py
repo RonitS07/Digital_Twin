@@ -509,3 +509,45 @@ def get_system_health(
         health["telegram"] = {"status": "error", "error": str(exc)}
 
     return health
+
+@router.get("/mcp/status")
+async def get_mcp_status(
+    current_admin: User = Depends(get_current_admin),
+):
+    from mcp.registry import mcp_registry
+    servers = []
+    for name, server in mcp_registry._servers.items():
+        try:
+            tools = server.list_tools()
+            extra_data = {}
+            if name == "whatsapp":
+                try:
+                    # Async call to get QR status if it's the WhatsApp server
+                    status_res = await server.call_tool("get_status", {})
+                    extra_data = status_res
+                except Exception:
+                    pass
+
+            servers.append({
+                "name": name,
+                "tool_count": len(tools),
+                "status": "ok",
+                "tools": [t.name for t in tools],
+                "extra": extra_data
+            })
+        except Exception as e:
+            servers.append({
+                "name": name,
+                "tool_count": 0,
+                "status": "error",
+                "error": str(e),
+                "tools": [],
+                "extra": {}
+            })
+    return {
+        "servers": servers,
+        "total_tools": sum(
+            s["tool_count"] for s in servers
+        ),
+        "total_servers": len(servers)
+    }

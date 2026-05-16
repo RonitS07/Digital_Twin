@@ -119,7 +119,22 @@ class CalendarMCPServer(MCPServer):
 
             return {"error": f"Unknown tool: {tool_name}"}
         except Exception as e:
-            logger.error(f"[CalendarMCP] {tool_name} error: {e}")
-            return {"error": str(e)}
+            err = str(e)
+            if "invalid_grant" in err or "401" in err:
+                return {
+                    "error": "Google Calendar authorization expired. Please reconnect in Workspace settings.",
+                    "ok": False
+                }
+            if "conflict" in err.lower():
+                return {
+                    "error": err,
+                    "conflict": True,
+                    "ok": False
+                }
+            logger.error(f"[CalendarMCP] {tool_name}: {e}")
+            return {
+                "error": f"Calendar error: {err[:100]}",
+                "ok": False
+            }
         finally:
             db.close()

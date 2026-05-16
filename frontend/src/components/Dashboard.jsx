@@ -310,6 +310,7 @@ const Dashboard = () => {
     };
 
     const pollGmail = async () => {
+        if (!user?.uid) return;
         try {
             const data = await apiFetch(`/gmail/inbox?max_results=5`);
             if (data.emails) {
@@ -325,6 +326,7 @@ const Dashboard = () => {
     };
 
     const pollCalendar = async () => {
+        if (!user?.uid) return;
         try {
             const data = await apiFetch(`/calendar/events?max_results=20`);
             if (data.events) {
@@ -340,6 +342,7 @@ const Dashboard = () => {
     };
 
     const pollHistory = async () => {
+        if (!user?.uid) return;
         try {
             const data = await apiFetch(`/history`);
             if (data.history) setHistory(data.history.slice(0, 5));
@@ -348,11 +351,18 @@ const Dashboard = () => {
     };
 
     const pollAnalytics = async () => {
+        if (!user?.uid) return;
         try {
             const data = await apiFetch(`/analytics?gmail_sync=${preferences.gmailSync !== false}&calendar_sync=${preferences.calendarSync !== false}`);
             setAnalytics(data);
             setLoadingAnalytics(false);
-        } catch (err) { console.error("Analytics poll error:", err); }
+        } catch (err) { 
+            if (err.message?.includes('<!DOCTYPE') || err.message?.includes('not valid JSON')) {
+                console.warn('Analytics endpoint returned HTML — backend may not be running');
+            } else {
+                console.error("Analytics poll error:", err); 
+            }
+        }
     };
 
     useEffect(() => {

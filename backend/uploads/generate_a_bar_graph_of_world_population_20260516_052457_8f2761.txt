@@ -1,0 +1,51 @@
+## World Population Bar Graph
+
+# World Population Bar Graph
+
+## Introduction
+
+The world population has been increasing steadily over the years, with a significant growth rate in the past century. This bar graph provides a visual representation of the world population from 1950 to 2020, highlighting the growth trends and patterns.
+
+## Data
+
+The data used for this graph is based on the United Nations Department of Economic and Social Affairs Population Division's estimates and projections.
+
+### Source:
+
+- United Nations Department of Economic and Social Affairs Population Division (2020)
+
+### Data:
+
+| Year | World Population (in millions) |
+| --- | --- |
+| 1950 | 2,555 |
+| 1960 | 3,025 |
+| 1970 | 3,692 |
+| 1980 | 4,453 |
+| 1990 | 5,310 |
+| 2000 | 6,143 |
+| 2010 | 6,909 |
+| 2020 | 7,794 |
+
+## Bar Graph
+
+Here is the bar graph representing the world population from 1950 to 2020:
+
+```
+import matplotlib.pyplot as plt
+
+years = [1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020]
+population = [2555, 3025, 3692, 4453, 5310, 6143, 6909, 7794]
+
+plt.bar(years, population)
+plt.xlabel('Year')
+plt.ylabel('World Population (in millions)')
+plt.title('World Population Bar Graph')
+plt.show()
+```
+
+Note: This is a Python code snippet to generate a bar graph. You can use any other programming language or tool to create a similar graph.
+
+## Conclusion
+
+The bar graph shows a steady increase in the world population over the years, with a significant growth rate in the past century. The graph highlights the importance of population growth and its impact on the environment, economy, and society.

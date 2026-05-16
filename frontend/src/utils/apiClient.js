@@ -142,7 +142,13 @@ export const apiFetch = async (endpoint, options = {}) => {
             throw new Error(errData.detail?.message || errData.detail || "API Request Failed");
         }
 
-        return await response.json();
+        // Defensive JSON parsing logic here as required
+        const text = await response.text();
+        if (text.includes('<!DOCTYPE html>') || text.trim().startsWith('<')) {
+            throw new Error(`Endpoint returned HTML: ${text.substring(0, 50)}...`);
+        }
+        
+        return text ? JSON.parse(text) : {};
     } catch (error) {
         return Promise.reject(error);
     }

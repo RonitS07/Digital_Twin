@@ -81,7 +81,21 @@ class TelegramMCPServer(MCPServer):
 
             return {"error": f"Unknown tool: {tool_name}"}
         except Exception as e:
-            logger.error(f"[TelegramMCP] {tool_name} error: {e}")
-            return {"error": str(e)}
+            err = str(e)
+            if "chat not found" in err.lower():
+                return {
+                    "error": "Telegram chat not found. Send /start to the bot first.",
+                    "ok": False
+                }
+            if "bot was blocked" in err.lower():
+                return {
+                    "error": "Telegram bot was blocked by the user.",
+                    "ok": False
+                }
+            logger.error(f"[TelegramMCP] {tool_name}: {e}")
+            return {
+                "error": f"Telegram error: {err[:100]}",
+                "ok": False
+            }
         finally:
             db.close()

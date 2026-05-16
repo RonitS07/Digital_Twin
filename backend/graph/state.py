@@ -10,6 +10,7 @@ class State(TypedDict, total=False):
     task_plan: List[str]
     context: str
     output: str
+    approved: bool
     approval_required: bool
     response_type: str
     image_url: Optional[str]

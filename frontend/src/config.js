@@ -2,12 +2,11 @@
  * Centralized configuration for the AI Twin frontend.
  * Reads from Vite environment variables with sensible defaults.
  *
- * Usage:
- *   import { API_BASE } from '../config'
- *   fetch(`${API_BASE}/ai/process`, ...)
+ * In development: leave VITE_API_BASE unset — Vite proxy handles routing
+ *   all /ai, /sessions, /history, etc. to localhost:8000 transparently.
  *
- * To override in production, create a .env file at the frontend root:
- *   VITE_API_BASE=https://api.yourdomain.com
+ * In production, set in .env:
+ *   VITE_API_BASE=https://your-railway-backend.up.railway.app
  */
 export const API_BASE =
-    import.meta.env.VITE_API_BASE?.replace(/\/+$/, '') || 'http://127.0.0.1:8000'
+    import.meta.env.VITE_API_BASE?.replace(/\/+$/, '') || ''

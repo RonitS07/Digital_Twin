@@ -1,11 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
-  Search, Send, ArrowLeft, MoreVertical, Plus, 
-  Sparkles, Zap, Wand2, Shield, Loader2, Users, 
-  MessageSquare, HardDrive, Settings, Activity as ActivityIcon,
-  Home, Check, X, Clock, Paperclip, Mic as MicIcon, MicOff,
-  File as FileIcon, Calendar, Mail, ExternalLink, Image, Trash2
+  Send, 
+  Search, 
+  Plus, 
+  Trash2, 
+  MessageSquare, 
+  Users, 
+  ArrowLeft, 
+  Clock, 
+  Check, 
+  X, 
+  Zap, 
+  Mail, 
+  Calendar, 
+  Paperclip, 
+  Mic as MicIcon, 
+  MicOff, 
+  Loader2, 
+  Sparkles, 
+  File as FileIcon, 
+  ExternalLink,
+  Wand2
 } from 'lucide-react'
 import { apiFetch } from '../utils/apiClient'
 import { useStore } from '../store/useStore'
@@ -153,7 +169,7 @@ const ImageLoader = ({ src }) => {
   )
 }
 
-function MessageBubble({ msg, isOwn, onAction, user }) {
+const MessageBubble = React.memo(({ msg, isOwn, onAction, user }) => {
   const [cleanText, setCleanText] = useState(msg.content || '')
   const [actionData, setActionData] = useState(null)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -291,7 +307,7 @@ function MessageBubble({ msg, isOwn, onAction, user }) {
       </div>
     </motion.div>
   )
-}
+})
 
 function SuggestionsPanel({ data, onApprove, onDismiss, partnerName }) {
   if (!data) return null
@@ -407,7 +423,22 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
     setLoading(true)
     setPendingSuggestion(null) // Clear suggestions when switching sessions
     apiFetch(`/twin-chat/sessions/${session.id}`)
-      .then(data => { setMessages(data.messages || []); setLoading(false) })
+      .then(data => { 
+        const msgs = data.messages || [];
+        setMessages(msgs);
+        
+        // Recover any pending suggestion on reload
+        const pending = msgs.find(m => m.status === 'pending' && m.sender_id === user?.uid);
+        if (pending) {
+          setPendingSuggestion({
+            suggestions: pending.suggestions || [],
+            msgId: pending.id,
+            respondingTo: null,
+            isEnhancement: true
+          });
+        }
+        setLoading(false);
+      })
       .catch(() => setLoading(false))
   }, [session?.id])
 
@@ -458,8 +489,22 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
       if (data.message) {
         setMessages(prev => {
           const withoutOptimistic = prev.filter(m => m.id !== optimisticId)
-          return withoutOptimistic.some(m => m.id === data.message.id) ? withoutOptimistic : [...withoutOptimistic, data.message]
+          let next = [...withoutOptimistic, data.message]
+          if (data.ai_response && data.ai_response.status !== 'pending') {
+            next = [...next, data.ai_response]
+          }
+          return next
         })
+        
+        // If the AI response is pending, show it in the suggestion panel
+        if (data.ai_response && data.ai_response.status === 'pending') {
+          setPendingSuggestion({
+            suggestions: data.ai_response.suggestions || [],
+            msgId: data.ai_response.id,
+            respondingTo: text,
+            isEnhancement: true
+          })
+        }
       }
     } catch (e) {
       setMessages(prev => prev.filter(m => m.id !== optimisticId))
@@ -779,189 +824,92 @@ function SessionSidebar({ sessions, activeId, loading, onSelect, onNew }) {
             <p className="text-xs text-neutral">No conversations found</p>
           </div>
         ) : (
-          filtered.map(s => {
-            const isActive = s.id === activeId
-            return (
-              <button key={s.id} onClick={() => onSelect(s.id)}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${isActive 
-                  ? 'bg-primary/10 border border-primary/20' 
-                  : 'hover:bg-surface-container/50 border border-transparent'}`}>
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold shrink-0 ${isActive ? 'bg-primary text-white' : 'bg-surface-container text-neutral'}`}>
-                  {(s.partner?.name || '?')[0].toUpperCase()}
+          filtered.map(s => (
+            <div key={s.id} onClick={() => onSelect(s.id)}
+              className={`p-3 rounded-xl cursor-pointer transition-all flex items-center gap-3 ${activeId === s.id ? 'bg-primary/20 border border-primary/20' : 'hover:bg-white/5 border border-transparent'}`}>
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary text-sm font-bold flex-shrink-0">
+                {s.partner?.name?.[0]?.toUpperCase() || 'C'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-bold text-on-surface truncate">{s.partner?.name || 'Contact'}</p>
+                  <span className="text-[10px] text-neutral">{s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : ''}</span>
                 </div>
-                <div className="flex-1 text-left min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className={`text-sm font-bold truncate ${isActive ? 'text-primary' : 'text-on-surface'}`}>{s.partner?.name}</p>
-                    <span className="text-[10px] text-neutral shrink-0">{s.last_message_at ? new Date(s.last_message_at).toLocaleDateString() : ''}</span>
-                  </div>
-                  <p className="text-xs text-neutral truncate">Assistant active</p>
-                </div>
-              </button>
-            )
-          })
+                <p className="text-xs text-neutral truncate">{s.lastMessage || 'No messages yet'}</p>
+              </div>
+              {s.unreadCount > 0 && <div className="w-2 h-2 rounded-full bg-primary" />}
+            </div>
+          ))
         )}
       </div>
     </div>
   )
 }
 
-function NewChatModal({ onClose, onCreated }) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
-  const [searching, setSearching] = useState(false)
-
-  const handleSearch = async (val) => {
-    setQuery(val)
-    if (val.length < 2) { setResults([]); return }
-    setSearching(true)
-    try {
-      const data = await apiFetch(`/twin-chat/users/search?q=${encodeURIComponent(val)}`)
-      setResults(data.users || [])
-    } catch {}
-    setSearching(false)
-  }
-
-  const handleStart = async (userId) => {
-    try {
-      const data = await apiFetch('/twin-chat/sessions', {
-        method: 'POST', body: JSON.stringify({ partner_id: userId })
-      })
-      onCreated(data.session)
-    } catch {}
-  }
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-surface-base/80 backdrop-blur-md">
-      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-        className="w-full max-w-md bg-surface-base border border-neutral/10 rounded-3xl shadow-2xl overflow-hidden">
-        <div className="p-6 border-b border-neutral/10 flex items-center justify-between">
-          <h3 className="text-xl font-manrope font-extrabold text-on-surface">Start New Chat</h3>
-          <button onClick={onClose} className="p-2 text-neutral hover:text-on-surface"><X size={20} /></button>
-        </div>
-        <div className="p-6">
-          <div className="relative mb-6">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" size={18} />
-            <input value={query} onChange={e => handleSearch(e.target.value)} autoFocus
-              className="w-full bg-surface-container border border-neutral/10 rounded-2xl py-3 pl-10 pr-4 text-sm text-on-surface focus:outline-none focus:border-primary/30"
-              placeholder="Search by name or email..." />
-          </div>
-
-          <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
-            {searching ? (
-              <div className="text-center py-4"><Loader2 className="animate-spin mx-auto text-primary" /></div>
-            ) : results.length === 0 ? (
-              <p className="text-center py-4 text-neutral text-xs">{query.length < 2 ? 'Type at least 2 characters' : 'No users found'}</p>
-            ) : (
-              results.map(u => (
-                <button key={u.id} onClick={() => handleStart(u.id)}
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-primary/5 border border-transparent hover:border-primary/10 transition-all text-left">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
-                    {u.name[0].toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-on-surface">{u.name}</p>
-                    <p className="text-xs text-neutral">{u.email}</p>
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      </motion.div>
-    </div>
-  )
-}
-
-// ─── Main TwinChat Component ─────────────────────────────────────
-export default function TwinChat() {
+function TwinChat() {
+  const { auth } = useStore()
+  const user = auth.user
   const [sessions, setSessions] = useState([])
-  const [activeSessionId, setActiveSessionId] = useState(null)
-  const [showNewChat, setShowNewChat] = useState(false)
-  const [loadingSessions, setLoadingSessions] = useState(true)
-  const [mobileShowChat, setMobileShowChat] = useState(false)
-
-  const { twinChatActiveSessionId, setTwinChatActiveSessionId, auth } = useStore()
-  const token = auth.user?.accessToken
-  const [lastWsEvent, setLastWsEvent] = useState(null)
-  const wsHandlersRef = useRef(null)
-
-  // Handle global WS events
-  wsHandlersRef.current = (data) => {
-    setLastWsEvent(data)
-    
-    // Update session list in real-time
-    if (data.event === 'new_message') {
-      setSessions(prev => prev.map(s => {
-        if (s.id === data.message.session_id) {
-          return { ...s, last_message_at: data.message.created_at }
-        }
-        return s
-      }).sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0)))
-    }
-  }
-
-  const { send: wsSend } = useTwinChatWS(token, wsHandlersRef)
+  const [activeId, setActiveId] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [wsEvent, setWsEvent] = useState(null)
+  
+  const handlers = useRef(null)
+  handlers.current = (data) => setWsEvent(data)
+  const { send: wsSend } = useTwinChatWS(auth.user?.accessToken, handlers)
 
   const fetchSessions = useCallback(async () => {
     try {
       const data = await apiFetch('/twin-chat/sessions')
-      const fetchedSessions = data.sessions || []
-      setSessions(fetchedSessions)
-      
-      if (twinChatActiveSessionId) {
-        setActiveSessionId(twinChatActiveSessionId)
-        setMobileShowChat(true)
-        setTwinChatActiveSessionId(null)
-      }
-    } catch {}
-    setLoadingSessions(false)
-  }, [twinChatActiveSessionId])
+      setSessions(data.sessions || [])
+      setLoading(false)
+    } catch (e) { setLoading(false) }
+  }, [])
 
-  useEffect(() => { fetchSessions() }, [fetchSessions])
+  useEffect(() => { if (user) fetchSessions() }, [user, fetchSessions])
 
-  const activeSession = sessions.find(s => s.id === activeSessionId)
+  useEffect(() => {
+    if (wsEvent?.event === 'new_message' || wsEvent?.event === 'new_session') {
+      fetchSessions()
+    }
+  }, [wsEvent, fetchSessions])
 
-  const handleSelectSession = (id) => {
-    setActiveSessionId(id)
-    setMobileShowChat(true)
+  const handleNewSession = async () => {
+    const email = prompt("Enter the email of the person you want to chat with:")
+    if (!email) return
+    try {
+      const data = await apiFetch('/twin-chat/sessions', { method: 'POST', body: JSON.stringify({ partner_email: email }) })
+      await fetchSessions()
+      setActiveId(data.session.id)
+    } catch (e) { alert("Failed to create session. Make sure the user exists.") }
   }
 
-  const handleNewChatCreated = (session) => {
-    setSessions(prev => [session, ...prev.filter(s => s.id !== session.id)])
-    setActiveSessionId(session.id)
-    setMobileShowChat(true)
-    setShowNewChat(false)
+  const handleDeleteSession = async (id) => {
+    try {
+      await apiFetch(`/twin-chat/sessions/${id}`, { method: 'DELETE' })
+      if (activeId === id) setActiveId(null)
+      fetchSessions()
+    } catch (e) { console.error(e) }
   }
+
+  const activeSession = sessions.find(s => s.id === activeId)
 
   return (
-    <div className="h-full flex overflow-hidden bg-surface-base">
-      <div className={`w-full lg:w-72 xl:w-80 shrink-0 ${mobileShowChat ? 'hidden lg:flex lg:flex-col' : 'flex flex-col'}`}>
-        <SessionSidebar sessions={sessions} activeId={activeSessionId} loading={loadingSessions}
-          onSelect={handleSelectSession} onNew={() => setShowNewChat(true)} />
+    <div className="flex h-screen bg-surface-base text-on-surface font-inter overflow-hidden">
+      <div className={`fixed inset-0 z-40 lg:relative lg:z-0 lg:flex ${activeId ? 'hidden' : 'flex'} w-full lg:w-80 shrink-0`}>
+        <SessionSidebar sessions={sessions} activeId={activeId} loading={loading} onSelect={setActiveId} onNew={handleNewSession} />
       </div>
-
-      <div className={`flex-1 min-w-0 ${!mobileShowChat ? 'hidden lg:flex lg:flex-col' : 'flex flex-col'}`}>
+      <div className={`flex-1 flex flex-col min-w-0 ${!activeId ? 'hidden lg:flex' : 'flex'}`}>
         <ChatPanel 
-          session={activeSession}
-          wsSend={wsSend}
-          wsEvent={lastWsEvent}
-          onBack={() => setMobileShowChat(false)} 
-          onDeleteSession={async (id) => {
-            try {
-              await apiFetch(`/twin-chat/sessions/${id}`, { method: 'DELETE' })
-              setSessions(prev => prev.filter(s => s.id !== id))
-              setActiveSessionId(null)
-              setMobileShowChat(false)
-            } catch (err) {
-              console.error("Failed to delete chat", err)
-            }
-          }}
+          session={activeSession} 
+          onBack={() => setActiveId(null)} 
+          wsSend={wsSend} 
+          wsEvent={wsEvent}
+          onDeleteSession={handleDeleteSession}
         />
       </div>
-
-      <AnimatePresence>
-        {showNewChat && <NewChatModal onClose={() => setShowNewChat(false)} onCreated={handleNewChatCreated} />}
-      </AnimatePresence>
     </div>
   )
 }
+
+export default TwinChat

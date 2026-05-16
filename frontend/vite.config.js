@@ -9,5 +9,26 @@ export default defineConfig({
       'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
       'Cross-Origin-Embedder-Policy': 'credentialless',
     },
+    proxy: {
+      '/twin-chat': {
+        target: 'http://localhost:8000',
+        ws: true
+      },
+      '/agent/ws': {
+        target: 'http://localhost:8000',
+        ws: true
+      },
+      '/auth': 'http://localhost:8000',
+      '/ai': 'http://localhost:8000',
+      '/gmail': 'http://localhost:8000',
+      '/calendar': 'http://localhost:8000',
+      '/sessions': 'http://localhost:8000',
+      '/history': 'http://localhost:8000',
+      '/analytics': 'http://localhost:8000',
+      '/agent': 'http://localhost:8000',
+      '/mcp': 'http://localhost:8000',
+      '/intelligence': 'http://localhost:8000',
+      '/test-telegram': 'http://localhost:8000'
+    }
   },
 })

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { apiFetch } from '../utils/apiClient'
+import { API_BASE } from '../config'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     Send,
@@ -8,15 +9,18 @@ import {
     Plus,
     Clock,
     Paperclip,
+    ImagePlus,
     Mic as MicIcon,
     MicOff,
     Copy,
     Check,
     Loader2,
     MessageSquare,
+    MessageCircle,
     Trash2,
     Zap,
     File as FileIcon,
+    FileText,
     Search,
     Download,
     Sparkles,
@@ -26,17 +30,40 @@ import {
 import { useStore } from '../store/useStore'
 import VisualizationRenderer from './VisualizationRenderer'
 import FileDownloadCard from './FileDownloadCard'
+import SlotProposalCard from './SlotProposalCard'
+import ConflictCard from './ConflictCard'
 
-const INTENT_OPTIONS = [
-    { key: 'general', label: 'General' },
-    { key: 'email', label: 'Email' },
-    { key: 'calendar', label: 'Schedule' },
-    { key: 'visual', label: 'Image' },
-    { key: 'file_generate', label: 'Create File' },
-    { key: 'file_read', label: 'Analyze File' },
-    { key: 'slack', label: 'Slack' },
-    { key: 'telegram', label: 'Telegram' },
-]
+const formatRelativeTime = (dateStr) => {
+    if (!dateStr) return ''
+    const diff = Date.now() - new Date(dateStr)
+    const mins = Math.floor(diff / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    const hrs = Math.floor(mins / 60)
+    if (hrs < 24) return `${hrs}h ago`
+    return `${Math.floor(hrs / 24)}d ago`
+}
+
+const getActionTitle = (action) => {
+    if (!action) return 'Pending Action'
+    const intent = action.intent || ''
+    const map = {
+        email_send: `Send email to ${action.to || '...'}`,
+        email:      `Send email to ${action.to || '...'}`,
+        slack_send: `Post to ${action.channel_name || '#channel'}`,
+        slack:      `Post to ${action.channel_name || '#channel'}`,
+        telegram_send: 'Send Telegram message',
+        telegram:      'Send Telegram message',
+        whatsapp_send: `WhatsApp ${action.to || '...'}`,
+        calendar_create: `Schedule: ${action.summary || action.title || 'Meeting'}`,
+        calendar:        `Schedule: ${action.summary || action.title || 'Meeting'}`,
+        twin_message:      'Send twin message',
+        schedule_with_twin: 'Schedule meeting with twin',
+    }
+    return map[intent] || action.subject || intent || 'Pending Action'
+}
+
+// Intent pills removed — classifier handles routing automatically
 
 // Lightweight zero-dep markdown renderer
 const SimpleMarkdown = ({ children }) => {
@@ -146,13 +173,6 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
     const [lightboxSrc, setLightboxSrc] = useState(null)
     const [copied, setCopied] = useState(false)
 
-    console.log("ChatMessage Render:", { 
-        id: msg.id, 
-        role: msg.role, 
-        responseType: msg.responseType, 
-        imageUrl: msg.imageUrl,
-        text: msg.text 
-    });
 
     useEffect(() => {
         if (!msg.text) return
@@ -281,16 +301,52 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                             ))}
                         </div>
                     )}
+                    {/* file_summary card */}
+                    {(msg.responseType === 'file_summary' || msg.response_type === 'file_summary') && (
+                        <div className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10 mb-2">
+                            <FileText size={20} className="text-primary flex-shrink-0" />
+                            <div>
+                                <p className="text-xs font-bold text-white/60 uppercase tracking-wider">File Summary</p>
+                                <p className="text-sm text-white/80">{msg.file_name || msg.fileName || 'Uploaded file'}</p>
+                            </div>
+                        </div>
+                    )}
+
                     { (msg.responseType === "visual" || msg.response_type === "visual" || msg.source === "VISUAL") ? (
                         <div className="space-y-3 lg:space-y-4">
                             <SimpleMarkdown>{cleanText}</SimpleMarkdown>
-                            <ImageLoader src={msg.imageUrl} />
-                            
+                            {(msg.imageUrl || msg.image_url) && (
+                                <div className="mt-3 rounded-xl overflow-hidden border border-white/10">
+                                    <ImageLoader src={msg.imageUrl || msg.image_url} />
+                                    {(msg.imagePrompt || msg.image_prompt) && (
+                                        <p className="text-xs text-white/40 mt-1 px-1">{msg.imagePrompt || msg.image_prompt}</p>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="text-sm leading-relaxed break-words">
                             <SimpleMarkdown>{cleanText}</SimpleMarkdown>
                         </div>
+                    )}
+
+                    {/* scheduling_proposal card */}
+                    {(msg.responseType === 'scheduling_proposal' || msg.response_type === 'scheduling_proposal') && msg.slots && (
+                        <SlotProposalCard
+                            slots={msg.slots}
+                            target={msg.target_twin}
+                            msgId={msg.msg_id}
+                            onConfirm={(slotIndex) => onAction && onAction('confirm_slot', { msg_id: msg.msg_id, slot_index: slotIndex })}
+                        />
+                    )}
+
+                    {/* conflict card */}
+                    {(msg.responseType === 'conflict' || msg.response_type === 'conflict') && (
+                        <ConflictCard
+                            conflict={msg.conflict}
+                            alternatives={msg.alternatives || []}
+                            onSelect={(slot) => onAction && onAction('select_alternative', slot)}
+                        />
                     )}
 
                     {/* Generated file card */}
@@ -299,8 +355,10 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                     )}
 
                     {/* Interactive visualization */}
-                    {(msg.responseType === 'visualization' || msg.response_type === 'visualization') && msg.vizConfig && (
-                        <VisualizationRenderer config={msg.vizConfig} />
+                    {msg.vizConfig && (
+                        <div className="mt-4">
+                            <VisualizationRenderer config={msg.vizConfig} />
+                        </div>
                     )}
 
                     {actionData && (
@@ -334,7 +392,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                             )}
 
                             <div className="space-y-1">
-                                <h4 className="text-sm font-bold text-white">{actionData.subject || actionData.title || 'Untitled Action'}</h4>
+                                <h4 className="text-sm font-bold text-white">{getActionTitle(actionData)}</h4>
                                 {actionData.intent === 'email' && <p className="text-xs text-white/80">To: <span className="font-mono text-tertiary">{actionData.to}</span></p>}
                                 {actionData.intent === 'slack' && <p className="text-xs text-white/80">Channel: <span className="font-mono text-tertiary">#{actionData.channel_name || actionData.channel_id}</span></p>}
                                 {actionData.intent === 'telegram' && <p className="text-xs text-white/80">Action: <span className="font-mono text-tertiary">Push Notification</span></p>}
@@ -414,11 +472,14 @@ const Chat = () => {
     const user = auth.user || {}
     const [messages, setMessages] = useState([])
     const [input, setInput] = useState('')
-    const [selectedIntent, setSelectedIntent] = useState('general')
     const [loading, setLoading] = useState(false)
     const [attachedFiles, setAttachedFiles] = useState([])
+    const [plusOpen, setPlusOpen] = useState(false)
+    const [pendingIntentHint, setPendingIntentHint] = useState('auto')
     const endRef = useRef(null)
     const textareaRef = useRef(null)
+    const fileInputRef = useRef(null)
+    const plusRef = useRef(null)
 
     const [sessions, setSessions] = useState(() => {
         const saved = localStorage.getItem(`chat_sessions_${user.uid}`)
@@ -433,6 +494,93 @@ const Chat = () => {
     const [autoMode, setAutoMode] = useState(false)
     const [fetchingSessions, setFetchingSessions] = useState(false)
     const [fetchingMessages, setFetchingMessages] = useState(false)
+
+    // Close + menu on outside click
+    useEffect(() => {
+        const handler = (e) => {
+            if (plusRef.current && !plusRef.current.contains(e.target)) {
+                setPlusOpen(false)
+            }
+        }
+        document.addEventListener('mousedown', handler)
+        return () => document.removeEventListener('mousedown', handler)
+    }, [])
+
+    // Ctrl+U / Cmd+U opens file picker
+    useEffect(() => {
+        const handler = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+                e.preventDefault()
+                fileInputRef.current?.click()
+            }
+        }
+        window.addEventListener('keydown', handler)
+        return () => window.removeEventListener('keydown', handler)
+    }, [])
+
+    const setInputValue = (text) => {
+        setInput(text)
+        setTimeout(() => {
+            if (textareaRef.current) {
+                textareaRef.current.focus()
+                // move cursor to end
+                textareaRef.current.selectionStart = text.length
+                textareaRef.current.selectionEnd = text.length
+            }
+        }, 50)
+    }
+
+    const menuItems = [
+        {
+            icon: Paperclip,
+            label: 'Add photos & files',
+            hint: null,
+            shortcut: 'Ctrl+U',
+            action: () => fileInputRef.current?.click()
+        },
+        {
+            icon: ImagePlus,
+            label: 'Create image',
+            hint: null,
+            shortcut: null,
+            action: () => { setInputValue('Generate an image of '); setPendingIntentHint('visual'); }
+        },
+        {
+            icon: Calendar,
+            label: 'Schedule meeting',
+            hint: null,
+            shortcut: null,
+            action: () => { setInputValue('Schedule a meeting with '); setPendingIntentHint('calendar_create'); }
+        },
+        {
+            icon: Mail,
+            label: 'Draft email',
+            hint: null,
+            shortcut: null,
+            action: () => { setInputValue('Draft an email to '); setPendingIntentHint('email_draft'); }
+        },
+        {
+            icon: FileText,
+            label: 'Analyze file',
+            hint: null,
+            shortcut: null,
+            action: () => { fileInputRef.current?.click(); setPendingIntentHint('file_read'); }
+        },
+        {
+            icon: MessageCircle,
+            label: 'Post to Slack',
+            hint: null,
+            shortcut: null,
+            action: () => { setInputValue('Post to #'); setPendingIntentHint('slack_send'); }
+        },
+        {
+            icon: MessageSquare,
+            label: 'Send Telegram',
+            hint: null,
+            shortcut: null,
+            action: () => { setInputValue('Send via Telegram: '); setPendingIntentHint('telegram_send'); }
+        },
+    ]
 
     const newSessionId = () => `${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`
     
@@ -460,34 +608,35 @@ const Chat = () => {
         if (!user.uid || !sid) return;
         setFetchingMessages(true);
         try {
+            // /history now returns a flat array of {role, content, ...} pairs
             const data = await apiFetch(`/history?session_id=${sid}`);
-            if (data.history) {
-                const mapped = data.history.map(h => {
-                    let parsedMeta = {}
-                    if (h.metadata) {
-                        try { parsedMeta = JSON.parse(h.metadata) } catch(e){}
-                    }
-                    return {
-                        id: h.id,
-                        role: h.kind === 'prompt' ? 'user' : 'ai',
-                        text: h.kind === 'prompt' ? h.input : h.output,
-                        time: new Date(h.timestamp).toLocaleTimeString([], { timeStyle: 'short' }),
-                        source: h.intent?.toUpperCase() || 'AI',
-                        responseType: h.response_type,
-                        imageUrl: h.image_url,
-                        attachments: parsedMeta.files || []
-                    }
-                });
-                
-                if (mapped.length > 0) {
-                    setMessages(mapped);
-                } else {
-                    setMessages([{
-                        id: 'init', role: 'ai', sender: 'Assistant',
-                        text: `Hello ${user.name?.split(' ')[0] || 'there'}. How can I assist you?`,
-                        time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
-                    }]);
-                }
+            // Support both new flat array and legacy {history:[]} envelope
+            const rawList = Array.isArray(data) ? data : (data.history || []);
+
+            if (rawList.length > 0) {
+                const mapped = rawList.map(h => ({
+                    id: h.id,
+                    role: h.role === 'assistant' ? 'ai' : (h.role || 'user'),
+                    sender: h.role === 'assistant' ? 'Assistant' : (user.name || 'You'),
+                    // New format uses h.content; legacy format used h.input / h.output
+                    text: h.content ?? (h.role === 'user' ? h.input : h.output) ?? '',
+                    time: h.timestamp
+                        ? new Date(h.timestamp).toLocaleTimeString([], { timeStyle: 'short' })
+                        : '',
+                    responseType: h.response_type || h.metadata?.response_type || 'text',
+                    imageUrl: h.image_url || h.metadata?.image_url || null,
+                    vizConfig: h.metadata?.viz_config || null,
+                    generatedFile: h.metadata?.generated_file || null,
+                    attachments: h.metadata?.attachments || [],
+                    source: h.metadata?.source || h.intent?.toUpperCase() || (h.role === 'assistant' ? 'AI' : 'Web'),
+                }));
+                setMessages(mapped);
+            } else {
+                setMessages([{
+                    id: 'init', role: 'ai', sender: 'Assistant',
+                    text: `Hello ${user.name?.split(' ')[0] || 'there'}. How can I assist you?`,
+                    time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'System'
+                }]);
             }
         } catch (err) {
             console.error("Failed to fetch history", err);
@@ -604,9 +753,10 @@ const Chat = () => {
                     calendar_sync: preferences.calendarSync !== false,
                     slack_sync: preferences.slackSync !== false,
                     files: currentFiles,
-                    intent_hint: selectedIntent
+                    intent_hint: pendingIntentHint
                 })
             })
+            setPendingIntentHint('auto')
             const aiMsg = {
                 id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: 'ai', sender: 'Assistant',
                 text: data.output, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
@@ -630,8 +780,68 @@ const Chat = () => {
                 return newMessages;
             });
         } catch (err) {
-            setMessages(prev => [...prev, { id: 'err', role: 'ai', sender: 'Error', text: 'Failed to reach Twin.', time: 'Now', source: 'Error' }])
+            setMessages(prev => [...prev, { id: `err-${Date.now()}`, role: 'ai', sender: 'Error', text: 'Failed to reach Twin. Please check your connection and try again.', time: 'Now', source: 'Error' }])
         } finally { setLoading(false) }
+    }
+
+    const handleFileSelect = async (e) => {
+        const file = e.target.files[0]
+        if (!file) return
+        const token = useStore.getState().auth?.user?.accessToken
+        const formData = new FormData()
+        formData.append('file', file)
+        try {
+            const res = await fetch(`${API_BASE}/upload`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` },
+                body: formData
+            })
+            if (!res.ok) throw new Error('Upload failed')
+            const { file_path, file_name } = await res.json()
+            // inject a user message and trigger AI process with file_path
+            const msgText = `Summarise this file: ${file_name}`
+            setInput(msgText)
+            // auto-send
+            const msgId = `user-${Date.now()}`
+            const userMsg = {
+                id: msgId, role: 'user', sender: user.name || 'You',
+                text: msgText, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
+                source: 'Web', attachments: []
+            }
+            setMessages(prev => [...prev, userMsg])
+            setInput('')
+            setLoading(true)
+            const data = await apiFetch('/ai/process', {
+                method: 'POST',
+                body: JSON.stringify({
+                    input: msgText, user_id: user.uid,
+                    user_name: user.name || 'User',
+                    chat_history: [],
+                    session_id: sessionId,
+                    file_path, file_name,
+                    intent_hint: 'file_read'
+                })
+            })
+            const aiMsg = {
+                id: `ai-${Date.now()}`, role: 'ai', sender: 'Assistant',
+                text: data.output,
+                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
+                source: data.intent?.toUpperCase() || 'AI',
+                responseType: data.response_type,
+                response_type: data.response_type,
+                imageUrl: data.image_url,
+                image_url: data.image_url,
+                file_name: data.file_name || file_name,
+                generatedFile: data.generated_file || null,
+                vizConfig: data.viz_config || null,
+            }
+            setMessages(prev => [...prev, aiMsg])
+        } catch (err) {
+            console.error('File upload error:', err)
+        } finally {
+            setLoading(false)
+            e.target.value = null
+        }
     }
 
     const handleAction = async (action, actionData) => {
@@ -720,11 +930,147 @@ const Chat = () => {
                             </button>
                             <button
                                 onClick={() => {
-                                    const text = messages.map(m => `${m.role === 'ai' ? 'Assistant' : 'You'} (${m.time}):\n${m.text}`).join('\n\n---\n\n');
-                                    const blob = new Blob([text], { type: 'text/plain' });
+                                    const messageHTML = messages.map(m => {
+                                        const isAi = m.role === 'ai' || m.role === 'assistant';
+                                        return `
+                                            <div class="message ${isAi ? 'ai' : 'user'}">
+                                                <div class="meta">
+                                                    <span class="sender">${isAi ? 'Assistant' : 'Executive User'}</span>
+                                                    <span class="time">${m.time}</span>
+                                                </div>
+                                                <div class="content">${m.text.replace(/\n/g, '<br>')}</div>
+                                            </div>
+                                        `;
+                                    }).join('');
+
+                                    const htmlContent = `
+                                        <!DOCTYPE html>
+                                        <html lang="en">
+                                        <head>
+                                            <meta charset="UTF-8">
+                                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                                            <title>Digital Twin - Conversation Export</title>
+                                            <style>
+                                                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Manrope:wght@800&display=swap');
+                                                :root {
+                                                    --primary: #6366f1;
+                                                    --bg: #0a0a0f;
+                                                    --surface: #16161e;
+                                                    --text: #ffffff;
+                                                }
+                                                body {
+                                                    background: var(--bg);
+                                                    color: var(--text);
+                                                    font-family: 'Inter', sans-serif;
+                                                    line-height: 1.6;
+                                                    margin: 0;
+                                                    padding: 60px 20px;
+                                                    display: flex;
+                                                    justify-content: center;
+                                                }
+                                                .container {
+                                                    max-width: 800px;
+                                                    width: 100%;
+                                                }
+                                                header {
+                                                    text-align: center;
+                                                    margin-bottom: 80px;
+                                                }
+                                                .logo {
+                                                    width: 60px;
+                                                    height: 60px;
+                                                    background: var(--primary);
+                                                    border-radius: 20px;
+                                                    margin: 0 auto 20px;
+                                                    display: flex;
+                                                    items-center: center;
+                                                    justify-content: center;
+                                                    box-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
+                                                }
+                                                h1 {
+                                                    font-family: 'Manrope', sans-serif;
+                                                    font-size: 2.2rem;
+                                                    margin: 0;
+                                                    letter-spacing: -0.02em;
+                                                    background: linear-gradient(to right, #818cf8, #c084fc);
+                                                    -webkit-background-clip: text;
+                                                    -webkit-text-fill-color: transparent;
+                                                }
+                                                .session-info {
+                                                    font-size: 0.7rem;
+                                                    color: rgba(255,255,255,0.3);
+                                                    margin-top: 15px;
+                                                    text-transform: uppercase;
+                                                    letter-spacing: 0.2em;
+                                                }
+                                                .message {
+                                                    margin-bottom: 40px;
+                                                    padding: 32px;
+                                                    border-radius: 32px;
+                                                    position: relative;
+                                                    animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+                                                }
+                                                .ai {
+                                                    background: var(--surface);
+                                                    border: 1px solid rgba(255,255,255,0.05);
+                                                    margin-right: 80px;
+                                                    border-top-left-radius: 4px;
+                                                }
+                                                .user {
+                                                    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+                                                    margin-left: 80px;
+                                                    border-top-right-radius: 4px;
+                                                    box-shadow: 0 10px 30px rgba(79, 70, 229, 0.2);
+                                                }
+                                                .meta {
+                                                    display: flex;
+                                                    justify-content: space-between;
+                                                    margin-bottom: 16px;
+                                                    font-size: 0.65rem;
+                                                    font-weight: 800;
+                                                    text-transform: uppercase;
+                                                    letter-spacing: 0.15em;
+                                                }
+                                                .ai .meta { color: #818cf8; }
+                                                .user .meta { color: rgba(255,255,255,0.6); }
+                                                .content {
+                                                    font-size: 1rem;
+                                                    color: rgba(255,255,255,0.9);
+                                                }
+                                                @keyframes fadeIn {
+                                                    from { opacity: 0; transform: translateY(20px); }
+                                                    to { opacity: 1; transform: translateY(0); }
+                                                }
+                                                footer {
+                                                    margin-top: 100px;
+                                                    text-align: center;
+                                                    font-size: 0.75rem;
+                                                    color: rgba(255,255,255,0.15);
+                                                    padding-bottom: 40px;
+                                                }
+                                            </style>
+                                        </head>
+                                        <body>
+                                            <div class="container">
+                                                <header>
+                                                    <div class="logo"></div>
+                                                    <h1>Intelligence Log</h1>
+                                                    <div class="session-info">Ref: ${sessionId} • Generated on ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' })} IST</div>
+                                                </header>
+                                                <div class="chat-flow">
+                                                    ${messageHTML}
+                                                </div>
+                                                <footer>
+                                                    &copy; 2026 Digital Twin Core. Secure Neural Export.
+                                                </footer>
+                                            </div>
+                                        </body>
+                                        </html>
+                                    `;
+                                    const blob = new Blob([htmlContent], { type: 'text/html' });
                                     const url = URL.createObjectURL(blob);
                                     const a = document.createElement('a'); a.href = url;
-                                    a.download = `chat-${sessionId}.txt`; a.click();
+                                    a.download = `digital-twin-export-${sessionId}.html`; a.click();
                                     URL.revokeObjectURL(url);
                                 }}
                                 title="Export conversation"
@@ -755,20 +1101,20 @@ const Chat = () => {
                                     <div
                                         key={s.id}
                                         onClick={() => { setSessionId(s.id); if (window.innerWidth < 1024) setIsSidebarOpen(false); }}
-                                        className={`group flex items-center justify-between w-full p-3 rounded-xl cursor-pointer transition-all ${sessionId === s.id ? 'bg-primary/20 text-white' : 'hover:bg-white/5 text-neutral'}`}
+                                        className={`group relative flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${sessionId === s.id ? 'bg-primary/20 text-white' : 'hover:bg-white/5 text-neutral'}`}
                                     >
-                                        <div className="flex flex-col truncate w-full pr-2">
-                                            <div className="flex items-center gap-2">
-                                                <MessageSquare size={14} className={sessionId === s.id ? 'text-primary' : 'text-neutral/70'} />
-                                                <span className="text-sm font-medium truncate">{s.title || 'New Chat'}</span>
-                                            </div>
-                                            {s.updatedAt && <span className="text-[10px] text-neutral/40 ml-5 mt-0.5">{new Date(s.updatedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>}
+                                        <MessageSquare size={14} className={`flex-shrink-0 ${sessionId === s.id ? 'text-primary' : 'text-neutral/40'}`} />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm text-white/70 truncate">{s.title || 'New Chat'}</p>
+                                            <p className="text-xs text-white/30">
+                                                {formatRelativeTime(s.created_at || (s.updatedAt ? new Date(s.updatedAt).toISOString() : null))}
+                                            </p>
                                         </div>
                                         <button
                                             onClick={(e) => handleDeleteSession(e, s.id)}
-                                            className="text-neutral/50 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all p-1"
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-500/20 hover:text-red-400 flex-shrink-0"
                                         >
-                                            <Trash2 size={14} />
+                                            <Trash2 size={12} />
                                         </button>
                                     </div>
                                 ))}
@@ -834,6 +1180,7 @@ const Chat = () => {
                 {/* Input Area */}
                 <div className="p-3 lg:p-6 bg-surface-base border-t border-neutral/5">
                     <form onSubmit={handleSend} className="max-w-4xl mx-auto">
+                        {/* Hidden file input for legacy inline attachment (reads to base64) */}
                         <input type="file" id="file-upload" multiple className="hidden"
                             onChange={async (e) => {
                                 const files = Array.from(e.target.files);
@@ -845,6 +1192,14 @@ const Chat = () => {
                                 setAttachedFiles(prev => [...prev, ...fileData]);
                                 e.target.value = null;
                             }}
+                        />
+                        {/* Hidden file input for backend upload + AI summarise flow */}
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            accept=".pdf,.txt,.md,.csv,.json,.docx,.jpg,.jpeg,.png,.webp"
+                            onChange={handleFileSelect}
                         />
                         <div className="bg-surface-container/80 backdrop-blur-3xl rounded-2xl lg:rounded-[1.75rem] flex flex-col shadow-2xl border border-neutral/10 focus-within:border-primary/30 transition-all">
                             {attachedFiles.length > 0 && (
@@ -858,17 +1213,67 @@ const Chat = () => {
                                     ))}
                                 </div>
                             )}
-                            <div className="flex flex-wrap gap-2 px-4 pt-3 pb-2">
-                                {INTENT_OPTIONS.map(option => (
-                                    <button key={option.key}
+                            <div className="flex items-end gap-2 pl-3 lg:pl-4 pr-2 py-2">
+                                {/* + menu anchor */}
+                                <div className="relative flex-shrink-0 self-end pb-1" ref={plusRef}>
+                                    <button
                                         type="button"
-                                        onClick={() => setSelectedIntent(option.key)}
-                                        className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-all ${selectedIntent === option.key ? 'bg-primary text-white' : 'bg-surface-container text-on-surface hover:bg-primary/10'}`}>
-                                        {option.label}
+                                        onClick={() => setPlusOpen(prev => !prev)}
+                                        className="flex items-center justify-center w-8 h-8 rounded-full bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 transition-all duration-150 text-white/60 hover:text-white/90 text-lg font-light"
+                                        title="Add"
+                                    >
+                                        +
                                     </button>
-                                ))}
-                            </div>
-                            <div className="flex items-end gap-2 pl-4 lg:pl-5 pr-2 py-2">
+
+                                    {plusOpen && (
+                                        <div
+                                            className="absolute bottom-11 left-0 w-64 rounded-2xl border border-white/10 shadow-2xl shadow-black/60 py-2 z-50"
+                                            style={{
+                                                background: '#1C1C1E',
+                                                animation: 'popIn 0.15s ease-out'
+                                            }}
+                                        >
+                                            {/* File action */}
+                                            <button
+                                                type="button"
+                                                onClick={() => { menuItems[0].action(); setPlusOpen(false) }}
+                                                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.06] transition-colors duration-100 text-left group"
+                                            >
+                                                <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.08] group-hover:bg-white/[0.12] transition-colors flex-shrink-0">
+                                                    <Paperclip size={16} className="text-white/70" />
+                                                </span>
+                                                <span className="flex-1">
+                                                    <span className="block text-sm text-white/85 font-medium">Add photos &amp; files</span>
+                                                </span>
+                                                <span className="text-xs text-white/30 font-mono bg-white/[0.06] px-1.5 py-0.5 rounded">Ctrl+U</span>
+                                            </button>
+
+                                            {/* Divider */}
+                                            <div className="mx-4 my-1 border-t border-white/[0.06]" />
+
+                                            {/* AI action items */}
+                                            {menuItems.slice(1).map((item, i) => (
+                                                <button
+                                                    key={i}
+                                                    type="button"
+                                                    onClick={() => { item.action(); setPlusOpen(false) }}
+                                                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.06] transition-colors duration-100 text-left group"
+                                                >
+                                                    <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.08] group-hover:bg-white/[0.12] transition-colors flex-shrink-0">
+                                                        <item.icon size={16} className="text-white/70" />
+                                                    </span>
+                                                    <span className="flex-1">
+                                                        <span className="block text-sm text-white/85 font-medium">{item.label}</span>
+                                                        {item.hint && <span className="block text-xs text-white/35 mt-0.5">{item.hint}</span>}
+                                                    </span>
+                                                    {item.shortcut && (
+                                                        <span className="text-xs text-white/30 font-mono bg-white/[0.06] px-1.5 py-0.5 rounded">{item.shortcut}</span>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                                 <textarea
                                     ref={textareaRef}
                                     value={input}
@@ -884,15 +1289,11 @@ const Chat = () => {
                                         }
                                     }}
                                     disabled={loading}
-                                    placeholder="Instruct your Twin... (Enter to send, Shift+Enter for new line)"
+                                    placeholder="Instruct your Twin..."
                                     rows={1}
                                     className="bg-transparent flex-1 py-2 outline-none text-sm placeholder:text-neutral/40 resize-none leading-relaxed min-h-[40px] max-h-[160px] overflow-y-auto"
                                 />
                                 <div className="flex items-center gap-1 pb-1">
-                                    <button type="button" onClick={() => document.getElementById('file-upload').click()}
-                                        title="Attach file" className="p-2 text-neutral/60 hover:text-primary transition-colors rounded-lg hover:bg-primary/5">
-                                        <Paperclip size={17} />
-                                    </button>
                                     <button
                                         type="button"
                                         title={isListening ? 'Stop voice input' : 'Voice input'}

@@ -52,8 +52,21 @@ class MCPExecutor:
             server_name, tool_name, args, user_id
         )
 
+        # Surface human-readable errors before returning
+        if not result.get("ok") and result.get("error"):
+            logger.warning(
+                f"[MCPExecutor] {intent} failed: {result['error']}"
+            )
+            return {
+                "ok": False,
+                "intent": intent,
+                "result": {},
+                "error": result["error"],   # human readable from MCP server
+                "requires_hitl": False,
+            }
+
         return {
-            "ok": result.get("ok", False),
+            "ok": result.get("ok", True),
             "intent": intent,
             "result": result.get("result", result),
             "error": result.get("error"),
@@ -79,6 +92,7 @@ class MCPExecutor:
             # Slack
             "slack_send":   ("slack", "send_message",  True),
             "slack_read":   ("slack", "read_messages", False),
+            "slack_channels": ("slack", "list_channels", False),
 
             # Telegram
             "telegram_send": ("telegram", "send_message", False),
@@ -93,6 +107,13 @@ class MCPExecutor:
             # Memory (internal — not user-facing intents)
             "_memory_store":    ("memory", "store",    False),
             "_memory_retrieve": ("memory", "retrieve", False),
+
+            # WhatsApp
+            "whatsapp_send": ("whatsapp", "send_message", True),
+
+            # Agent Network
+            "schedule_with_twin": ("agent_network", "schedule_with_twin", True),
+            "twin_message": ("agent_network", "send_message", True),
         }
 
 

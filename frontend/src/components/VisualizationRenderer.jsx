@@ -100,12 +100,13 @@ const VisualizationRenderer = ({ config }) => {
 
     const chartHeight = fullscreen ? 450 : 280
 
+    const axisStyle = React.useMemo(() => ({ fontSize: 11, fill: 'rgba(255,255,255,0.4)', fontFamily: 'inherit' }), [])
+    const commonProps = React.useMemo(() => ({
+        data,
+        margin: { top: 5, right: 10, left: -10, bottom: 5 },
+    }), [data])
+
     const renderChart = () => {
-        const commonProps = {
-            data,
-            margin: { top: 5, right: 10, left: -10, bottom: 5 },
-        }
-        const axisStyle = { fontSize: 11, fill: 'rgba(255,255,255,0.4)', fontFamily: 'inherit' }
 
         switch (chart_type) {
             case 'line':
@@ -207,76 +208,72 @@ const VisualizationRenderer = ({ config }) => {
         }
     }
 
-    const ChartContent = () => (
-        <div className="space-y-4">
-            <div className="flex items-start justify-between gap-3">
-                <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-primary mb-1">
-                        {chart_type} · AI Visualization
-                    </p>
-                    <h3 className="text-base font-bold text-white leading-snug">{title}</h3>
-                    {description && <p className="text-xs text-white/50 mt-1">{description}</p>}
-                </div>
-                <button
-                    onClick={() => setFullscreen(true)}
-                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors flex-shrink-0"
-                >
-                    <Maximize2 size={14} className="text-white/50" />
-                </button>
-            </div>
-
-            <div style={{ height: chartHeight }} className="w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                    {renderChart()}
-                </ResponsiveContainer>
-            </div>
-
-            {/* Drill-down */}
-            <AnimatePresence>
-                {drillData && activeBar && (
-                    <motion.div
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        className="p-3 rounded-xl bg-primary/10 border border-primary/20"
-                    >
-                        <div className="flex items-center justify-between mb-2">
-                            <p className="text-xs font-bold text-primary">Drill-down: {activeBar[x_key]}</p>
-                            <button onClick={() => { setDrillData(null); setActiveBar(null) }}
-                                className="text-white/40 hover:text-white/70">
-                                <X size={12} />
-                            </button>
-                        </div>
-                        <div style={{ height: 160 }}>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={drillData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-                                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} axisLine={false} tickLine={false} />
-                                    <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} axisLine={false} tickLine={false} />
-                                    <Tooltip content={<CustomTooltip />} />
-                                    <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            {/* Insights */}
-            {insights.length > 0 && (
-                <div className="space-y-1.5">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">AI Insights</p>
-                    <div className="grid grid-cols-1 gap-1.5">
-                        {insights.map((ins, i) => <InsightBadge key={i} text={ins} index={i} />)}
-                    </div>
-                </div>
-            )}
-        </div>
-    )
-
     return (
         <>
             <div className="mt-4 p-4 rounded-2xl bg-black/30 border border-white/8 space-y-3">
-                <ChartContent />
+                <div className="space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                        <div>
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-primary mb-1">
+                                {chart_type} · AI Visualization
+                            </p>
+                            <h3 className="text-base font-bold text-white leading-snug">{title}</h3>
+                            {description && <p className="text-xs text-white/50 mt-1">{description}</p>}
+                        </div>
+                        <button
+                            onClick={() => setFullscreen(true)}
+                            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-colors flex-shrink-0"
+                        >
+                            <Maximize2 size={14} className="text-white/50" />
+                        </button>
+                    </div>
+
+                    <div style={{ height: chartHeight }} className="w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            {renderChart()}
+                        </ResponsiveContainer>
+                    </div>
+
+                    {/* Drill-down */}
+                    <AnimatePresence>
+                        {drillData && activeBar && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -8 }}
+                                className="p-3 rounded-xl bg-primary/10 border border-primary/20"
+                            >
+                                <div className="flex items-center justify-between mb-2">
+                                    <p className="text-xs font-bold text-primary">Drill-down: {activeBar[x_key]}</p>
+                                    <button onClick={() => { setDrillData(null); setActiveBar(null) }}
+                                        className="text-white/40 hover:text-white/70">
+                                        <X size={12} />
+                                    </button>
+                                </div>
+                                <div style={{ height: 160 }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={drillData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                                            <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} axisLine={false} tickLine={false} />
+                                            <YAxis tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)' }} axisLine={false} tickLine={false} />
+                                            <Tooltip content={<CustomTooltip />} />
+                                            <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+
+                    {/* Insights */}
+                    {insights.length > 0 && (
+                        <div className="space-y-1.5">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-white/30">AI Insights</p>
+                            <div className="grid grid-cols-1 gap-1.5">
+                                {insights.map((ins, i) => <InsightBadge key={i} text={ins} index={i} />)}
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Fullscreen Modal */}
@@ -326,4 +323,4 @@ const VisualizationRenderer = ({ config }) => {
     )
 }
 
-export default VisualizationRenderer
+export default React.memo(VisualizationRenderer)

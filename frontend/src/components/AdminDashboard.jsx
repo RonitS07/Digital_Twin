@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Activity, AlertTriangle, Database, HardDrive, RefreshCcw, Shield, Users, Bot } from 'lucide-react'
+import { Activity, AlertTriangle, ChevronDown, Database, HardDrive, RefreshCcw, Shield, Users, Bot } from 'lucide-react'
 import { apiFetch } from '../utils/apiClient'
 
 const Section = ({ title, children, right }) => (
@@ -31,6 +31,83 @@ const Dot = ({ ok }) => (
     <span className={`inline-flex w-2.5 h-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`} />
 )
 
+const LoadingSpinner = () => (
+    <div className="flex items-center gap-2 text-sm text-neutral">
+        <span className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        Loading...
+    </div>
+)
+
+const MCPMonitor = () => {
+    const [mcpStatus, setMcpStatus] = useState(null)
+    const [expanded, setExpanded] = useState(null)
+
+    useEffect(() => {
+        const load = async () => {
+            try {
+                const data = await apiFetch('/admin/mcp/status')
+                setMcpStatus(data)
+            } catch (e) {
+                console.error('MCP status failed', e)
+            }
+        }
+        load()
+        const id = setInterval(load, 60000)
+        return () => clearInterval(id)
+    }, [])
+
+    if (!mcpStatus) return <LoadingSpinner />
+
+    return (
+        <div className="space-y-3">
+            <div className="flex items-center justify-between mb-2">
+                <p className="text-sm text-white/50">
+                    {mcpStatus.total_servers ?? mcpStatus.servers?.length ?? 0} servers
+                    {' · '}
+                    {mcpStatus.total_tools ?? 0} tools registered
+                </p>
+            </div>
+            {(mcpStatus.servers || []).map(server => (
+                <div
+                    key={server.name}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden"
+                >
+                    <button
+                        onClick={() => setExpanded(expanded === server.name ? null : server.name)}
+                        className="w-full flex items-center gap-3 p-4 text-left hover:bg-white/5"
+                    >
+                        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${server.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`} />
+                        <span className="font-bold text-white/80 flex-1">{server.name}</span>
+                        <span className="text-xs text-white/40">{server.tool_count} tools</span>
+                        <ChevronDown
+                            size={14}
+                            className={`text-white/30 transition-transform ${expanded === server.name ? 'rotate-180' : ''}`}
+                        />
+                    </button>
+                    {expanded === server.name && (
+                        <div className="px-4 pb-4 flex flex-wrap gap-2">
+                            {(server.tools || []).map(tool => (
+                                <span
+                                    key={tool}
+                                    className="text-xs px-2 py-1 rounded-md bg-primary/10 text-primary/80 border border-primary/20"
+                                >
+                                    {tool}
+                                </span>
+                            ))}
+                            {server.error && (
+                                <p className="text-xs text-red-400 w-full mt-1">Error: {server.error}</p>
+                            )}
+                            {(!server.tools || server.tools.length === 0) && !server.error && (
+                                <p className="text-xs text-white/30">No tool details available.</p>
+                            )}
+                        </div>
+                    )}
+                </div>
+            ))}
+        </div>
+    )
+}
+
 const AdminDashboard = () => {
     const [stats, setStats] = useState(null)
     const [users, setUsers] = useState([])
@@ -40,6 +117,7 @@ const AdminDashboard = () => {
     const [memoryStats, setMemoryStats] = useState([])
     const [agents, setAgents] = useState([])
     const [health, setHealth] = useState(null)
+    const [mcpStatus, setMcpStatus] = useState(null)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
 
@@ -65,12 +143,13 @@ const AdminDashboard = () => {
         setAgents(data.items || [])
     }
     const loadHealth = async () => setHealth(await apiFetch('/admin/system/health'))
+    const loadMcpStatus = async () => setMcpStatus(await apiFetch('/admin/mcp/status'))
 
     const loadAll = async () => {
         setLoading(true)
         setError('')
         try {
-            await Promise.all([loadStats(), loadUsers(userSearch), loadLogs(), loadMemory(), loadAgents(), loadHealth()])
+            await Promise.all([loadStats(), loadUsers(userSearch), loadLogs(), loadMemory(), loadAgents(), loadHealth(), loadMcpStatus()])
         } catch (e) {
             setError(e.message || 'Failed to load admin data')
         } finally {
@@ -87,6 +166,13 @@ const AdminDashboard = () => {
         const id = setInterval(() => {
             loadHealth().catch(() => {})
         }, 30000)
+        return () => clearInterval(id)
+    }, [])
+
+    useEffect(() => {
+        const id = setInterval(() => {
+            loadMcpStatus().catch(() => {})
+        }, 60000)
         return () => clearInterval(id)
     }, [])
 
@@ -319,6 +405,10 @@ const AdminDashboard = () => {
                         </div>
                     ))}
                 </div>
+            </Section>
+
+            <Section title="MCP Server Monitor">
+                <MCPMonitor />
             </Section>
 
             <Section title="Agent Network Overview">

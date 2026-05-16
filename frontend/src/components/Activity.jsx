@@ -81,7 +81,7 @@ const Activity = () => {
                 element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 // We keep the highlight for 3 seconds then clear it to allow re-triggering
                 const timer = setTimeout(() => {
-                    // setHighlightedActivityId(null);
+                    setHighlightedActivityId(null);
                 }, 5000);
                 return () => clearTimeout(timer);
             }

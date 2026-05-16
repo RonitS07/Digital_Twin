@@ -7,10 +7,6 @@ import logging
 import asyncio
 from datetime import datetime
 from .state import State
-from memory.chroma import retrieve_memory
-from tools.gmail_tool import get_email_details, read_recent_emails, search_emails
-from tools.calendar_tool import get_upcoming_events
-from tools.slack_tool import list_slack_channels
 from db.database import get_db
 from db.models import A2AMessageLog, User, AgentRegistry
 from services.agent_registry import search_agent_by_handle, push_to_inbox
@@ -22,8 +18,6 @@ logger = logging.getLogger(__name__)
 
 from .llm_utils import _llm
 
-# ─── Sprint 3: MCP feature flag ────────────────────────────────────────────
-MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
 
 def generate_hf_image(prompt: str) -> str:
     import urllib.parse
@@ -84,9 +78,13 @@ def classifier_node(state: State):
         "slack": "slack_send",
         "slack_send": "slack_send",
         "slack_read": "slack_read",
+        "slack_channels": "slack_channels",
         "telegram": "telegram_send",
         "telegram_send": "telegram_send",
         "telegram_read": "telegram_read",
+        "whatsapp": "whatsapp_send",
+        "whatsapp_send": "whatsapp_send",
+        "whatsapp_read": "whatsapp_read",
         "general": "general",
         "other": "general",
         "files": "file_read",
@@ -116,9 +114,14 @@ def classifier_node(state: State):
         return {**state, "intent": "scheduling"}
 
     # Gmail/Email — explicit email words
-    if any(k in user_input for k in ["email", "mail", "gmail", "inbox"]):
-        if any(k in user_input for k in ["search", "find", "show me", "read", "unread", "recent", "what did", "check", "promotion", "offer", "deal", "bank", "statement", "receipt", "invoice", "order", "shipping", "delivery", "who", "last", "latest", "when", "did"]):
-            return {**state, "intent": "email_search"}
+    if any(k in user_input for k in ["email", "mail", "gmail", "inbox", "messages"]):
+        if any(k in user_input for k in [
+            "search", "find", "show", "show me", "read", "unread", "recent", "what did",
+            "check", "promotion", "offer", "deal", "bank", "statement", "receipt",
+            "invoice", "order", "shipping", "delivery", "who", "last", "latest",
+            "when", "did", "any new", "get", "list", "fetch"
+        ]):
+            return {**state, "intent": "email_read"}
         return {**state, "intent": "email_draft"}
 
     # Implicit email search — user asks about topics that live in their inbox (no 'email' keyword needed)
@@ -131,7 +134,9 @@ def classifier_node(state: State):
     if any(trigger in user_input for trigger in implicit_search_triggers):
         return {**state, "intent": "email_search"}
 
-    # telegram / slack / email action prioritization
+    # telegram / slack / email / whatsapp action prioritization
+    if "whatsapp" in user_input:
+        return {**state, "intent": "whatsapp_send"}
     if "telegram" in user_input:
         return {**state, "intent": "telegram_send"}
     if "slack" in user_input and "briefing" not in user_input:
@@ -168,41 +173,110 @@ def classifier_node(state: State):
 You are a strict intent classifier for an AI Twin.
 Your goal is to categorize the user's intent EXACTLY into one of these:
 
-1. 'email_read': "show my emails", "what's in my inbox", "read latest email from X"
-2. 'email_draft': "draft a reply to X", "write an email to Y"
-3. 'email_send': "send that email", "approve and send"
-4. 'calendar': "schedule a meeting", "what's on my calendar", "book a call with X"
-5. 'slack_send': "post to #channel", "send message to slack", "tell the team X"
-6. 'slack_read': "what's new in slack", "show #general"
-7. 'telegram_send': "send via telegram", "notify me on telegram"
-8. 'telegram_read': "what did I get on telegram"
-9. 'visual': "generate an image", "create a visual of X", "make an image"
-10. 'file_generate': "generate a PDF", "create a report", "make a spreadsheet", "write a Python script", "create a presentation", "generate a README", "make an invoice", "draft a resume"
-11. 'visualize': "show me a chart", "visualize this data", "create a bar chart", "plot these numbers", "dashboard of my expenses"
-12. 'file_read': "read this file", "what's in this doc", "summarise this PDF"
-13. 'general': "hi", "thanks", casual conversation, questions, or anything else not explicitly an action.
+1. 'email_read':
+   "show my emails", "find my latest 5 mails", "what's in my inbox",
+   "read my messages", "check my email", "any new mails",
+   "latest emails from X", "unread messages", "fetch my emails",
+   "show unread", "list my mails", "get my inbox"
+
+2. 'email_draft':
+   "draft a reply to X", "write an email to Y",
+   "compose a message to Z", "help me reply to"
+
+3. 'email_send':
+   "send that email", "approve and send", "send this to X"
+
+4. 'calendar':
+   "what's on my calendar", "my schedule today",
+   "upcoming meetings", "events this week",
+   "what do I have tomorrow", "show my agenda"
+
+5. 'calendar_create':
+   "schedule a meeting with X", "book a call",
+   "set up a meeting", "create an event",
+   "schedule X for tomorrow at 3pm"
+
+6. 'slack_send':
+   "post to #channel", "send message to slack",
+   "tell the team X in slack", "message #general"
+
+7. 'slack_read':
+   "what's new in slack", "show #general", "any slack messages"
+
+8. 'telegram_send':
+   "send hi on telegram", "send via telegram",
+   "notify me on telegram", "message on telegram",
+   "send telegram message"
+
+9. 'telegram_read':
+   "what did I get on telegram", "telegram updates"
+
+10. 'whatsapp_send':
+    "send whatsapp to X", "whatsapp X saying Y",
+    "msg X on whatsapp"
+
+11. 'whatsapp_read':
+    "read my whatsapp messages"
+
+12. 'visual':
+    "generate an image", "create a visual of X",
+    "make an image of X", "draw X", "create image"
+
+13. 'file_generate':
+    "generate a PDF", "create a report", "make a spreadsheet",
+    "write a Python script", "create a presentation",
+    "generate a README", "make an invoice", "draft a resume"
+
+14. 'visualize':
+    "show me a chart", "visualize this data",
+    "create a bar chart", "plot these numbers",
+    "dashboard of my expenses", "generate a bar graph",
+    "generate a chart", "make a pie chart"
+
+15. 'file_read':
+    "summarise this file", "read this document",
+    "what's in this PDF", "analyze this file"
+
+16. 'calendar_freebusy':
+    "am I free at X", "check my availability", "when am I free"
+
+17. 'general':
+    "hi", "thanks", casual conversation, questions,
+    or anything else not explicitly an action.
 
 RULES:
-- Be highly accurate. Do not misclassify simple conversational messages ("hello", "thanks", "ok") as actions.
-- If it's a hybrid/mixed intent, classify based on the primary action requested.
+- Be highly accurate. Do not misclassify simple conversational messages
+  ("hello", "thanks", "ok") as actions.
+- If the user says "Draft an email", "Write an email", or "Email X", ALWAYS use 'email_draft', even if they mention a "meeting", "event", or "chart".
+- If the user mentions "chart", "graph", "dashboard", or specific data charts like "pie" or "bar", ALWAYS use 'visualize', even if they say "generate" or "create".
+- If the user mentions "map", "satellite", "sketch", "draw", "art", "realistic", "photo", or "image", ALWAYS use 'visual', even if they say "visualize" or "create".
+- ONLY use 'file_generate' for text documents (PDF, DOCX, TXT), scripts, or presentations. DO NOT use it for images or photos.
+- If it's a hybrid/mixed intent, classify based on the primary action.
 - Return ONLY valid JSON: {"intent":"category", "target_handle": "null_or_handle"}
 """,
         user=state["input"],
     )
     parsed = _parse_json(result)
     intent = parsed.get("intent", "general")
-    
+
     valid_intents = [
         "email_read", "email_draft", "email_send",
-        "calendar", "slack_send", "slack_read",
+        "calendar", "calendar_create", "calendar_freebusy",
+        "slack_send", "slack_read",
         "telegram_send", "telegram_read",
-        "visual", "file_read", "file_generate", "visualize", "general"
+        "whatsapp_send", "whatsapp_read",
+        "visual", "file_read", "file_generate", "visualize", "general",
+        "schedule_with_twin", "twin_message"
     ]
     if intent not in valid_intents:
+        logger.warning(
+            f"[Classifier] Unrecognised intent '{intent}' from LLM — "
+            f"defaulting to 'general'. Input: {state['input'][:80]}"
+        )
         intent = "general"
-        
+
     logger.info(f"[Classifier] Input: {state['input'][:80]} → Intent: {intent}")
-    
+
     return {**state, "intent": intent, "target_user_handle": parsed.get("target_handle")}
 
 
@@ -225,162 +299,50 @@ def memory_node(state: State) -> State:
     intent = state.get("intent", "general")
     context = ""
 
-    if MCP_ENABLED:
-        # ── MCP PATH ───────────────────────────────────────────────────────────
-        import asyncio as _asyncio
-        from mcp.executor import mcp_executor
+    # ── MCP PATH ───────────────────────────────────────────────────────────
+    import asyncio as _asyncio
+    from mcp.executor import mcp_executor
 
-        def _run(coro):
-            """Run a coroutine from a sync context safely."""
-            try:
-                loop = _asyncio.get_event_loop()
-                if loop.is_running():
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        future = pool.submit(_asyncio.run, coro)
-                        return future.result()
-                return loop.run_until_complete(coro)
-            except RuntimeError:
-                return _asyncio.run(coro)
+    def _run(coro):
+        """Run a coroutine from a sync context safely."""
+        try:
+            loop = _asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(_asyncio.run, coro)
+                    return future.result()
+            return loop.run_until_complete(coro)
+        except RuntimeError:
+            return _asyncio.run(coro)
 
-        mem_result = _run(mcp_executor.execute(
+    mem_result = _run(mcp_executor.execute(
+        intent="_memory_retrieve",
+        args={"user_id": user_id, "query": query, "n": 3},
+        user_id=user_id,
+    ))
+    context_docs = mem_result.get("result", {}).get("results", [])
+    if isinstance(context_docs, list):
+        if context_docs:
+            context += "\n[RELEVANT CHAT MEMORY]\n" + "\n".join(context_docs) + "\n"
+
+    # Writing-style context for email drafts
+    if intent in ("email_draft", "email_send"):
+        style_result = _run(mcp_executor.execute(
             intent="_memory_retrieve",
-            args={"user_id": user_id, "query": query, "n": 3},
+            args={
+                "user_id": user_id,
+                "query": state["input"],
+                "n": 3,
+                "memory_type": "sent_mail",
+            },
             user_id=user_id,
         ))
-        context_docs = mem_result.get("result", {}).get("results", [])
-        if isinstance(context_docs, list):
-            if context_docs:
-                context += "\n[RELEVANT CHAT MEMORY]\n" + "\n".join(context_docs) + "\n"
+        style_docs = style_result.get("result", {}).get("results", [])
+        if isinstance(style_docs, list):
+            state = {**state, "style_context": "\n".join(style_docs)}
 
-        # Writing-style context for email drafts
-        if intent in ("email_draft", "email_send"):
-            style_result = _run(mcp_executor.execute(
-                intent="_memory_retrieve",
-                args={
-                    "user_id": user_id,
-                    "query": state["input"],
-                    "n": 3,
-                    "memory_type": "sent_mail",
-                },
-                user_id=user_id,
-            ))
-            style_docs = style_result.get("result", {}).get("results", [])
-            if isinstance(style_docs, list):
-                state = {**state, "style_context": "\n".join(style_docs)}
 
-    else:
-        # ── LEGACY PATH ────────────────────────────────────────────────────────
-        chat_context = retrieve_memory(user_id=user_id, query=query, type="chat")
-        structured_context = retrieve_memory(user_id=user_id, query=query, type="structured")
-        if structured_context:
-            context += "\n[LEARNED USER MEMORY]\n" + structured_context.strip() + "\n"
-        if chat_context:
-            context += "\n[RELEVANT CHAT MEMORY]\n" + chat_context.strip() + "\n"
-
-    is_calendar_query = any(k in state["input"].lower() for k in ["schedule", "meeting", "calendar", "event", "availability", "meet", "met", "who", "when"]) or state.get("intent") in ("calendar", "calendar_lookup", "scheduling")
-    if is_calendar_query:
-        past_cal_context = retrieve_memory(user_id=state["user_id"], query=state["input"], n=5, type="calendar_past")
-        future_cal_context = retrieve_memory(user_id=state["user_id"], query=state["input"], n=5, type="calendar_future")
-        if past_cal_context:
-            context += f"\n[CALENDAR CONTEXT — PAST MEETINGS]\n{past_cal_context}\n"
-        if future_cal_context:
-            context += f"\n[CALENDAR CONTEXT — UPCOMING]\n{future_cal_context}\n"
-
-    if state.get("intent") in ("email", "email_search") and state.get("gmail_sync", True):
-        try:
-            with next(get_db()) as db:
-                emails = read_recent_emails(db=db, user_id=state["user_id"], max_results=3)
-                if emails:
-                    email_context = "\n[RECENT INBOX EMAILS]\n"
-                    for mail in emails:
-                        email_context += f"ID: {mail['id']} | From: {mail['from']} | Subject: {mail['subject']}\nSnippet: {mail['snippet']}\n---\n"
-                    context += email_context
-        except Exception as e:
-            logger.error(f"Error fetching inbox emails: {e}")
-
-    # 3. Slack Context (Channels)
-    if state.get("intent") in ("slack_send", "slack_read") and state.get("slack_sync", True):
-        try:
-            with next(get_db()) as db:
-                channels = list_slack_channels(db=db, user_id=state["user_id"])
-                if channels:
-                    slack_context = "\n[SLACK CHANNELS]\n"
-                    for chan in channels:
-                        slack_context += f"Name: #{chan['name']} | ID: {chan['id']}\n"
-                    context += slack_context
-        except Exception as e:
-            logger.error(f"Error fetching slack channels: {e}")
-
-    # 3. Contextual Email Retrieval (Smart ID Resolver)
-    # If user says "read it", "show me", etc., we try to find the ID from history
-    target_id = None
-    id_match = re.search(r"\b([a-fA-F0-9]{16,19})\b", state["input"], re.IGNORECASE)
-    if id_match:
-        target_id = id_match.group(1)
-    elif any(k in state["input"].lower() for k in ["read", "show me", "check", "open", "details"]):
-        target_id_raw = _llm(
-             system="Find the Gmail Message ID (usually a 16+ character hex string) for the email the user wants to read from history. Output ONLY the ID string without any explanation, markdown, code, or quotes. If not found, output 'null'.",
-             user=f"History:\n{history_context}\n\nInput: {state['input']}",
-             force_fast=True
-        )
-        # Clean up in case the LLM still outputs chatter
-        target_id_raw = re.sub(r'```.*?```', '', target_id_raw, flags=re.DOTALL) # remove code blocks
-        words = target_id_raw.split()
-        target_id = None
-        for word in words:
-            word = word.strip(" '\",.")
-            if re.match(r"^[a-fA-F0-9]{15,}$", word):
-                target_id = word
-                break
-
-    
-    if target_id and len(target_id) > 10 and target_id != "null":
-        try:
-            with next(get_db()) as db:
-                email_info = get_email_details(db=db, user_id=state["user_id"], message_id=target_id)
-                if email_info:
-                    email_context = f"\n[EMBEDDED EMAIL CONTENT]\nID: {email_info['id']} | From: {email_info['from']} | Subject: {email_info['subject']}\nFULL BODY CONTENT:\n{email_info['body']}\n"
-                    context += email_context
-        except Exception as e:
-            logger.error(f"Error fetching specific email {target_id}: {e}")
-
-    # 4. Handle Active Email Search — applies to both email and email_search intents, AND implicit inbox queries
-    should_search_email = (
-        state.get("intent") in ("email", "email_search")
-        and any(k in state["input"].lower() for k in [
-            "search", "find", "show me", "check", "promotion", "offer", "discount", "receipt",
-            "deal", "bank statement", "statement", "invoice", "order", "shipping", "delivery",
-            "laptop", "subscription", "renewal", "flight", "hotel", "booking", "promo"
-        ])
-    ) or state.get("intent") == "email_search"  # Always search on explicit email_search
-
-    if should_search_email:
-        try:
-            with next(get_db()) as db:
-                # LLM to extract Gmail-compatible search terms
-                search_query = _llm(
-                    system="""Extract a Gmail-compatible search query from the user input.
-- For deals/promotions: use 'subject:(deal OR promotion OR offer OR discount OR sale)'
-- For bank statements: use 'subject:(bank statement OR account statement) OR from:bank'
-- For orders/receipts: use 'subject:(order OR receipt OR invoice OR confirmation)'
-- For specific senders: use 'from:company.com'
-Output ONLY the Gmail search query string, nothing else.""",
-                    user=state["input"],
-                    force_fast=True
-                )
-                logger.info(f"[Memory] Searching Gmail for: {search_query}")
-                search_results = search_emails(db=db, user_id=state["user_id"], query=search_query, max_results=8)
-                if search_results:
-                    search_context = f"\n[AUTHENTIC GMAIL SEARCH RESULTS — Use ONLY this data, do not fabricate]\n"
-                    for mail in search_results:
-                         link = f"https://mail.google.com/mail/u/0/#inbox/{mail['id']}"
-                         search_context += f"From: {mail['from']} | Subject: {mail['subject']} | Link: {link}\nSnippet: {mail['snippet']}\n---\n"
-                    context += search_context
-                else:
-                    context += "\n[SYSTEM ALERT: NO GMAIL RESULTS FOUND. Inform the user no matching emails were found. Do NOT fabricate results.]\n"
-        except Exception as e:
-             logger.error(f"Active Gmail search failed: {e}")
 
     # Strip any accidentally stored blobs from context
     clean_context = _clean_output(context)
@@ -393,19 +355,10 @@ Output ONLY the Gmail search query string, nothing else.""",
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXECUTOR NODE  (Sprint 3 — MCP cutover)
-# Routes all tool calls through MCPExecutor when MCP_ENABLED=true.
-# Falls back to direct calls via _legacy_executor_node when false.
-# ─────────────────────────────────────────────────────────────────────────────
-
 async def executor_node(state: State) -> State:
-    """Routes tool execution through MCP or falls back to legacy direct calls."""
+    """Routes tool execution through MCP."""
     intent = state.get("intent", "general")
     user_id = state.get("user_id")
-
-    if not MCP_ENABLED:
-        # LEGACY PATH — unchanged direct tool calls (no-op passthrough for now)
-        logger.info(f"[Executor] MCP_ENABLED=false — legacy path for intent={intent}")
-        return state
 
     # MCP PATH
     from mcp.executor import mcp_executor
@@ -414,12 +367,19 @@ async def executor_node(state: State) -> State:
     dispatchable = [
         "email_read", "email_draft", "email_send",
         "calendar", "calendar_create", "calendar_freebusy",
-        "slack_send", "slack_read",
+        "slack_send", "slack_read", "slack_channels",
         "telegram_send", "telegram_read",
+        "whatsapp_send", "whatsapp_read",
         "visual", "file_read",
+        "schedule_with_twin", "twin_message",
     ]
     if intent not in dispatchable:
         logger.info(f"[Executor] intent={intent} not in MCP dispatch list — skip")
+        return state
+
+    # HITL Check: Skip execution if approval is required but not yet granted
+    if state.get("approval_required") and not state.get("approved"):
+        logger.info(f"[Executor] intent={intent} requires approval — skipping execution for now")
         return state
 
     args = _build_args_for_intent(intent, state)
@@ -499,6 +459,13 @@ def _build_args_for_intent(intent: str, state: dict) -> dict:
             "text": task_plan.get("text", state.get("input", "")),
         }
 
+    elif intent == "whatsapp_send":
+        return {
+            **base,
+            "to": task_plan.get("to", ""),
+            "message": task_plan.get("message", task_plan.get("text", state.get("input", ""))),
+        }
+
     elif intent == "visual":
         return {
             **base,
@@ -511,32 +478,69 @@ def _build_args_for_intent(intent: str, state: dict) -> dict:
             "file_path": state.get("file_path", ""),
         }
 
+    elif intent == "telegram_read":
+        return {**base}
+
+    elif intent == "calendar_freebusy":
+        return {
+            **base,
+            "time_min": task_plan.get("time_min", ""),
+            "time_max": task_plan.get("time_max", ""),
+        }
+
+    elif intent == "slack_channels":
+        return {**base}
+
+    elif intent == "schedule_with_twin":
+        return {
+            **base,
+            "requester_user_id": user_id,
+            "target_user_id": task_plan.get("target_user_id", ""),
+            "duration_minutes": task_plan.get("duration_minutes", 30),
+            "lookahead_days": task_plan.get("lookahead_days", 7),
+        }
+
+    elif intent == "twin_message":
+        return {
+            **base,
+            "sender_user_id": user_id,
+            "receiver_user_id": task_plan.get("receiver_user_id", ""),
+            "msg_type": task_plan.get("msg_type", "chat"),
+            "payload": task_plan.get("payload", {}),
+        }
+
     return base
 
 
 def planner_node(state: State) -> State:
     result = _llm(
         system="""
-You are a task planner.
-Break the user request into 1 to 4 actionable steps.
+You are a task planner and argument extractor.
+Based on the user's intent, extract the necessary arguments into a JSON object.
+
+If the intent is 'whatsapp_send', extract: "to" (phone number with country code), "message".
+If the intent is 'email_draft' or 'email_send', extract: "to", "subject", "body".
+If the intent is 'telegram_send', extract: "text".
+If the intent is 'calendar_create', extract: "summary", "start", "end", "description", "attendees".
 
 Return ONLY valid JSON.
 
 Format:
-{"task_plan":["step 1","step 2"]}
+{"task_plan": {"to": "+919004940578", "message": "Hello!"}}
 """,
         user=f"Input: {state['input']}\nIntent: {state['intent']}",
         force_fast=True
     )
 
     parsed = _parse_json(result)
-    plan = parsed.get("task_plan", [state["input"]])
+    plan = parsed.get("task_plan", {})
 
     needs_approval = state["intent"] in [
         "email_draft",
         "calendar",
         "slack_send",
         "telegram_send",
+        "whatsapp_send",
         "scheduling"
     ]
 
@@ -545,6 +549,17 @@ Format:
         "task_plan": plan,
         "approval_required": needs_approval
     }
+
+
+# ─── constants used by responder_node ───────────────────────────────────────
+ACTION_INTENTS = {
+    "telegram_send", "slack_send", "whatsapp_send",
+    "email_send", "calendar_create",
+}
+READ_INTENTS = {
+    "email_read", "slack_read", "slack_channels",
+    "telegram_read", "calendar", "calendar_freebusy", "file_read",
+}
 
 
 def responder_node(state: State) -> State:
@@ -568,10 +583,13 @@ def responder_node(state: State) -> State:
         else ""
     )
 
-    task_plan_block = "\n".join(
-        f"- {step}"
-        for step in state.get("task_plan", [])
-    )
+    tp = state.get("task_plan", {})
+    if isinstance(tp, list):
+        task_plan_block = "\n".join(f"- {step}" for step in tp)
+    elif isinstance(tp, dict):
+        task_plan_block = "\n".join(f"- {k}: {v}" for k, v in tp.items())
+    else:
+        task_plan_block = ""
 
     # (d) Error response — always checked first regardless of MCP flag
     if state.get("execution_error"):
@@ -582,6 +600,80 @@ def responder_node(state: State) -> State:
         return {**state, "output": err_output, "response_type": "text"}
 
     tool_result = state.get("tool_result") or {}
+
+    # ── EMAIL READ — format MCP results (runs BEFORE draft guard) ──────────
+    if state["intent"] == "email_read":
+        emails = tool_result.get("emails", [])
+        if not emails:
+            # Try to pull from nested result envelope
+            emails = tool_result.get("result", {}).get("emails", []) if isinstance(tool_result.get("result"), dict) else []
+        if emails:
+            lines = []
+            for i, m in enumerate(emails[:5], 1):
+                lines.append(
+                    f"{i}. **{m.get('subject', '(no subject)')}**\n"
+                    f"   From: {m.get('from', '?')}\n"
+                    f"   {m.get('snippet', '')[:100]}"
+                )
+            output = "Here are your recent emails:\n\n" + "\n\n".join(lines)
+            output = re.sub(r'<action>.*?</action>', '', output, flags=re.DOTALL).strip()
+            return {**state, "output": output, "response_type": "text"}
+        # No emails in tool_result — fall through to LLM general handler
+        return {
+            **state,
+            "output": "No recent emails found in your inbox.",
+            "response_type": "text",
+        }
+
+    # ── CALENDAR (list/lookup) — format MCP events ─────────────────────────
+    if state["intent"] == "calendar":
+        events = tool_result.get("events", [])
+        if not events:
+            events = tool_result.get("result", {}).get("events", []) if isinstance(tool_result.get("result"), dict) else []
+        if events:
+            _now = datetime.now()
+            now_ctx = f"Today is {_now.strftime('%A, %B %d, %Y')}."
+            events_str = json.dumps(events, indent=2)
+            result = _llm(
+                system=f"You are the Digital Twin. Answer the user's calendar question using ONLY this data.\n{now_ctx}\n[EVENTS]\n{events_str}\n\nBe concise. List each event on its own line. If the schedule is empty, say so.",
+                user=f"Input: {state['input']}\n{history_prompt}",
+                intent="calendar"
+            )
+            return {**state, "output": _clean_output(result), "response_type": "text"}
+        return {**state, "output": "No upcoming meetings found on your calendar.", "response_type": "text"}
+
+    # ── CALENDAR FREEBUSY ──────────────────────────────────────────────────
+    if state["intent"] == "calendar_freebusy":
+        busy = tool_result.get("busy", [])
+        if not busy:
+            return {**state, "output": "You appear to be free during that time.", "response_type": "text"}
+        lines = [f"Busy: {b.get('start','')} → {b.get('end','')}" for b in busy]
+        return {**state, "output": "You have the following busy windows:\n" + "\n".join(lines), "response_type": "text"}
+
+    # ── SLACK CHANNELS — format list from MCP ─────────────────────────────
+    if state["intent"] == "slack_channels":
+        channels = tool_result.get("channels", [])
+        if channels:
+            lines = [f"• **#{c.get('name','?')}** (`{c.get('id','')}`)"
+                     for c in channels]
+            return {**state, "output": "Your Slack channels:\n" + "\n".join(lines), "response_type": "text"}
+        return {**state, "output": "No Slack channels found. Make sure Slack is connected.", "response_type": "text"}
+
+    # ── CALENDAR_CREATE — MCP result handling ──────────────────────────────
+    if state["intent"] == "calendar_create":
+        if tool_result.get("conflict"):
+            alts = tool_result.get("alternatives", [])
+            alt_lines = [f"  Option {i}: {a.get('start_datetime','')} – {a.get('end_datetime','')}" for i, a in enumerate(alts, 1)]
+            conflict_msg = (
+                f"You have a conflict with **{tool_result.get('conflict_with', 'an existing event')}**.\n"
+                "Here are 3 alternatives:\n" + "\n".join(alt_lines)
+            )
+            return {**state, "output": conflict_msg, "response_type": "text", "approval_required": False}
+        if tool_result.get("event_id") or not tool_result.get("conflict"):
+            meet = f" · [Join Meet]({tool_result.get('meet_url')})" if tool_result.get("meet_url") else ""
+            link = f" · [View Event]({tool_result.get('calendar_link')})" if tool_result.get("calendar_link") else ""
+            return {**state, "output": f"✅ Meeting scheduled{meet}{link}", "response_type": "text", "approval_required": False}
+        # No result yet — fall through to scheduling LLM
 
     # VISUAL REQUESTS
     if state["intent"] == "visual":
@@ -670,10 +762,8 @@ def responder_node(state: State) -> State:
             output = re.sub(r'<action>.*?</action>', '', output, flags=re.DOTALL).strip()
             return {**state, "output": output, "response_type": "text"}
 
-        # Use MCP-fetched writing style or fall back to legacy chroma retrieve
+        # Use MCP-fetched writing style
         style_context_raw = state.get("style_context") or ""
-        if not style_context_raw:
-            style_context_raw = retrieve_memory(user_id=state["user_id"], query=state["input"], n=3, type="sent_mail") or ""
         sent_mail_context = (
             f"\n[WRITING STYLE EXAMPLES — HOW THIS USER WRITES]\n{style_context_raw}\n"
             if style_context_raw else ""
@@ -685,7 +775,7 @@ You are the Digital Twin of {user_name}, an elite executive assistant.
 Objective: Draft a professional email and provide the execution block.
 
 [CONSTRAINTS]
-1. BE CONCISE: Provide ONLY the email draft in your visible response.
+1. BE PROFESSIONAL: Draft emails with a clear opening, well-structured body, and formal closing. Avoid extremely short, one-line drafts.
 2. DO NOT include raw Gmail IDs (like 19dde49...) in your visible text.
 3. Use Markdown for structure.
 4. Never repeat context or explain your drafting process.
@@ -710,8 +800,6 @@ Include this at the very end ONLY if you have a recipient and subject.
             user=f"Draft email for: {state['input']}",
             intent="email"
         )
-        
-        import re
         visible = re.sub(r'<action>.*?</action>', '', result, flags=re.DOTALL).strip()
 
         return {
@@ -722,14 +810,8 @@ Include this at the very end ONLY if you have a recipient and subject.
 
     # CALENDAR LOOKUP (Search/List)
     if state["intent"] == "calendar_lookup":
-        # (b) Prefer MCP tool_result events when available
+        # (b) Use MCP tool_result events
         events = tool_result.get("events", []) if tool_result else []
-        if not events and state.get("calendar_sync", True):
-            try:
-                with next(get_db()) as db:
-                    events = get_upcoming_events(db, state["user_id"], max_results=50)
-            except Exception:
-                pass
 
         # Conflict detected via MCP create_event
         if tool_result.get("conflict"):
@@ -854,13 +936,7 @@ Do NOT say you don't have it. It is provided right here:
             }
         
         # Fetch current schedule for conflict detection
-        schedule_data = []
-        if state.get("calendar_sync", True):
-            try:
-                with next(get_db()) as db:
-                    schedule_data = get_upcoming_events(db, state["user_id"], max_results=50)
-            except Exception:
-                pass
+        schedule_data = tool_result.get("events", []) if tool_result else []
         
         schedule_context = json.dumps(schedule_data, indent=2)
         _now = datetime.now()
@@ -915,59 +991,96 @@ Action Block Format:
         }
 
     if state["intent"] in ("telegram_send", "telegram_read") or (state["intent"] == "action" and "telegram" in state["input"].lower()):
+        # ── telegram_read: format received updates ──────────────────────────
+        if state["intent"] == "telegram_read":
+            updates = tool_result.get("updates", []) if tool_result else []
+            if updates:
+                lines = [f"**{u.get('date', '')}**: {u.get('text', '')}" for u in updates[-5:]]
+                return {**state, "output": "Here are your recent Telegram messages:\n\n" + "\n".join(lines), "response_type": "text"}
+            return {**state, "output": "No recent Telegram messages found.", "response_type": "text"}
+
+        # ── telegram_send: use MCP tool_result directly (no LLM) ───────────
+        if tool_result.get("ok"):
+            return {
+                **state,
+                "output": "✅ Telegram message sent ✓",
+                "response_type": "text",
+                "approval_required": False,
+            }
+
+        # If tool_result shows a failure or is absent, fall through to <action> HITL flow
         # 🟢 Intelligence: Detect if user also wants to CREATE an image in this block
         img_keywords = ["create", "generate", "make", "draw", "visualize", "image of", "picture of", "image"]
         image_url = None
-        
+
         # Check if user is referring to a PREVIOUS image
         if "this image" in state["input"].lower() or "the image" in state["input"].lower():
             history = state.get("chat_history") or []
             for msg in reversed(history):
-                # 1. Check explicit field
                 if msg.get("image_url"):
                     image_url = msg["image_url"]
                     break
-                # 2. Fallback to regex in text
                 found = re.search(r"https://image\.pollinations\.ai/[^\s\"'}]*", msg.get("text", ""))
                 if found:
                     image_url = found.group(0)
                     break
-        
+
         if not image_url and any(k in state["input"].lower() for k in img_keywords):
             try:
                 image_url = generate_hf_image(state["input"])
             except Exception as e:
                 logger.error(f"Telegram-block image gen failed: {e}")
 
+        # Extract message text from task_plan if available
+        tp = state.get("task_plan", {})
+        if isinstance(tp, dict):
+            send_text = tp.get("text", state["input"])
+        else:
+            send_text = state["input"]
+
+        image_field = f'"[IMAGE_PLACEHOLDER]"' if image_url else 'null'
+        result = (
+            f"I'll send this message via Telegram right away.\n\n"
+            f'<action>\n{{\n  "intent": "telegram",\n  "title": "Telegram Message",\n'
+            f'  "message": {json.dumps(send_text)},\n'
+            f'  "image_url": {image_field}\n}}\n</action>'
+        )
+
+        if image_url:
+            result = result.replace("[IMAGE_PLACEHOLDER]", image_url)
+
+        return {**state, "output": result, "response_type": "text" if not image_url else "visual", "image_url": image_url}
+
+    # WHATSAPP REQUESTS
+    if state["intent"] in ("whatsapp_send", "whatsapp_read"):
+        if state["intent"] == "whatsapp_read":
+            messages = tool_result.get("messages", [])
+            if messages:
+                lines = [f"**{m.get('from', 'Unknown')}**: {m.get('body', '')}" for m in messages]
+                output = "Here are your recent WhatsApp messages:\n\n" + "\n".join(lines)
+                return {**state, "output": output, "response_type": "text"}
+            return {**state, "output": "No recent WhatsApp messages found.", "response_type": "text"}
+
+        # whatsapp_send: generate an action tag for the UI
         result = _llm(
             system=f"""
 You are the Digital Twin of {user_name}. 
-Objective: Answer the user's question AND prepare a Telegram notification.
+Objective: Prepare a WhatsApp message.
+Include an <action> block at the end.
 
-[CONSTRAINTS]
-1. Answer the user's question FULLY in your response. 
-2. Use the ACTUAL context from the user's request.
-3. At the end, include an <action> block to send this same information to Telegram.
-4. SIGNING: Use "{user_name}".
-
-Action Block Format (MANDATORY):
+Action Block Format:
 <action>
 {{
-  "intent": "telegram",
-  "title": "Information Update",
-  "message": "The full text of your answer here",
-  "image_url": { '"[IMAGE_PLACEHOLDER]"' if image_url else 'null' }
+  "intent": "whatsapp",
+  "to": "phone number",
+  "message": "text"
 }}
 </action>
 """,
             user=f"Input: {state['input']}\nContext: {state.get('context', '')}\nHistory: {history_prompt}",
-            intent="telegram"
+            intent="whatsapp"
         )
-        
-        if image_url:
-            result = result.replace("[IMAGE_PLACEHOLDER]", image_url)
-            
-        return {**state, "output": result, "response_type": "text" if not image_url else "visual", "image_url": image_url}
+        return {**state, "output": result, "response_type": "text"}
 
     # SCHEDULE WITH ANOTHER USER (cross-twin A2A scheduling)
     if state["intent"] == "schedule_with_user":
@@ -1212,8 +1325,7 @@ For all other types: respond with clean content only, using ## headings. First l
 
             if file_type in ("xlsx", "csv", "pptx"):
                 try:
-                    import re as _re2
-                    json_match = _re2.search(r'\{.*\}', raw_content, re.DOTALL)
+                    json_match = re.search(r'\{.*\}', raw_content, re.DOTALL)
                     if json_match:
                         parsed = json.loads(json_match.group())
                         title = parsed.get("title", title)
@@ -1294,8 +1406,7 @@ For all other types: respond with clean content only, using ## headings. First l
             for f in state.get("files", []):
                 if not f.get("type", "").startswith("image/"):
                     try:
-                        import base64 as _b64
-                        raw = _b64.b64decode(f.get("data", "").split(",")[-1]).decode("utf-8", errors="ignore")
+                        raw = base64.b64decode(f.get("data", "").split(",")[-1]).decode("utf-8", errors="ignore")
                         source_data += f"\n[FILE: {f['name']}]\n{raw[:4000]}\n"
                     except Exception:
                         pass
@@ -1317,7 +1428,10 @@ Rules:
 - Use colors: #6366f1, #a855f7, #10b981, #f59e0b, #3b82f6, #ef4444.
 - For pie charts each row needs "name" and "value" fields.
 - 5-15 data rows for readability.
-- Always generate concrete realistic data if none provided.
+- IMPORTANT: Use ONLY real-world, factual data. 
+- If source data is provided (from files or context), use it EXCLUSIVELY.
+- If no source data is provided, you may use your internal knowledge only if you are CERTAIN it is accurate and recent. 
+- If the data is unavailable, volatile, or you are unsure, DO NOT use placeholders or fake values. Set "data": [] and explain why in the "description".
 """
             user_msg = state["input"]
             if source_data:
@@ -1330,10 +1444,19 @@ Rules:
             config = json.loads(json_match.group())
 
             output = (
-                f"📊 **{config.get('title', 'Visualization')}**\n\n"
-                f"{config.get('description', '')}\n\n"
-                + "\n".join(f"• {i}" for i in config.get("insights", []))
+                f"I've generated a visualization of **{config.get('title', 'the requested data')}** for you below."
             )
+            
+            # If the model couldn't find real data, it will return empty data list
+            if not config.get("data") or len(config.get("data")) == 0:
+                output = f"### ⚠️ Data Unavailable\n\n{config.get('description', 'I do not have access to the real-world data requested for this time period.')}\n\nWould you like me to generate a **simulated projection** based on historical trends instead, or can you provide a data file for analysis?"
+                return {
+                    **state,
+                    "output": output,
+                    "response_type": "text",
+                    "viz_config": None
+                }
+
             return {
                 **state,
                 "output": output,
@@ -1442,8 +1565,7 @@ requires_reply = false if:
     try:
         return json.loads(result)
     except Exception:
-        import re as _re
-        match = _re.search(r"\{.*\}", result, _re.DOTALL)
+        match = re.search(r"\{.*\}", result, re.DOTALL)
         if match:
             try:
                 return json.loads(match.group())
