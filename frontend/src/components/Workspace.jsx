@@ -9,7 +9,8 @@ const Workspace = () => {
     const { preferences, togglePreference, setPreference, auth: storeAuth } = useStore();
     const [connecting, setConnecting] = useState(false);
 
-    const [googleConnected, setGoogleConnected] = useState(false);
+    const [gmailConnected, setGmailConnected] = useState(false);
+    const [calendarConnected, setCalendarConnected] = useState(false);
     const [slackConnected, setSlackConnected] = useState(false);
     const [whatsappStatus, setWhatsappStatus] = useState('unknown');
     const [mcpData, setMcpData] = useState({ servers: [], mcp_enabled: true, total_tools: 0 });
@@ -52,9 +53,11 @@ const Workspace = () => {
 
     useEffect(() => {
         if (storeAuth.user?.uid) {
-            setConnecting(true)
             apiFetch(`/integrations/google/status`)
-                .then((data) => setGoogleConnected(!!data?.connected))
+                .then((data) => {
+                    setGmailConnected(!!data?.gmail_connected);
+                    setCalendarConnected(!!data?.calendar_connected);
+                })
                 .catch(console.error)
                 .finally(() => setConnecting(false))
 
@@ -91,7 +94,8 @@ const Workspace = () => {
                     await apiFetch(`/integrations/${provider}/disconnect`, { method: 'POST' });
                     setPreference(tool.key, false);
                     if (provider === 'google') {
-                        setGoogleConnected(false);
+                        setGmailConnected(false);
+                        setCalendarConnected(false);
                         setPreference('gmailSync', false);
                         setPreference('calendarSync', false);
                     } else if (provider === 'slack') {
@@ -157,8 +161,8 @@ const Workspace = () => {
     }
 
     const tools = [
-        { name: "Gmail", icon: Mail, key: 'gmailSync', active: googleConnected, desc: "Allows twin to draft, reply, and send messages on your behalf." },
-        { name: "Calendar", icon: Calendar, key: 'calendarSync', active: googleConnected, desc: "Allows twin to negotiate times and automatically schedule events." },
+        { name: "Gmail", icon: Mail, key: 'gmailSync', active: gmailConnected, desc: "Allows twin to draft, reply, and send messages on your behalf." },
+        { name: "Calendar", icon: Calendar, key: 'calendarSync', active: calendarConnected, desc: "Allows twin to negotiate times and automatically schedule events." },
         { name: "Telegram", icon: MessageSquare, key: 'telegramSync', active: preferences.telegramSync, desc: "Acts as a rapid push notification and communication channel." },
         { name: "Slack", icon: MessageSquare, key: 'slackSync', active: slackConnected, desc: "Connect your workspaces for real-time team collaboration and updates." },
         {
