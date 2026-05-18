@@ -10,7 +10,7 @@ test.describe('Workspace', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/')
         await navigateTo(page, 'workspace')
-        await page.waitForLoadState('networkidle')
+        await page.waitForLoadState('domcontentloaded')
     })
 
     test('Workspace page renders',

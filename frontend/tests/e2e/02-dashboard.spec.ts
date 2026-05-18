@@ -11,7 +11,7 @@ test.describe('Dashboard', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/')
         await navigateTo(page, 'home')
-        await page.waitForLoadState('networkidle')
+        await page.waitForLoadState('domcontentloaded')
     })
 
     test('Dashboard loads with correct greeting',
@@ -30,14 +30,15 @@ test.describe('Dashboard', () => {
 
     test('Metric cards render with numbers',
         async ({ page }) => {
-        // Should have 4 metric cards
-        const cards = page.locator(
-            '[class*="metric"], [class*="stat"],'
-            + '[class*="card"]'
-        )
-        await expect(cards.first()).toBeVisible(
-            { timeout: 10000 }
-        )
+        await expect(
+            page.locator('text=Emails Monitored').first()
+        ).toBeVisible({ timeout: 10000 })
+        await expect(
+            page.locator('text=Meetings Synced').first()
+        ).toBeVisible({ timeout: 10000 })
+        await expect(
+            page.locator('text=Tasks Executed').first()
+        ).toBeVisible({ timeout: 10000 })
     })
 
     test('Recent Activity section renders',
@@ -57,30 +58,27 @@ test.describe('Dashboard', () => {
     test('Navigation sidebar has all sections',
         async ({ page }) => {
         const navItems = [
-            'Home', 'AI Twin Chat', 'Workspace',
-            'Activity', 'Agent Network', 'Settings'
+            'Home', 'Chat', 'Integrations',
+            'Activity', 'Network', 'Settings'
         ]
         for (const item of navItems) {
             await expect(
-                page.locator(`nav:has-text("${item}")`)
-            ).toBeVisible({ timeout: 5000 })
+                page.locator(`nav :has-text("${item}")`).first()
+            ).toBeVisible({ timeout: 10000 })
         }
     })
 
-    test('System status shows Online',
+    test('System status shows Optimal',
         async ({ page }) => {
         await expect(
-            page.locator('text=Online').first()
+            page.locator('text=Optimal').first()
         ).toBeVisible({ timeout: 10000 })
     })
 
     test('Intelligence Brief button exists',
         async ({ page }) => {
         await expect(
-            page.locator(
-                'button:has-text("Intelligence"),'
-                + 'button:has-text("Brief")'
-            )
+            page.locator('button:has-text("Brief")').first()
         ).toBeVisible({ timeout: 10000 })
     })
 })

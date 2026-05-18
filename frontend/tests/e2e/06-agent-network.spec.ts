@@ -10,7 +10,7 @@ test.describe('Agent Network', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/')
         await navigateTo(page, 'agent')
-        await page.waitForLoadState('networkidle')
+        await page.waitForLoadState('domcontentloaded')
     })
 
     test('Agent Network page renders',

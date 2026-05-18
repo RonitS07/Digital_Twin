@@ -10,7 +10,7 @@ test.describe('Settings', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/')
         await navigateTo(page, 'settings')
-        await page.waitForLoadState('networkidle')
+        await page.waitForLoadState('domcontentloaded')
     })
 
     test('Settings page renders',

@@ -10,7 +10,7 @@ test.describe('Admin Panel', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/')
         await navigateTo(page, 'admin')
-        await page.waitForLoadState('networkidle')
+        await page.waitForLoadState('domcontentloaded')
     })
 
     test('Admin Panel accessible for admin user',

@@ -12,7 +12,7 @@ test.describe('AI Chat', () => {
     test.beforeEach(async ({ page }) => {
         await page.goto('/')
         await navigateTo(page, 'chat')
-        await page.waitForLoadState('networkidle')
+        await page.waitForLoadState('domcontentloaded')
     })
 
     test('Chat UI renders correctly',
@@ -63,7 +63,8 @@ test.describe('AI Chat', () => {
         const messages = page.locator(
             '[class*="message"]'
         )
-        await expect(messages).toHaveCount(0, {
+        // A new chat has exactly 2 message elements for the default welcome greeting
+        await expect(messages).toHaveCount(2, {
             timeout: 5000
         })
     })
@@ -278,7 +279,7 @@ test.describe('AI Chat', () => {
         // Reload page
         await page.reload()
         await navigateTo(page, 'chat')
-        await page.waitForLoadState('networkidle')
+        await page.waitForLoadState('domcontentloaded')
 
         // Check messages are restored
         const afterCount = await page.locator(

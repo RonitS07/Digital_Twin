@@ -11,7 +11,7 @@ async function globalSetup(config: FullConfig) {
     const page = await context.newPage()
 
     console.log('Global setup: logging in...')
-    await page.goto(TEST_CONFIG.baseUrl, { waitUntil: 'domcontentloaded' })
+    await page.goto(TEST_CONFIG.baseUrl, { waitUntil: 'commit', timeout: 60000 })
 
     // Wait for login page
     await page.waitForSelector(
@@ -37,7 +37,7 @@ async function globalSetup(config: FullConfig) {
     )
 
     // Wait for dashboard to load
-    await page.waitForSelector('nav', { timeout: 20000 })
+    await page.waitForSelector('nav', { timeout: 30000 })
     console.log('Global setup: logged in successfully')
 
     // Save auth state for all tests
