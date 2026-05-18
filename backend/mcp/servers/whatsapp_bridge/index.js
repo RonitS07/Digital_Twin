@@ -5,10 +5,10 @@ app.use(express.json())
 
 const client = new Client({
     authStrategy: new LocalAuth(),
-    puppeteer: { 
+    puppeteer: {
         headless: true,
         args: [
-            '--no-sandbox', 
+            '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu'
@@ -37,8 +37,8 @@ app.get('/status', (req, res) => {
 
 app.post('/send', async (req, res) => {
     if (!isReady) {
-        return res.status(503).json({ 
-            error: 'WhatsApp not ready' 
+        return res.status(503).json({
+            error: 'WhatsApp not ready'
         })
     }
     const { to, message } = req.body
@@ -54,8 +54,8 @@ app.post('/send', async (req, res) => {
 
 app.get('/messages/:chatId', async (req, res) => {
     if (!isReady) {
-        return res.status(503).json({ 
-            error: 'WhatsApp not ready' 
+        return res.status(503).json({
+            error: 'WhatsApp not ready'
         })
     }
     try {
@@ -63,7 +63,7 @@ app.get('/messages/:chatId', async (req, res) => {
             req.params.chatId
         )
         const messages = await chat.fetchMessages({ limit: 10 })
-        res.json({ 
+        res.json({
             messages: messages.map(m => ({
                 from: m.from,
                 body: m.body,
@@ -77,6 +77,8 @@ app.get('/messages/:chatId', async (req, res) => {
 })
 
 client.initialize()
-app.listen(3001, () => {
-    console.log('[WA Bridge] Listening on port 3001')
+const PORT = process.env.PORT || 3001
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[WA Bridge] Listening on port ${PORT}`)
 })
