@@ -81,7 +81,7 @@ class MCPExecutor:
         return {
             # Email
             "email_read":   ("gmail", "read_emails",   False),
-            "email_draft":  ("gmail", "draft_email",   True),
+            "email_draft":  ("gmail", "draft_email",   False),  # BUG 4 FIX C: Draft saves to Gmail Drafts — no approval needed
             "email_send":   ("gmail", "send_email",    True),
 
             # Calendar

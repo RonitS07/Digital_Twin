@@ -68,28 +68,49 @@ class CalendarMCPServer(MCPServer):
 
             if tool_name == "create_event":
                 start = await asyncio.to_thread(normalize_datetime, args["start_datetime"])
-                end = await asyncio.to_thread(normalize_datetime, args["end_datetime"])
+                end = await asyncio.to_thread(normalize_datetime, args.get("end_datetime") or "")
 
-                conflict = await asyncio.to_thread(check_conflict, db, user_id, start, end)
-                if conflict:
-                    # Provide three lightweight alternatives (+1h, +2h, +3h).
-                    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
-                    end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
-                    alternatives = []
-                    for i in (1, 2, 3):
-                        alt_start = start_dt + timedelta(hours=i)
-                        alt_end = end_dt + timedelta(hours=i)
-                        alternatives.append(
-                            {
-                                "start_datetime": alt_start.isoformat(),
-                                "end_datetime": alt_end.isoformat(),
-                            }
+                # BUG 3 FIX: Use precise conflict check (no all-day events, exact window)
+                try:
+                    from services.calendar_conflict import check_conflict_precise
+                    from datetime import datetime as _dt, timezone as _tz
+
+                    def _parse_iso(s):
+                        try:
+                            if s.endswith("Z"):
+                                s = s[:-1] + "+00:00"
+                            return _dt.fromisoformat(s)
+                        except Exception:
+                            return None
+
+                    start_dt = _parse_iso(start)
+                    end_dt = _parse_iso(end) if end else (start_dt.replace(hour=start_dt.hour + 1) if start_dt else None)
+
+                    if start_dt and end_dt:
+                        conflict_name = await asyncio.to_thread(
+                            check_conflict_precise,
+                            db, user_id, start_dt, end_dt
                         )
-                    return {"conflict": True, "conflict_with": conflict, "alternatives": alternatives}
+                    else:
+                        conflict_name = None
+                except Exception as ce:
+                    logger.warning(f"[CalendarMCP] Precise conflict check failed: {ce}, falling back to legacy check")
+                    conflict_name = await asyncio.to_thread(check_conflict, db, user_id, start, end)
+
+                if conflict_name:
+                    # BUG 3 FIX: Report conflict name only — do NOT auto-reschedule
+                    return {
+                        "conflict": True,
+                        "conflict_with": conflict_name,
+                        "error": (
+                            f"You have '{conflict_name}' at that time. "
+                            f"Please choose a different time."
+                        ),
+                    }
 
                 created = await asyncio.to_thread(
                     create_event,
-                    args["summary"],
+                    args.get("summary", "Meeting"),
                     start,
                     end,
                     args.get("attendees", []) or [],

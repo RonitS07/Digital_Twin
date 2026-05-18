@@ -199,6 +199,29 @@ def draft_email(db: Session, user_id: str, to: str, subject: str, body: str) -> 
     ).execute()
     return {"draft_id": draft["id"], "to": to, "subject": subject}
 
+
+def save_draft(db: Session, user_id: str, to: str, subject: str, body: str) -> dict:
+    """
+    BUG 4 FIX: Save email to Gmail Drafts folder — does NOT send.
+    Uses Gmail Drafts API (drafts().create) not messages().send().
+    """
+    service = get_gmail_service(db=db, user_id=user_id)
+    message = MIMEText(body, 'html')
+    message["to"]      = to
+    message["subject"] = subject
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    draft = service.users().drafts().create(
+        userId="me",
+        body={"message": {"raw": raw}}
+    ).execute()
+    return {
+        "ok": True,
+        "draft_id": draft["id"],
+        "to": to,
+        "subject": subject,
+        "message": f"Draft saved to Gmail Drafts folder. Draft ID: {draft['id']}"
+    }
+
 def send_email(db: Session, user_id: str, to: str, subject: str, body: str) -> dict:
     service = get_gmail_service(db=db, user_id=user_id)
     message = MIMEText(body)

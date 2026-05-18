@@ -14,6 +14,17 @@ def read_file(file_path: str) -> str:
         raise FileNotFoundError(f"File not found: {file_path}")
 
     ext = os.path.splitext(file_path)[1].lower()
+
+    # BUG 1 FIX: Handle image files without trying to read binary as text
+    IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff', '.ico'}
+    if ext in IMAGE_EXTENSIONS:
+        size = os.path.getsize(file_path)
+        return (
+            f"[Image file: {os.path.basename(file_path)}, size: {size} bytes. "
+            f"This is a {ext[1:].upper()} image file. "
+            f"To analyze this image, please describe what you'd like to know about it.]"
+        )
+
     text = ""
 
     if ext in (".txt", ".md", ".json", ".csv"):

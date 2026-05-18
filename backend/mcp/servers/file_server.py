@@ -35,9 +35,18 @@ class FileMCPServer(MCPServer):
             backend_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
             uploads_root = os.path.realpath(os.path.join(backend_root, "uploads"))
 
-            resolved = file_path
+            # BUG 1 FIX A: Strip leading slash and normalize double uploads/ prefix
+            clean_path = file_path.lstrip("/")
+            if clean_path.startswith("uploads/uploads/"):
+                clean_path = clean_path.replace("uploads/uploads/", "uploads/", 1)
+
+            resolved = clean_path
             if not os.path.isabs(resolved):
-                resolved = os.path.realpath(os.path.join(uploads_root, resolved))
+                # If path already starts with uploads/, join from backend_root
+                if resolved.startswith("uploads/"):
+                    resolved = os.path.realpath(os.path.join(backend_root, resolved))
+                else:
+                    resolved = os.path.realpath(os.path.join(uploads_root, resolved))
             else:
                 resolved = os.path.realpath(resolved)
 

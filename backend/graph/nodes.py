@@ -142,10 +142,22 @@ def classifier_node(state: State):
     if "slack" in user_input and "briefing" not in user_input:
         return {**state, "intent": "slack_send"}
 
-    # File generation fast-path
+    # Image generation fast-path — MUST come BEFORE file generation checks
+    image_keywords = [
+        'generate an image', 'create an image', 'make an image',
+        'generate image', 'create image', 'make image',
+        'draw ', 'illustrate ', 'show me a picture', 'create a picture',
+        'generate a picture', 'make a picture', 'generate a photo',
+        'create a photo', 'make a photo',
+    ]
+    if any(kw in user_input for kw in image_keywords):
+        return {**state, "intent": "visual"}
+
+    # File generation fast-path — only for documents, NOT images
     file_gen_triggers = [
-        "generate a", "create a", "make a", "write a", "build a", "draft a",
-        "create pdf", "generate pdf", "write report", "make a report",
+        "create a file", "make a file", "write a file",
+        "create pdf", "generate pdf", "create a pdf", "make a pdf",
+        "write report", "make a report", "create a report",
         "create spreadsheet", "make excel", "generate excel", "create xlsx",
         "make a presentation", "create slides", "generate pptx",
         "write a script", "write python", "write code", "generate code",
@@ -154,6 +166,8 @@ def classifier_node(state: State):
         "write resume", "create resume", "generate resume",
         "create json", "generate json", "create yaml", "generate yaml",
         "meeting summary", "create summary", "generate summary",
+        "write an essay", "create an essay", "write essay",
+        "write a doc", "create a doc",
     ]
     if any(trigger in user_input for trigger in file_gen_triggers):
         return {**state, "intent": "file_generate"}
@@ -361,7 +375,13 @@ async def executor_node(state: State) -> State:
     user_id = state.get("user_id")
 
     # MCP PATH
+    import mcp.executor as _mcp_exec_mod
     from mcp.executor import mcp_executor
+
+    # Runtime toggle — respect the global MCP_ENABLED flag
+    if not getattr(_mcp_exec_mod, "MCP_ENABLED", True):
+        logger.warning(f"[Executor] MCP is DISABLED — skipping execution for intent={intent}")
+        return state
 
     # Only dispatch for intents that have an MCP mapping
     dispatchable = [
@@ -536,7 +556,7 @@ Format:
     plan = parsed.get("task_plan", {})
 
     needs_approval = state["intent"] in [
-        "email_draft",
+        # BUG 4 FIX: email_draft no longer needs approval (saves to Drafts folder silently)
         "calendar",
         "slack_send",
         "telegram_send",
@@ -662,17 +682,23 @@ def responder_node(state: State) -> State:
     # ── CALENDAR_CREATE — MCP result handling ──────────────────────────────
     if state["intent"] == "calendar_create":
         if tool_result.get("conflict"):
-            alts = tool_result.get("alternatives", [])
-            alt_lines = [f"  Option {i}: {a.get('start_datetime','')} – {a.get('end_datetime','')}" for i, a in enumerate(alts, 1)]
+            # BUG 3 FIX: Report conflict — do NOT auto-suggest new time
+            conflict_name = tool_result.get("conflict_with", tool_result.get("conflict_name", "another meeting"))
             conflict_msg = (
-                f"You have a conflict with **{tool_result.get('conflict_with', 'an existing event')}**.\n"
-                "Here are 3 alternatives:\n" + "\n".join(alt_lines)
+                f"You have a conflict with **'{conflict_name}'** at that time. "
+                f"Please choose a different time."
             )
-            return {**state, "output": conflict_msg, "response_type": "text", "approval_required": False}
+            return {
+                **state,
+                "output": conflict_msg,
+                "response_type": "conflict",
+                "conflict": conflict_name,
+                "approval_required": False
+            }
         if tool_result.get("event_id") or not tool_result.get("conflict"):
             meet = f" · [Join Meet]({tool_result.get('meet_url')})" if tool_result.get("meet_url") else ""
             link = f" · [View Event]({tool_result.get('calendar_link')})" if tool_result.get("calendar_link") else ""
-            return {**state, "output": f"✅ Meeting scheduled{meet}{link}", "response_type": "text", "approval_required": False}
+            return {**state, "output": f"✅ Meeting scheduled{meet}{link}", "response_type": "calendar_created", "approval_required": False}
         # No result yet — fall through to scheduling LLM
 
     # VISUAL REQUESTS
@@ -802,10 +828,18 @@ Include this at the very end ONLY if you have a recipient and subject.
         )
         visible = re.sub(r'<action>.*?</action>', '', result, flags=re.DOTALL).strip()
 
+        # BUG 4 FIX D: email_draft — strip action block, show clean draft, note saved to Drafts
+        tool_result_ok = (state.get("tool_result") or {}).get("ok")
+        if tool_result_ok:
+            draft_note = "\n\n---\n✅ **Draft saved to your Gmail Drafts folder.** Open Gmail to review and send."
+        else:
+            draft_note = "\n\n---\n📝 *Review the draft above. It will be saved to Gmail Drafts when you approve.*"
+
         return {
             **state,
-            "output": result, # We must return the raw result with action block so the frontend UI can parse it
-            "response_type": "text"
+            "output": visible + draft_note,
+            "response_type": "email_draft",
+            "approval_required": False,
         }
 
     # CALENDAR LOOKUP (Search/List)
@@ -1299,6 +1333,19 @@ Action Block Format:
 
     # FILE GENERATION REQUESTS
     if state["intent"] == "file_generate":
+        # BUG 5 FIX D: Guard — redirect image requests
+        _input_lower = state.get("input", "").lower()
+        _image_words = ['generate an image', 'create an image', 'make an image', 'generate image', 'picture of', 'photo of']
+        if any(w in _input_lower for w in _image_words):
+            state = {**state, "intent": "visual"}
+            image_url = generate_hf_image(state["input"])
+            return {
+                **state,
+                "output": "Here's your generated image.",
+                "response_type": "visual",
+                "image_url": image_url,
+            }
+
         try:
             from tools.file_generator import generate_file, detect_file_type
             from db.models import FileAsset
@@ -1308,15 +1355,32 @@ Action Block Format:
             user_input = state["input"]
             file_type = detect_file_type(user_input)
 
-            # Generate content via LLM
-            system_msg = f"""You are an expert document writer.
-Generate complete, well-structured, professional content for a {file_type.upper()} file.
-
-For structured types (xlsx/csv): respond in JSON: {{"title":"...", "headers":["col1",...], "rows":[["val1",...],...]}}
-For presentations (pptx): respond in JSON: {{"title":"...", "slides":[{{"title":"...","content":"..."}},...] }}
-For all other types: respond with clean content only, using ## headings. First line must start with # as the document title.
-"""
+            # Generate content via LLM — BUG 5 FIX B: precise content matching
+            system_msg = (
+                f"You are an expert document writer. Generate the exact content the user requested for a {file_type.upper()} file.\n"
+                f"User request: {user_input!r}\n\n"
+                "Rules:\n"
+                "- Write ONLY the requested content, no meta-commentary.\n"
+                "- Match the exact word count if specified (e.g. 300 words = ~300 words).\n"
+                "- Write as if this is the final document.\n\n"
+                "For xlsx/csv: respond in JSON: {\"title\":\"...\", \"headers\":[\"col1\",...], \"rows\":[[\"val1\",...],...]  }\n"
+                "For pptx: respond in JSON: {\"title\":\"...\", \"slides\":[{\"title\":\"...\",\"content\":\"...\"},...] }\n"
+                "For all other types: respond with clean content only. First line must start with # as the document title."
+            )
             raw_content = _llm(system=system_msg, user=user_input)
+
+            # BUG 5 FIX A: Smart filename — extract meaningful words from user input
+            _stopwords = {
+                'create', 'make', 'generate', 'write', 'build', 'produce',
+                'an', 'a', 'the', 'of', 'on', 'about', 'for', 'me', 'my',
+                'and', 'it', 'its', 'in', 'to', 'with', 'please', 'can',
+                'you', 'words', 'word', '100', '200', '300', '400', '500',
+                'page', 'pages', 'paragraph', 'paragraphs', 'give', 'some',
+                'file', 'document', 'pdf', 'docx', 'txt',
+            }
+            _words = re.sub(r'[^a-zA-Z0-9 ]', '', user_input.lower()).split()
+            _meaningful = [w for w in _words if w not in _stopwords and len(w) > 2][:5]
+            _smart_base = '_'.join(_meaningful) if _meaningful else 'document'
 
             # Parse title + content / structured data
             title = user_input[:50]
@@ -1344,7 +1408,7 @@ For all other types: respond with clean content only, using ## headings. First l
                 "AI Twin": "Aether Obsidian Intelligence"
             }
             storage_path, filename, mime_type = generate_file(
-                file_type=file_type, title=title, content=content,
+                file_type=file_type, title=_smart_base, content=content,
                 structured_data=structured_data,
                 metadata=meta if file_type in ("pdf", "docx", "xlsx") else None
             )
@@ -1411,28 +1475,118 @@ For all other types: respond with clean content only, using ## headings. First l
                     except Exception:
                         pass
 
-            viz_system = """You are an expert data visualization AI.
-Return ONLY valid JSON in this format:
-{
-  "chart_type": "bar|line|area|pie|scatter|radar",
-  "title": "Chart title",
-  "description": "One sentence insight",
-  "x_key": "field name for x-axis",
-  "y_keys": [{"key":"fieldname","label":"Display Label","color":"#hexcolor"}],
-  "data": [ {...data rows...} ],
-  "insights": ["Key insight 1", "Key insight 2", "Key insight 3"],
-  "drill_down": null
-}
-Rules:
-- Choose the BEST chart type.
-- Use colors: #6366f1, #a855f7, #10b981, #f59e0b, #3b82f6, #ef4444.
-- For pie charts each row needs "name" and "value" fields.
-- 5-15 data rows for readability.
-- IMPORTANT: Use ONLY real-world, factual data. 
-- If source data is provided (from files or context), use it EXCLUSIVELY.
-- If no source data is provided, you may use your internal knowledge only if you are CERTAIN it is accurate and recent. 
-- If the data is unavailable, volatile, or you are unsure, DO NOT use placeholders or fake values. Set "data": [] and explain why in the "description".
-"""
+            # Detect and fetch real-time live data from active credentials/database
+            is_real_data = False
+            real_data_source = ""
+            prompt_lower = state["input"].lower()
+
+            # 1. Google Calendar Real-Time Fetch
+            if any(k in prompt_lower for k in ["calendar", "schedule", "meeting", "agenda", "events", "time"]):
+                try:
+                    from tools.calendar_tool import get_upcoming_events
+                    with next(get_db()) as db:
+                        events = get_upcoming_events(db=db, user_id=user_id, max_results=40)
+                        if events:
+                            is_real_data = True
+                            real_data_source = "Google Calendar API"
+                            source_data += "\n=== LIVE GOOGLE CALENDAR EVENTS ===\n"
+                            for e in events:
+                                source_data += f"- Event: {e.get('title') or e.get('summary')}, Start: {e.get('start')}, End: {e.get('end')}\n"
+                except Exception as e:
+                    logger.error(f"[Visualize live data] Calendar fetch failed: {e}")
+
+            # 2. Gmail Inbox Real-Time Fetch
+            if any(k in prompt_lower for k in ["email", "gmail", "inbox", "messages", "sender"]):
+                try:
+                    from tools.gmail_tool import read_recent_emails
+                    with next(get_db()) as db:
+                        emails = read_recent_emails(db=db, user_id=user_id, max_results=40)
+                        if emails:
+                            is_real_data = True
+                            real_data_source = "Gmail API"
+                            source_data += "\n=== LIVE GMAIL INBOX DATA ===\n"
+                            for em in emails:
+                                source_data += f"- Email from: {em.get('from')}, Subject: {em.get('subject')}, Date: {em.get('date')}\n"
+                except Exception as e:
+                    logger.error(f"[Visualize live data] Gmail fetch failed: {e}")
+
+            # 3. Task Log / Digital Twin Telemetry Real-Time Fetch
+            if any(k in prompt_lower for k in ["usage", "history", "prompt", "activity", "actions", "telemetry"]):
+                try:
+                    from db.models import TaskLog
+                    with next(get_db()) as db:
+                        logs = db.query(TaskLog).filter(TaskLog.user_id == user_id).order_by(TaskLog.created_at.desc()).limit(100).all()
+                        if logs:
+                            is_real_data = True
+                            real_data_source = "Digital Twin Logs"
+                            source_data += "\n=== LIVE DIGITAL TWIN TELEMETRY ===\n"
+                            for log in logs:
+                                source_data += f"- Time: {log.created_at}, Intent: {log.intent}, Approved: {log.approved}\n"
+                except Exception as e:
+                    logger.error(f"[Visualize live data] TaskLog fetch failed: {e}")
+
+            # Select system prompt based on verified real data vs illustrative fallback
+            if is_real_data or state.get("files"):
+                # Real Data System Prompt - strictly forbids illustrative placeholders
+                viz_system = (
+                    "You are an expert data visualization AI. "
+                    "You are provided with 100% VERIFIED REAL-TIME LIVE DATA fetched directly from the user's active API integrations/databases.\n"
+                    f"Data source: {real_data_source or 'User uploaded file'}\n\n"
+                    "Return ONLY valid JSON. Do NOT include any text outside the JSON object.\n\n"
+                    "JSON format:\n"
+                    "{\n"
+                    '  "chart_type": "bar|line|area|pie|scatter|radar",\n'
+                    '  "title": "Chart title",\n'
+                    '  "description": "One sentence insight based exclusively on this real data",\n'
+                    '  "disclaimer": null,\n' # Set disclaimer strictly to null for verified data
+                    '  "x_key": "field name for x-axis",\n'
+                    '  "y_keys": [{"key":"fieldname","label":"Display Label","color":"#hexcolor"}],\n'
+                    '  "data": [ {...data rows parsed from the live source...} ],\n'
+                    '  "insights": ["Factual key insight 1", "Factual key insight 2", "Factual key insight 3"],\n'
+                    '  "drill_down": null\n'
+                    "}\n\n"
+                    "=== STRICT HARD CONSTRAINTS ===\n"
+                    "1. Since you have VERIFIED live data, use it EXCLUSIVELY to build the dataset.\n"
+                    "2. Do NOT invent, estimate, or simulate any numbers. Extract/summarize the actual counts, event distributions, or timeline items from the text.\n"
+                    "3. Set disclaimer strictly to null (since the data is completely authentic and real).\n"
+                    "4. Choose a title that reflects the live data source (e.g., 'Google Calendar Event Density' or 'Recent Email Categories').\n"
+                    "5. Keep the chart highly professional and responsive.\n"
+                    "=== END STRICT HARD CONSTRAINTS ==="
+                )
+            else:
+                # Illustrative Fallback System Prompt
+                viz_system = (
+                    "You are an expert data visualization AI. "
+                    "Return ONLY valid JSON. Do NOT include any text outside the JSON object.\n\n"
+                    "JSON format:\n"
+                    "{\n"
+                    '  "chart_type": "bar|line|area|pie|scatter|radar",\n'
+                    '  "title": "Chart title",\n'
+                    '  "description": "One sentence insight",\n'
+                    '  "disclaimer": "Illustrative data — verify with official sources" or null,\n'
+                    '  "x_key": "field name for x-axis",\n'
+                    '  "y_keys": [{"key":"fieldname","label":"Display Label","color":"#hexcolor"}],\n'
+                    '  "data": [ {...data rows...} ],\n'
+                    '  "insights": ["Key insight 1", "Key insight 2", "Key insight 3"],\n'
+                    '  "drill_down": null\n'
+                    "}\n\n"
+                    "=== HARD CONSTRAINTS — YOU MUST FOLLOW ALL OF THESE ===\n"
+                    "1. You do NOT have access to real-time, live, or officially verified data.\n"
+                    "2. For ANY statistics, counts, or metrics NOT provided by the user in a file:\n"
+                    "   a. Use clearly approximate/illustrative values (round numbers, rough estimates)\n"
+                    '   b. ALWAYS set disclaimer to: "Illustrative data — verify with official sources"\n'
+                    "   c. NEVER present invented numbers as if they are real facts\n"
+                    "3. If the user asks for live/real data (stock prices, actual office counts,\n"
+                    "   real employee numbers, live metrics): set data to [] and use description\n"
+                    "   to explain you cannot source real-time data and suggest they provide a file.\n"
+                    "4. If user-provided FILE data is present: use it exclusively, set disclaimer to null.\n"
+                    "5. chart_type must be the BEST fit for the data shape.\n"
+                    "6. Use colors: #6366f1, #a855f7, #10b981, #f59e0b, #3b82f6, #ef4444.\n"
+                    "7. For pie charts each row needs 'name' and 'value' fields.\n"
+                    "8. Aim for 5-15 data rows for readability.\n"
+                    "=== END HARD CONSTRAINTS ==="
+                )
+
             user_msg = state["input"]
             if source_data:
                 user_msg += f"\n\nSource data:\n{source_data}"
@@ -1446,7 +1600,11 @@ Rules:
             output = (
                 f"I've generated a visualization of **{config.get('title', 'the requested data')}** for you below."
             )
-            
+
+            # BUG 5 FIX C: Show disclaimer if data is illustrative
+            if config.get("disclaimer"):
+                output += f"\n\n⚠️ *{config['disclaimer']}*"
+
             # If the model couldn't find real data, it will return empty data list
             if not config.get("data") or len(config.get("data")) == 0:
                 output = f"### ⚠️ Data Unavailable\n\n{config.get('description', 'I do not have access to the real-world data requested for this time period.')}\n\nWould you like me to generate a **simulated projection** based on historical trends instead, or can you provide a data file for analysis?"

@@ -7,7 +7,7 @@ import {
     Treemap,
 } from 'recharts'
 import { motion, AnimatePresence } from 'framer-motion'
-import { TrendingUp, TrendingDown, Minus, Info, Download, Maximize2, X } from 'lucide-react'
+import { TrendingUp, TrendingDown, Minus, Info, Download, Maximize2, X, AlertTriangle } from 'lucide-react'
 
 const CHART_COLORS = [
     '#6366f1', '#a855f7', '#10b981', '#f59e0b', '#3b82f6',
@@ -85,6 +85,7 @@ const VisualizationRenderer = ({ config }) => {
         chart_type = 'bar',
         title,
         description,
+        disclaimer,
         x_key,
         y_keys = [],
         data = [],
@@ -218,7 +219,12 @@ const VisualizationRenderer = ({ config }) => {
                                 {chart_type} · AI Visualization
                             </p>
                             <h3 className="text-base font-bold text-white leading-snug">{title}</h3>
-                            {description && <p className="text-xs text-white/50 mt-1">{description}</p>}
+                            {/* Show disclaimer as subtitle if present, else fall back to description */}
+                            {(disclaimer || description) && (
+                                <p className="text-xs text-white/50 mt-1">
+                                    {disclaimer || description}
+                                </p>
+                            )}
                         </div>
                         <button
                             onClick={() => setFullscreen(true)}
@@ -263,6 +269,14 @@ const VisualizationRenderer = ({ config }) => {
                             </motion.div>
                         )}
                     </AnimatePresence>
+
+                    {/* Mandatory AI data disclaimer — always shown */}
+                    <div className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                        <AlertTriangle size={12} className="text-amber-400 flex-shrink-0" />
+                        <p className="text-xs text-amber-300/70">
+                            Data is AI-generated and illustrative. Verify with official sources before use.
+                        </p>
+                    </div>
 
                     {/* Insights */}
                     {insights.length > 0 && (
@@ -310,8 +324,15 @@ const VisualizationRenderer = ({ config }) => {
                                     {renderChart()}
                                 </ResponsiveContainer>
                             </div>
+                            {/* Disclaimer in fullscreen */}
+                            <div className="mt-4 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                                <AlertTriangle size={12} className="text-amber-400 flex-shrink-0" />
+                                <p className="text-xs text-amber-300/70">
+                                    Data is AI-generated and illustrative. Verify with official sources before use.
+                                </p>
+                            </div>
                             {insights.length > 0 && (
-                                <div className="mt-6 grid grid-cols-2 gap-2">
+                                <div className="mt-4 grid grid-cols-2 gap-2">
                                     {insights.map((ins, i) => <InsightBadge key={i} text={ins} index={i} />)}
                                 </div>
                             )}

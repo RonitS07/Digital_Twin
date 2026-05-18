@@ -29,12 +29,12 @@ class GmailMCPServer(MCPServer):
             ),
             MCPTool(
                 name="draft_email",
-                description="Draft an email using writing style",
+                description="Save email to Gmail Drafts folder (does NOT send)",
                 input_schema={
                     "user_id": "str",
                     "to": "str",
                     "subject": "str",
-                    "context": "str",
+                    "body": "str",
                 },
             ),
             MCPTool(
@@ -52,7 +52,7 @@ class GmailMCPServer(MCPServer):
     async def call_tool(self, tool_name: str, args: dict) -> dict:
         from db.database import get_db
         from tools.gmail_tool import (
-            draft_email,
+            save_draft,
             read_recent_emails,
             read_sent_emails,
             send_email,
@@ -81,15 +81,16 @@ class GmailMCPServer(MCPServer):
                 return {"sent_emails": result}
 
             if tool_name == "draft_email":
+                # BUG 4 FIX B: Use save_draft (saves to Drafts folder, does NOT send)
                 result = await asyncio.to_thread(
-                    draft_email,
+                    save_draft,
                     db,
                     user_id,
-                    args["to"],
-                    args["subject"],
-                    args.get("context", ""),
+                    args.get("to", ""),
+                    args.get("subject", ""),
+                    args.get("body", args.get("context", "")),
                 )
-                return {"drafted": True, "result": result}
+                return result
 
             if tool_name == "send_email":
                 result = await asyncio.to_thread(

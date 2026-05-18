@@ -25,3 +25,9 @@ dist-ssr
 .env
 .env.production
 .env.local
+
+# Playwright
+/playwright-report/
+/test-results/
+/tests/e2e/.auth-state.json
+/tests/e2e/.env.test

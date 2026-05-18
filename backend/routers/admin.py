@@ -21,7 +21,7 @@ from db.models import (
 )
 from db.twin_chat_models import DirectChatSession, DirectChatMessage
 from memory.chroma import get_collection
-from security.auth import get_current_admin
+from security.auth import get_current_admin, HARDLOCKED_ADMIN_EMAILS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -210,6 +210,13 @@ def revoke_admin(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # ❗ Hardlock: cannot revoke hardlocked superadmin email
+    if user.email in HARDLOCKED_ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot revoke admin access for this account — it is a hardlocked superadmin."
+        )
+
     user.is_admin = False
     _log_admin_action(
         db=db,
@@ -234,6 +241,13 @@ def soft_delete_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # ❗ Hardlock: cannot delete hardlocked superadmin
+    if user.email in HARDLOCKED_ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot delete this account — it is a hardlocked superadmin."
+        )
 
     user.is_active = False
     db.query(IntegrationToken).filter(IntegrationToken.user_id == user_id).delete()
@@ -282,6 +296,13 @@ def permanent_delete_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # ❗ Hardlock: cannot permanently delete hardlocked superadmin
+    if user.email in HARDLOCKED_ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot permanently delete this account — it is a hardlocked superadmin."
+        )
 
     email = user.email
 

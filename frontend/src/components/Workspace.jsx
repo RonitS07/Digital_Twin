@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import React, { useState, useEffect, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../store/useStore'
-import { Mail, Calendar, MessageSquare, ExternalLink, Unlink, MessageCircle, QrCode } from 'lucide-react'
+import { Mail, Calendar, MessageSquare, ExternalLink, Unlink, MessageCircle, QrCode, Cpu, Power, Zap, ChevronDown, ChevronUp } from 'lucide-react'
 import { API_BASE } from '../config'
 import { apiFetch } from '../utils/apiClient'
 
@@ -11,10 +11,44 @@ const Workspace = () => {
 
     const [googleConnected, setGoogleConnected] = useState(false);
     const [slackConnected, setSlackConnected] = useState(false);
-    const [whatsappStatus, setWhatsappStatus] = useState('unknown'); // 'ok' | 'error' | 'unknown'
-    const [mcpServers, setMcpServers] = useState([]);
+    const [whatsappStatus, setWhatsappStatus] = useState('unknown');
+    const [mcpData, setMcpData] = useState({ servers: [], mcp_enabled: true, total_tools: 0 });
+    const [mcpLoading, setMcpLoading] = useState(false);
+    const [mcpExpanded, setMcpExpanded] = useState(false);
     const [showQrModal, setShowQrModal] = useState(false);
     const [qrCode, setQrCode] = useState(null);
+
+    const loadMcpStatus = useCallback(async () => {
+        setMcpLoading(true);
+        try {
+            const data = await apiFetch(`/mcp/status`);
+            if (data?.servers) {
+                setMcpData({
+                    servers: data.servers,
+                    mcp_enabled: data.mcp_enabled ?? true,
+                    total_tools: data.total_tools ?? 0,
+                });
+                const wa = data.servers.find(s => s.name === 'whatsapp');
+                if (wa) setWhatsappStatus(wa.status);
+            }
+        } catch {
+            // fallback: admin endpoint
+            try {
+                const data = await apiFetch(`/admin/mcp/status`);
+                if (data?.servers) {
+                    setMcpData(prev => ({
+                        ...prev,
+                        servers: data.servers.map(s => ({ name: s.name, status: s.status, tool_count: s.tool_count, tools: s.tools || [] })),
+                        total_tools: data.total_tools ?? 0,
+                    }));
+                    const wa = data.servers.find(s => s.name === 'whatsapp');
+                    if (wa) setWhatsappStatus(wa.status);
+                }
+            } catch (e) { console.error('MCP status failed', e); }
+        } finally {
+            setMcpLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
         if (storeAuth.user?.uid) {
@@ -28,29 +62,25 @@ const Workspace = () => {
                 .then((data) => setSlackConnected(!!data?.connected))
                 .catch(console.error)
 
-            // Load MCP status (public endpoint)
-            apiFetch(`/mcp/status`)
-                .then((data) => {
-                    if (data?.servers) {
-                        setMcpServers(data.servers);
-                        const wa = data.servers.find(s => s.name === 'whatsapp');
-                        if (wa) setWhatsappStatus(wa.status);
-                    }
-                })
-                .catch(() => {
-                    // fallback: try admin endpoint
-                    apiFetch(`/admin/mcp/status`)
-                        .then((data) => {
-                            if (data?.servers) {
-                                setMcpServers(data.servers.map(s => ({ name: s.name, status: s.status, tool_count: s.tool_count })));
-                                const wa = data.servers.find(s => s.name === 'whatsapp');
-                                if (wa) setWhatsappStatus(wa.status);
-                            }
-                        })
-                        .catch(console.error)
-                })
+            loadMcpStatus();
         }
-    }, [storeAuth.user?.uid])
+    }, [storeAuth.user?.uid, loadMcpStatus])
+
+    const handleMcpToggle = async () => {
+        const newEnabled = !mcpData.mcp_enabled;
+        try {
+            const res = await apiFetch('/mcp/toggle', {
+                method: 'POST',
+                body: JSON.stringify({ enabled: newEnabled }),
+            });
+            if (res?.ok) {
+                setMcpData(prev => ({ ...prev, mcp_enabled: res.mcp_enabled }));
+            }
+        } catch (e) {
+            console.error('MCP toggle failed', e);
+            alert('MCP toggle failed: ' + e.message);
+        }
+    };
 
     const handleConnect = async (tool) => {
         if (tool.active) {
@@ -141,6 +171,13 @@ const Workspace = () => {
         },
     ];
 
+    const serverIconColor = (s) => {
+        if (!mcpData.mcp_enabled) return 'bg-yellow-500/20 text-yellow-400';
+        if (s.status === 'ok') return 'bg-green-500/15 text-green-400';
+        if (s.status === 'error') return 'bg-red-500/15 text-red-400';
+        return 'bg-neutral/10 text-neutral';
+    };
+
     return (
         <div className="p-4 sm:p-6 lg:p-10 max-w-7xl mx-auto space-y-8 lg:space-y-12 w-full pb-36">
             {/* WhatsApp QR Modal */}
@@ -228,22 +265,137 @@ const Workspace = () => {
                 </div>
             </div>
 
-            {/* MCP Server Status Row */}
-            {mcpServers.length > 0 && (
-                <div className="flex flex-wrap items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/5">
-                    <span className="text-xs text-white/30 uppercase tracking-wider font-bold mr-1">MCP Servers</span>
-                    {mcpServers.map(server => (
-                        <div
-                            key={server.name}
-                            className="flex items-center gap-1.5"
-                            title={`${server.name}: ${server.tool_count ?? 0} tools`}
-                        >
-                            <span className={`w-2 h-2 rounded-full ${server.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`} />
-                            <span className="text-xs text-white/40">{server.name}</span>
+            {/* MCP Server Status Panel */}
+            <div className="rounded-3xl border border-white/8 bg-white/[0.03] overflow-hidden">
+                {/* Header row — always visible */}
+                <div className="flex items-center justify-between px-6 py-4">
+                    <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${mcpData.mcp_enabled ? 'bg-primary/20 text-primary' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                            <Cpu size={16} />
                         </div>
-                    ))}
+                        <div>
+                            <span className="text-sm font-bold text-on-surface">MCP Tool Gateway</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                                <span className={`w-1.5 h-1.5 rounded-full ${mcpData.mcp_enabled ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+                                <span className="text-[11px] text-on-surface-variant">
+                                    {mcpLoading ? 'Loading...' : mcpData.mcp_enabled
+                                        ? `${mcpData.servers.length} servers · ${mcpData.total_tools} tools`
+                                        : 'Disabled'}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        {/* Toggle button */}
+                        <button
+                            onClick={handleMcpToggle}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border ${
+                                mcpData.mcp_enabled
+                                    ? 'bg-green-500/10 text-green-400 border-green-500/20 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20'
+                                    : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20 hover:bg-green-500/10 hover:text-green-400 hover:border-green-500/20'
+                            }`}
+                        >
+                            <Power size={11} />
+                            {mcpData.mcp_enabled ? 'Enabled' : 'Disabled'}
+                        </button>
+
+                        {/* Expand/collapse */}
+                        <button
+                            onClick={() => setMcpExpanded(e => !e)}
+                            className="text-on-surface-variant hover:text-on-surface transition-colors p-1"
+                        >
+                            {mcpExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                    </div>
                 </div>
-            )}
+
+                {/* Quick pill row */}
+                {!mcpExpanded && mcpData.servers.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 px-6 pb-4">
+                        {mcpData.servers.map(server => (
+                            <div
+                                key={server.name}
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
+                                    !mcpData.mcp_enabled
+                                        ? 'bg-yellow-500/5 border-yellow-500/15 text-yellow-400/70'
+                                        : server.status === 'ok'
+                                            ? 'bg-green-500/5 border-green-500/15 text-green-400'
+                                            : 'bg-red-500/5 border-red-500/15 text-red-400'
+                                }`}
+                                title={`${server.tool_count ?? 0} tools`}
+                            >
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                    !mcpData.mcp_enabled ? 'bg-yellow-500/50'
+                                    : server.status === 'ok' ? 'bg-green-500'
+                                    : 'bg-red-500'
+                                }`} />
+                                {server.name}
+                                <span className="opacity-50">·{server.tool_count ?? 0}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Expanded detailed table */}
+                <AnimatePresence>
+                    {mcpExpanded && (
+                        <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                        >
+                            <div className="border-t border-white/5 divide-y divide-white/5">
+                                {mcpData.servers.map((server) => (
+                                    <div key={server.name} className="flex items-start gap-4 px-6 py-3 hover:bg-white/[0.02] transition-colors">
+                                        <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${serverIconColor(server)}`}>
+                                            <Zap size={11} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm font-medium text-on-surface capitalize">{server.name}</span>
+                                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                                                    !mcpData.mcp_enabled ? 'bg-yellow-500/10 text-yellow-400'
+                                                    : server.status === 'ok' ? 'bg-green-500/10 text-green-400'
+                                                    : 'bg-red-500/10 text-red-400'
+                                                }`}>
+                                                    {!mcpData.mcp_enabled ? 'disabled' : server.status}
+                                                </span>
+                                                <span className="text-[10px] text-on-surface-variant ml-auto">{server.tool_count ?? 0} tool{server.tool_count !== 1 ? 's' : ''}</span>
+                                            </div>
+                                            {server.tools?.length > 0 && (
+                                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                                    {server.tools.map(t => (
+                                                        <span key={t} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-on-surface-variant">
+                                                            {t}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {server.error && (
+                                                <p className="text-[10px] text-red-400/70 mt-1">{server.error}</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Refresh button */}
+                            <div className="px-6 py-3 border-t border-white/5 flex justify-end">
+                                <button
+                                    onClick={loadMcpStatus}
+                                    disabled={mcpLoading}
+                                    className="text-[11px] text-primary/60 hover:text-primary transition-colors disabled:opacity-40"
+                                >
+                                    {mcpLoading ? 'Refreshing...' : '↻ Refresh status'}
+                                </button>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
         </div>
     )
 }

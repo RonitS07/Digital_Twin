@@ -860,10 +860,23 @@ async def startup_event():
         f"[MCP] {len(mcp_registry.list_all_tools())} tools registered across "
         f"{len(mcp_registry._servers)} servers"
     )
-    
+
     # 0. Initialize Firebase (CRITICAL for Auth)
     from security.firebase_config import initialize_firebase
     initialize_firebase()
+
+    # 0b. Ensure hardlocked superadmin has is_admin=True in DB
+    try:
+        from security.auth import HARDLOCKED_ADMIN_EMAILS
+        with next(get_db()) as _db:
+            for _email in HARDLOCKED_ADMIN_EMAILS:
+                _superadmin = _db.query(User).filter(User.email == _email).first()
+                if _superadmin and not _superadmin.is_admin:
+                    _superadmin.is_admin = True
+                    _db.commit()
+                    logger.info(f"[Auth] Hardlocked superadmin promoted in DB: {_email}")
+    except Exception as _e:
+        logger.warning(f"[Auth] Hardlocked admin DB sync failed (non-fatal): {_e}")
     
     # 1. Startup Logic switches
     if os.getenv("ENABLE_EMAIL_MONITOR") == "true":
@@ -909,6 +922,7 @@ class ProcessRequest(BaseModel):
     slack_sync: bool = True
     files: Optional[List[dict]] = Field(default_factory=list) # [{ name, type, data }]
     file_path: Optional[str] = None
+    file_name: Optional[str] = None  # original filename for display
     intent_hint: Optional[str] = None
     approved: bool = False
 
@@ -1329,7 +1343,12 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
                     {
                         "approval_required": final_state.get("approval_required", False),
                         "task_plan": final_state.get("task_plan", []),
-                        "files": req.files or []
+                        "files": req.files or [],
+                        # Persist viz_config so charts survive page refresh
+                        "viz_config": final_state.get("viz_config"),
+                        "response_type": final_state.get("response_type"),
+                        "image_url": final_state.get("image_url"),
+                        "generated_file": final_state.get("generated_file"),
                     },
                     ensure_ascii=False,
                 ),
@@ -1681,8 +1700,16 @@ def get_history(session_id: str = None, current_user: User = Depends(get_current
 
             # Assistant response — only emit if output was saved
             if log.output:
-                response_type = getattr(log, "response_type", "text") or "text"
-                image_url = getattr(log, "image_url", None)
+                # Parse metadata_json for extra fields like viz_config
+                meta = {}
+                if getattr(log, "metadata_json", None):
+                    try:
+                        meta = json.loads(log.metadata_json)
+                    except Exception:
+                        pass
+
+                response_type = meta.get("response_type") or getattr(log, "response_type", "text") or "text"
+                image_url = meta.get("image_url") or getattr(log, "image_url", None)
                 content = log.output
 
                 # Try to unwrap structured JSON output saved by older code paths
@@ -1704,6 +1731,7 @@ def get_history(session_id: str = None, current_user: User = Depends(get_current
                     "image_url": image_url,
                     "session_id": getattr(log, "session_id", None),
                     "timestamp": ts,
+                    "vizConfig": meta.get("viz_config"),
                 })
 
         return messages
@@ -2503,12 +2531,18 @@ async def approve_action(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Public MCP Status (non-admin, name + status + tool_count only)
+# MCP Runtime Control Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
+
+# In-memory MCP enable/disable toggle (survives per-worker lifetime, resets on deploy)
+_mcp_enabled: bool = os.getenv("MCP_ENABLED", "true").lower() == "true"
+
+
 @app.get("/mcp/status")
 def get_mcp_status_public(
     current_user: User = Depends(get_current_user)
 ):
+    """Returns health status of each registered MCP server."""
     servers = []
     try:
         for name, server in mcp_registry._servers.items():
@@ -2516,18 +2550,55 @@ def get_mcp_status_public(
                 tools = server.list_tools() if hasattr(server, "list_tools") else []
                 servers.append({
                     "name": name,
-                    "status": "ok",
-                    "tool_count": len(tools)
+                    "status": "ok" if _mcp_enabled else "disabled",
+                    "enabled": _mcp_enabled,
+                    "tool_count": len(tools),
+                    "tools": [t.name for t in tools],
                 })
-            except Exception:
+            except Exception as e:
                 servers.append({
                     "name": name,
                     "status": "error",
-                    "tool_count": 0
+                    "enabled": _mcp_enabled,
+                    "tool_count": 0,
+                    "tools": [],
+                    "error": str(e),
                 })
     except Exception as e:
         logger.error(f"MCP public status error: {e}")
-    return {"servers": servers}
+    return {
+        "servers": servers,
+        "mcp_enabled": _mcp_enabled,
+        "total_servers": len(servers),
+        "total_tools": sum(s["tool_count"] for s in servers),
+    }
+
+
+@app.post("/mcp/toggle")
+def toggle_mcp(
+    body: dict,
+    current_user: User = Depends(get_current_user)
+):
+    """Toggle MCP globally on or off. Persists for the lifetime of the worker."""
+    global _mcp_enabled
+    from security.auth import HARDLOCKED_ADMIN_EMAILS
+    # Only admins or hardlocked superadmins can toggle MCP
+    if not getattr(current_user, "is_admin", False) and current_user.email not in HARDLOCKED_ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    enabled = bool(body.get("enabled", True))
+    _mcp_enabled = enabled
+
+    # Propagate the toggle to the executor module so executor_node respects it
+    import mcp.executor as _mcp_exec_mod
+    _mcp_exec_mod.MCP_ENABLED = enabled
+
+    logger.info(f"[MCP] Runtime toggle: MCP_ENABLED = {enabled} by {current_user.email}")
+    return {
+        "ok": True,
+        "mcp_enabled": _mcp_enabled,
+        "message": f"MCP {'enabled' if enabled else 'disabled'} successfully",
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Smart Proxy: Route everything else to the Frontend Dev Server (port 5173)
