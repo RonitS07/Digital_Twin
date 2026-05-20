@@ -2287,7 +2287,7 @@ async def send_whatsapp_msg(
         raise HTTPException(status_code=500, detail="WHATSAPP_BRIDGE_URL not configured")
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(
                 f"{bridge_url}/send",
                 json={"to": to_clean, "message": message}
@@ -2305,9 +2305,16 @@ async def send_whatsapp_msg(
             status_code=503,
             detail="WhatsApp bridge is offline. Please link your phone in the Workspace tab."
         )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="WhatsApp bridge timed out. The message may still have been sent — check your phone."
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"WhatsApp Send Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e) or "Unknown error sending WhatsApp message")
 
 @app.post("/slack/events")
 async def slack_events(request: Request, db: Session = Depends(get_db)):

@@ -8,7 +8,7 @@ GOOGLE_API_KEY = settings.GOOGLE_GENAI_API_KEY
 if GOOGLE_API_KEY:
     embedder = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
         api_key=GOOGLE_API_KEY,
-        model_name="models/embedding-001"
+        model_name="models/text-embedding-004"
     )
 else:
     # Fallback to a lightweight internal embedder if no cloud key is provided

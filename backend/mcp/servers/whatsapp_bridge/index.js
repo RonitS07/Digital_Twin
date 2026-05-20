@@ -7,11 +7,14 @@ const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
+        protocolTimeout: 60000,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--single-process',
+            '--no-zygote'
         ],
         timeout: 60000
     }
@@ -80,14 +83,8 @@ app.post('/send', async (req, res) => {
         }
         const chatId = `${cleanNumber}@c.us`
 
-        const isRegistered = await client.isRegisteredUser(chatId)
-        if (!isRegistered) {
-            return res.status(400).json({
-                ok: false,
-                error: 'Number is not registered on WhatsApp'
-            })
-        }
-
+        // Skip isRegisteredUser — it causes Puppeteer ProtocolError in containers.
+        // WhatsApp will reject invalid numbers natively via sendMessage.
         const result = await client.sendMessage(chatId, message)
         res.json({
             ok: true,
