@@ -54,7 +54,8 @@ const getActionTitle = (action) => {
         slack:      `Post to ${action.channel_name || '#channel'}`,
         telegram_send: 'Send Telegram message',
         telegram:      'Send Telegram message',
-        whatsapp_send: `WhatsApp ${action.to || '...'}`,
+        whatsapp_send: `WhatsApp → ${action.to || '...'}`,
+        whatsapp:      `WhatsApp → ${action.to || '...'}`,
         calendar_create: `Schedule: ${action.summary || action.title || 'Meeting'}`,
         calendar:        `Schedule: ${action.summary || action.title || 'Meeting'}`,
         twin_message:      'Send twin message',
@@ -368,9 +369,10 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                             }`}>
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                    {actionData.intent === 'email' ? <Mail size={16} className={`${actionData.is_conflict ? 'text-amber-500' : 'text-primary'}`} /> : 
-                                     actionData.intent === 'slack' ? <Zap size={16} className="text-[#36C5F0]" /> :
-                                     actionData.intent === 'telegram' ? <MessageSquare size={16} className="text-secondary" /> : 
+                                    {actionData.intent === 'email' || actionData.intent === 'email_send' ? <Mail size={16} className={`${actionData.is_conflict ? 'text-amber-500' : 'text-primary'}`} /> : 
+                                     actionData.intent === 'slack' || actionData.intent === 'slack_send' ? <Zap size={16} className="text-[#36C5F0]" /> :
+                                     actionData.intent === 'telegram' || actionData.intent === 'telegram_send' ? <MessageSquare size={16} className="text-secondary" /> : 
+                                     actionData.intent === 'whatsapp' || actionData.intent === 'whatsapp_send' ? <MessageSquare size={16} className="text-green-400" /> :
                                      <Calendar size={16} className={`${actionData.is_conflict ? 'text-amber-500' : 'text-secondary'}`} />}
                                     <span className={`text-[10px] font-bold uppercase tracking-widest ${actionData.is_conflict ? 'text-amber-500' : 'text-white/60'}`}>
                                         {actionData.is_conflict ? 'Conflict Detected / Suggestion' : `Pending ${actionData.intent} Authorization`}
@@ -393,9 +395,15 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
 
                             <div className="space-y-1">
                                 <h4 className="text-sm font-bold text-white">{getActionTitle(actionData)}</h4>
-                                {actionData.intent === 'email' && <p className="text-xs text-white/80">To: <span className="font-mono text-tertiary">{actionData.to}</span></p>}
-                                {actionData.intent === 'slack' && <p className="text-xs text-white/80">Channel: <span className="font-mono text-tertiary">#{actionData.channel_name || actionData.channel_id}</span></p>}
-                                {actionData.intent === 'telegram' && <p className="text-xs text-white/80">Action: <span className="font-mono text-tertiary">Push Notification</span></p>}
+                                {(actionData.intent === 'email' || actionData.intent === 'email_send') && <p className="text-xs text-white/80">To: <span className="font-mono text-tertiary">{actionData.to}</span></p>}
+                                {(actionData.intent === 'slack' || actionData.intent === 'slack_send') && <p className="text-xs text-white/80">Channel: <span className="font-mono text-tertiary">#{actionData.channel_name || actionData.channel_id}</span></p>}
+                                {(actionData.intent === 'telegram' || actionData.intent === 'telegram_send') && <p className="text-xs text-white/80">Action: <span className="font-mono text-tertiary">Push Notification</span></p>}
+                                {(actionData.intent === 'whatsapp' || actionData.intent === 'whatsapp_send') && (
+                                    <>
+                                        <p className="text-xs text-white/80">To: <span className="font-mono text-green-400">{actionData.to || '...'}</span></p>
+                                        {actionData.message && <p className="text-xs text-white/70 italic mt-1">"{actionData.message}"</p>}
+                                    </>
+                                )}
                                 {actionData.intent === 'calendar' && (
                                     <div className="flex items-center gap-2">
                                         <Clock size={12} className="text-white/40" />
@@ -404,7 +412,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                                         </p>
                                     </div>
                                 )}
-                                <p className="text-xs text-white/50 line-clamp-2 mt-2 italic">{actionData.body || actionData.description}</p>
+                                <p className="text-xs text-white/50 line-clamp-2 mt-2 italic">{actionData.message || actionData.body || actionData.description}</p>
                             </div>
 
                             <div className="flex gap-2 pt-2">

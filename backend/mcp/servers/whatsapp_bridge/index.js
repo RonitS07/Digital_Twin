@@ -94,6 +94,19 @@ app.post('/send', async (req, res) => {
 
     } catch (e) {
         console.error('WhatsApp send failed:', e)
+
+        // Detached frame = WhatsApp Web page reloaded internally — re-init
+        if (e.message && e.message.includes('detached Frame')) {
+            isReady = false
+            qrCode = null
+            console.log('[WA Bridge] Detached frame detected — re-initializing session...')
+            client.initialize().catch(err => console.error('[WA Bridge] Re-init error:', err))
+            return res.status(503).json({
+                ok: false,
+                error: 'WhatsApp session restarting. Please try again in 15-30 seconds.'
+            })
+        }
+
         res.status(500).json({
             ok: false,
             error: e.message

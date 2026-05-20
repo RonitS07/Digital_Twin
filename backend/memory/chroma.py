@@ -5,16 +5,11 @@ from datetime import datetime, timezone, timedelta
 from core.config import settings
 GOOGLE_API_KEY = settings.GOOGLE_GENAI_API_KEY
 
-if GOOGLE_API_KEY:
-    embedder = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
-        api_key=GOOGLE_API_KEY,
-        model_name="models/text-embedding-004"
-    )
-else:
-    # Fallback to a lightweight internal embedder if no cloud key is provided
-    import logging
-    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
-    embedder = embedding_functions.DefaultEmbeddingFunction()
+import logging as _emb_logging
+_emb_logging.getLogger("sentence_transformers").setLevel(_emb_logging.WARNING)
+# Google's embedding API via google.generativeai is deprecated (v1beta removed).
+# Use the built-in local sentence-transformers embedder instead.
+embedder = embedding_functions.DefaultEmbeddingFunction()
 
 client = chromadb.PersistentClient(path="./chroma_store")
 
