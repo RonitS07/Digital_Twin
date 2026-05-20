@@ -651,7 +651,12 @@ async def monitor_telegram():
                 raise
             except Exception as e:
                 logger.error(f"Telegram Monitor Error: {e}")
-            await asyncio.sleep(5)
+                # Exponential backoff on repeated errors (max 60s)
+                await asyncio.sleep(min(60, getattr(monitor_telegram, '_backoff', 5)))
+                monitor_telegram._backoff = min(60, getattr(monitor_telegram, '_backoff', 5) * 2)
+                continue
+            monitor_telegram._backoff = 5  # reset on success
+            await asyncio.sleep(2)
     except asyncio.CancelledError:
         logger.info("[Monitor] Telegram monitor stopping...")
         raise
@@ -891,7 +896,9 @@ async def startup_event():
         background_tasks.add(asyncio.create_task(monitor_emails()))
         
     if os.getenv("ENABLE_TELEGRAM_MONITOR") == "true":
-        logger.info("📱 Starting Telegram Monitor...")
+        logger.info("📱 Starting Telegram Monitor — clearing any webhook first...")
+        from tools.telegram_tool import delete_telegram_webhook
+        await asyncio.to_thread(delete_telegram_webhook)
         background_tasks.add(asyncio.create_task(monitor_telegram()))
         
     if os.getenv("ENABLE_CALENDAR_MONITOR") == "true":
@@ -2597,17 +2604,15 @@ async def get_wa_qr(current_user: User = Depends(get_current_user)):
     import httpx
     bridge_url = os.getenv("WHATSAPP_BRIDGE_URL")
     if not bridge_url:
-        raise HTTPException(status_code=500, detail="WHATSAPP_BRIDGE_URL not configured")
+        return {"qr": None, "ready": False, "error": "WHATSAPP_BRIDGE_URL not configured"}
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{bridge_url}/status")
             if "application/json" in r.headers.get("content-type", ""):
                 return r.json()
-            raise HTTPException(status_code=500, detail=f"Bridge returned non-JSON response: {r.text}")
-    except HTTPException:
-        raise
-    except Exception:
-        return {"qr": None, "ready": False, "error": "Bridge not running"}
+            return {"qr": None, "ready": False, "error": f"Bridge returned non-JSON (status {r.status_code})"}
+    except Exception as e:
+        return {"qr": None, "ready": False, "error": "Bridge not reachable"}
 
 @app.post("/mcp/whatsapp/disconnect")
 async def disconnect_whatsapp(current_user: User = Depends(get_current_user)):
@@ -2671,11 +2676,10 @@ async def approve_action(
             db.commit()
             return {"status": "success", "result": {"output": "Action executed successfully"}}
         else:
-            raise HTTPException(status_code=400, detail=res.get("error") or "Execution failed")
-            
+            return {"status": "error", "result": {"output": res.get("error") or "Execution failed"}}
     except Exception as e:
         logger.error(f"Approval execution error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "result": {"output": str(e)}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MCP Runtime Control Endpoints
@@ -2689,8 +2693,8 @@ _mcp_enabled: bool = os.getenv("MCP_ENABLED", "true").lower() == "true"
 def get_mcp_status_public(
     current_user: User = Depends(get_current_user)
 ):
-    """Returns health status of each registered MCP server."""
-    import requests
+    """Returns health status of each registered MCP server. Always returns 200."""
+    import requests as _req
     servers = []
     try:
         for name, server in mcp_registry._servers.items():
@@ -2698,8 +2702,8 @@ def get_mcp_status_public(
                 tools = server.list_tools() if hasattr(server, "list_tools") else []
                 status = "ok" if _mcp_enabled else "disabled"
                 error_msg = None
-                
-                # Dynamic health check for WhatsApp bridge
+
+                # Dynamic health check for WhatsApp bridge only
                 if name == "whatsapp" and _mcp_enabled:
                     bridge_url = os.getenv("WHATSAPP_BRIDGE_URL")
                     if not bridge_url:
@@ -2707,20 +2711,18 @@ def get_mcp_status_public(
                         error_msg = "WHATSAPP_BRIDGE_URL not configured"
                     else:
                         try:
-                            r = requests.get(f"{bridge_url}/status", timeout=2)
+                            r = _req.get(f"{bridge_url}/status", timeout=3)
                             if r.status_code == 200 and "application/json" in r.headers.get("content-type", ""):
                                 data = r.json()
-                                if data.get("ready"):
-                                    status = "ok"
-                                else:
-                                    status = "error"
-                                    error_msg = "WhatsApp client is not ready. Scan the QR code."
+                                status = "ok" if data.get("ready") else "error"
+                                if not data.get("ready"):
+                                    error_msg = "WhatsApp not ready — scan QR code"
                             else:
                                 status = "offline"
-                                error_msg = f"Bridge returned status code {r.status_code}"
-                        except Exception as e:
+                                error_msg = f"Bridge HTTP {r.status_code}"
+                        except Exception as we:
                             status = "offline"
-                            error_msg = f"WhatsApp bridge unreachable: {e}"
+                            error_msg = "WhatsApp bridge unreachable"
 
                 servers.append({
                     "name": name,
