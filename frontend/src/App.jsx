@@ -32,7 +32,7 @@ export { useStore } from './store/useStore'
 import { useStore } from './store/useStore'
 
 function App() {
-    const { currentScreen, setCurrentScreen, view, setView, theme, auth: storeAuth, login, logout, updateUser, setIsAdmin, isAdmin } = useStore()
+    const { currentScreen, setCurrentScreen, view, setView, theme, auth: storeAuth, login, logout, updateUser, setIsAdmin, isAdmin, authInitialized, setAuthInitialized } = useStore()
     const [initializing, setInitializing] = useState(true);
     const [toast, setToast] = useState(null);
 
@@ -87,6 +87,7 @@ function App() {
                 logout()
             }
             setInitializing(false)
+            setAuthInitialized(true)
         })
 
         // Proactive token refresh every 45 minutes (Firebase tokens expire at 60min)
@@ -170,6 +171,36 @@ function App() {
         if (screen === 'main') {
             updateUser({ onboardingCompleted: true })
         }
+    }
+
+    if (!authInitialized) {
+        return (
+            <div className="bg-surface-base min-h-screen flex flex-col items-center justify-center text-on-surface antialiased select-none">
+                <div className="relative w-48 h-48 mb-8 flex items-center justify-center">
+                    <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 10, repeat: Infinity, ease: 'linear' }}
+                        className="absolute inset-0 rounded-full border-2 border-dashed border-primary/20"
+                    />
+                    <motion.div
+                        animate={{ scale: [1, 1.05, 1] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                        className="w-24 h-24 rounded-full bg-gradient-to-tr from-primary to-primary/60 flex items-center justify-center shadow-[0_0_50px_rgba(103,96,253,0.35)] z-10 border border-white/10"
+                    >
+                        <img src="/logo.png" alt="Logo" className="w-14 h-14 object-contain" />
+                    </motion.div>
+                </div>
+                <div className="w-48 h-1 bg-surface-container-high rounded-full overflow-hidden mb-4 relative">
+                    <motion.div
+                        animate={{ left: ['-100%', '100%'] }}
+                        transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                        className="h-full bg-primary rounded-full absolute w-1/2"
+                    />
+                </div>
+                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-primary animate-pulse italic">Establishing Secure Sync</p>
+                <p className="text-[9px] text-neutral mt-2 opacity-50 font-bold uppercase tracking-widest">Verifying Central Command Handshake...</p>
+            </div>
+        );
     }
 
     return (

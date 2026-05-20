@@ -2480,7 +2480,7 @@ async def get_wa_qr(current_user: User = Depends(get_current_user)):
     bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{bridge_url}/qr")
+            r = await client.get(f"{bridge_url}/status")
             return r.json()
     except Exception:
         return {"qr": None, "ready": False, "error": "Bridge not running"}
@@ -2543,17 +2543,41 @@ def get_mcp_status_public(
     current_user: User = Depends(get_current_user)
 ):
     """Returns health status of each registered MCP server."""
+    import requests
     servers = []
     try:
         for name, server in mcp_registry._servers.items():
             try:
                 tools = server.list_tools() if hasattr(server, "list_tools") else []
+                status = "ok" if _mcp_enabled else "disabled"
+                error_msg = None
+                
+                # Dynamic health check for WhatsApp bridge
+                if name == "whatsapp" and _mcp_enabled:
+                    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+                    try:
+                        r = requests.get(f"{bridge_url}/status", timeout=2)
+                        if r.status_code == 200:
+                            data = r.json()
+                            if data.get("ready"):
+                                status = "ok"
+                            else:
+                                status = "error" # Trigger SCAN QR in the frontend
+                                error_msg = "WhatsApp client is not ready. Scan the QR code."
+                        else:
+                            status = "offline"
+                            error_msg = f"Bridge returned status code {r.status_code}"
+                    except Exception as e:
+                        status = "offline"
+                        error_msg = f"WhatsApp bridge unreachable: {e}"
+
                 servers.append({
                     "name": name,
-                    "status": "ok" if _mcp_enabled else "disabled",
+                    "status": status,
                     "enabled": _mcp_enabled,
                     "tool_count": len(tools),
                     "tools": [t.name for t in tools],
+                    **({"error": error_msg} if error_msg else {})
                 })
             except Exception as e:
                 servers.append({

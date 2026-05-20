@@ -9,6 +9,8 @@ export const useStore = create(
                 isLoggedIn: false,
                 user: null, // Holds basic user profile
             },
+            authInitialized: false,
+            setAuthInitialized: (val) => set({ authInitialized: !!val }),
             isAdmin: false,
             setIsAdmin: (val) => set({ isAdmin: !!val }),
             login: (user, preferences = null) => set((state) => ({ 
@@ -22,7 +24,7 @@ export const useStore = create(
             })),
             logout: () => set({ 
                 auth: { isLoggedIn: false, user: null }, 
-                isAdmin: false,
+                isAdmin: false, 
                 currentScreen: 'login', 
                 view: 'home',
                 preferences: {
@@ -31,6 +33,7 @@ export const useStore = create(
                     calendarSync: false,
                     telegramSync: false,
                     slackSync: false,
+                    whatsappSync: false,
                 },
                 tasks: []
             }),
@@ -53,6 +56,7 @@ export const useStore = create(
                 calendarSync: false,
                 telegramSync: false,
                 slackSync: false,
+                whatsappSync: false,
             },
             setPreferences: (newPrefs) => set({ preferences: newPrefs }),
             setPreference: (key, value) => set((state) => ({

@@ -51,6 +51,8 @@ const Settings = () => {
     const [saved, setSaved] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [gmailConnected, setGmailConnected] = useState(false);
+    const [calendarConnected, setCalendarConnected] = useState(false);
+    const [whatsappConnected, setWhatsappConnected] = useState(false);
     const [autonomous, setAutonomous] = useState(() => {
         const val = localStorage.getItem(`autonomous_mode_${user.uid}`);
         return val === 'true';
@@ -81,12 +83,22 @@ const Settings = () => {
         if (!user.uid) return;
         let isMounted = true;
 
-        const checkGmailStatus = () => {
-            apiFetch(`/auth/gmail/status`)
-                .then(data => { if (isMounted) setGmailConnected(data.connected); })
-                .catch(() => { if (isMounted) setGmailConnected(false); });
+        const checkGoogleStatus = () => {
+            apiFetch(`/integrations/google/status`)
+                .then(data => {
+                    if (isMounted) {
+                        setGmailConnected(!!data?.gmail_connected);
+                        setCalendarConnected(!!data?.calendar_connected);
+                    }
+                })
+                .catch(() => {
+                    if (isMounted) {
+                        setGmailConnected(false);
+                        setCalendarConnected(false);
+                    }
+                });
         };
-        checkGmailStatus();
+        checkGoogleStatus();
 
         apiFetch(`/settings/telegram`)
             .then(data => { if (isMounted) setTeleConfig(data); })
@@ -96,11 +108,15 @@ const Settings = () => {
             .then(data => { if (isMounted) setSlackConnected(data.connected); })
             .catch(() => { if (isMounted) setSlackConnected(false); });
 
+        apiFetch(`/mcp/whatsapp/qr`)
+            .then(data => { if (isMounted) setWhatsappConnected(!!data.ready); })
+            .catch(() => { if (isMounted) setWhatsappConnected(false); });
+
         const handleMessage = (event) => {
             if (event.data === 'google_oauth_success') {
                 setToast({ msg: 'Google connected successfully!', type: 'success' });
                 setTimeout(() => setToast(null), 4000);
-                checkGmailStatus();
+                checkGoogleStatus();
             }
         };
         window.addEventListener('message', handleMessage);
@@ -311,12 +327,14 @@ const Settings = () => {
             </Section>
 
             <Section icon={Plug} title="Integrations">
-                <Row label="Gmail & Calendar" description="Live inbox monitoring, drafting & event management">
+                <Row label="Gmail Integration" description="Live inbox monitoring, drafting & email triage">
                     <div className="flex items-center gap-3">
                         <span className={`${gmailConnected ? 'text-green-500 bg-green-500/10 border-green-500/20' : 'text-neutral bg-neutral/10 border-neutral/20'} text-xs font-bold px-3 py-1 rounded-full border`}>
                             {gmailConnected ? 'Connected' : 'Disconnected'}
                         </span>
-                        {!gmailConnected && (
+                        {gmailConnected ? (
+                            <Toggle value={draftPreferences.gmailSync ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, gmailSync: val }))} />
+                        ) : (
                             <button
                                 onClick={handleGoogleConnect}
                                 className="text-xs font-bold px-3 py-1.5 bg-primary/10 text-primary border border-primary/20 rounded-xl hover:bg-primary/20 transition-all"
@@ -324,23 +342,46 @@ const Settings = () => {
                                 Connect
                             </button>
                         )}
-                        {gmailConnected && (
-                            <div className="flex items-center gap-2">
-                                <Toggle value={draftPreferences.gmailSync ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, gmailSync: val }))} />
-                                <Toggle value={draftPreferences.calendarSync ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, calendarSync: val }))} />
-                            </div>
+                    </div>
+                </Row>
+                <Row label="Calendar Integration" description="Autonomous scheduling, time negotiation & event management">
+                    <div className="flex items-center gap-3">
+                        <span className={`${calendarConnected ? 'text-green-500 bg-green-500/10 border-green-500/20' : 'text-neutral bg-neutral/10 border-neutral/20'} text-xs font-bold px-3 py-1 rounded-full border`}>
+                            {calendarConnected ? 'Connected' : 'Disconnected'}
+                        </span>
+                        {calendarConnected ? (
+                            <Toggle value={draftPreferences.calendarSync ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, calendarSync: val }))} />
+                        ) : (
+                            <button
+                                onClick={handleGoogleConnect}
+                                className="text-xs font-bold px-3 py-1.5 bg-primary/10 text-primary border border-primary/20 rounded-xl hover:bg-primary/20 transition-all"
+                            >
+                                Connect
+                            </button>
                         )}
                     </div>
                 </Row>
-                <Row label="Slack Integration" description="Team messaging & channel updates">
+                <Row label="Slack Integration" description="Team workspace messaging & channel updates">
                     <div className="flex items-center gap-3">
                         <span className={`${slackConnected ? 'text-green-500 bg-green-500/10 border-green-500/20' : 'text-neutral bg-neutral/10 border-neutral/20'} text-xs font-bold px-3 py-1 rounded-full border`}>
                             {slackConnected ? 'Connected' : 'Disconnected'}
                         </span>
-                        <Toggle value={draftPreferences.slackSync ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, slackSync: val }))} />
+                        {slackConnected && (
+                            <Toggle value={draftPreferences.slackSync ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, slackSync: val }))} />
+                        )}
                     </div>
                 </Row>
-                <Row label="Telegram" description="Real-time alerts and message automation">
+                <Row label="WhatsApp Integration" description="Secure bridge status and message automation">
+                    <div className="flex items-center gap-3">
+                        <span className={`${whatsappConnected ? 'text-green-500 bg-green-500/10 border-green-500/20' : 'text-neutral bg-neutral/10 border-neutral/20'} text-xs font-bold px-3 py-1 rounded-full border`}>
+                            {whatsappConnected ? 'Connected' : 'Disconnected'}
+                        </span>
+                        {whatsappConnected && (
+                            <Toggle value={draftPreferences.whatsappSync ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, whatsappSync: val }))} />
+                        )}
+                    </div>
+                </Row>
+                <Row label="Telegram" description="Real-time alerts and command center execution">
                     <div className="flex flex-col items-end gap-2">
                         <div className="flex items-center gap-3">
                             <input

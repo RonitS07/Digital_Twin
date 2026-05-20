@@ -21,6 +21,7 @@ import {
     Shield,
     BookOpen,
     MoreHorizontal,
+    Cpu,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 
@@ -32,9 +33,7 @@ const WhatsAppModal = ({ onClose }) => {
     useEffect(() => {
         const checkStatus = async () => {
             try {
-                // The WA bridge runs on port 3001
-                const res = await fetch('http://localhost:3001/status');
-                const data = await res.json();
+                const data = await apiFetch('/mcp/whatsapp/qr');
                 setReady(data.ready);
                 setQr(data.qr);
                 setLoading(false);
@@ -142,6 +141,7 @@ const HelpModal = ({ onClose }) => (
                             ['"Draft an email to..."', 'Compose & send email'],
                             ['"Schedule a meeting on..."', 'Create calendar event'],
                             ['"Send a Slack message to #..."', 'Post to Slack channel'],
+                            ['"Send a WhatsApp message to..."', 'Message via active WhatsApp bridge'],
                             ['"Push to Telegram"', 'Send Telegram notification'],
                             ['"Generate an image of..."', 'Create AI visual'],
                             ['"Summarize my inbox"', 'Get email digest'],
@@ -155,9 +155,16 @@ const HelpModal = ({ onClose }) => (
                 </div>
 
                 <div>
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral mb-3 flex items-center gap-2"><Shield size={14} /> Privacy</h3>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral mb-3 flex items-center gap-2"><Cpu size={14} /> MCP Integrations</h3>
                     <p className="text-sm text-on-surface-variant leading-relaxed">
-                        Your data is processed on-device and via your own API credentials. Emails, calendar events, and messages are only accessed when you explicitly connect integrations in Settings.
+                        Features like WhatsApp utilize the Model Context Protocol (MCP) gateway. Navigate to the <b>Workspace</b> dashboard to monitor active MCP servers, check client connection readiness, and link active accounts securely using dynamically generated QR codes.
+                    </p>
+                </div>
+
+                <div>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-neutral mb-3 flex items-center gap-2"><Shield size={14} /> Privacy & Safety</h3>
+                    <p className="text-sm text-on-surface-variant leading-relaxed">
+                        Your communication credentials transit securely using OAuth 2.0. Messages, email records, and scheduling defaults are only monitored when explicit sync permissions are toggled in your Settings.
                     </p>
                 </div>
             </div>
