@@ -169,8 +169,16 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
     })
     const [isProcessing, setIsProcessing] = useState(false)
     const [autoCompleted, setAutoCompleted] = useState(false)
-    const [isExecuted, setIsExecuted] = useState(false)
-    const [actionStatus, setActionStatus] = useState(null) // 'approved' | 'rejected'
+    // Seed from localStorage so the lock survives page reloads
+    const actionStorageKey = msg.id ? `action_executed_${msg.id}` : null
+    const [isExecuted, setIsExecuted] = useState(() => {
+        if (!actionStorageKey) return false
+        return !!localStorage.getItem(actionStorageKey)
+    })
+    const [actionStatus, setActionStatus] = useState(() => {
+        if (!actionStorageKey) return null
+        return localStorage.getItem(`action_status_${msg.id}`) || null
+    })
     const [lightboxSrc, setLightboxSrc] = useState(null)
     const [copied, setCopied] = useState(false)
 
@@ -197,20 +205,28 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
         }
     }, [msg.text, autoApprove, autoCompleted])
 
+    const markExecuted = (status) => {
+        setIsExecuted(true)
+        setActionStatus(status)
+        // Persist so the card stays locked after page reload
+        if (actionStorageKey) {
+            localStorage.setItem(actionStorageKey, '1')
+            localStorage.setItem(`action_status_${msg.id}`, status)
+        }
+    }
+
     const handleActionClick = async (type, data) => {
         if (isExecuted) return;
         
         if (type === 'reject') {
-            setIsExecuted(true)
-            setActionStatus('rejected')
+            markExecuted('rejected')
             return;
         }
 
         setIsProcessing(true)
         try {
             await onAction(type, data)
-            setIsExecuted(true)
-            setActionStatus('approved')
+            markExecuted('approved')
         } catch (e) {
             console.error("Action execution failed", e)
         } finally {
@@ -356,9 +372,9 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                     )}
 
                     {/* Interactive visualization */}
-                    {msg.vizConfig && (
+                    {(msg.chartData || msg.chart_data || msg.vizConfig) && (
                         <div className="mt-4">
-                            <VisualizationRenderer config={msg.vizConfig} />
+                            <VisualizationRenderer config={msg.chartData || msg.chart_data || msg.vizConfig} />
                         </div>
                     )}
 
@@ -415,14 +431,17 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                                 <p className="text-xs text-white/50 line-clamp-2 mt-2 italic">{actionData.message || actionData.body || actionData.description}</p>
                             </div>
 
-                            <div className="flex gap-2 pt-2">
+                            <div className={`flex gap-2 pt-2 ${isExecuted ? 'pointer-events-none select-none' : ''}`}>
                                 {isExecuted ? (
-                                    <div className={`flex-1 py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-2 border ${
+                                    <div className={`flex-1 py-2.5 px-4 text-xs font-bold rounded-xl flex items-center justify-between border ${
                                         actionStatus === 'approved' 
                                         ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
                                         : 'bg-red-500/10 text-red-400 border-red-500/20'
                                     }`}>
-                                        {actionStatus === 'approved' ? <><Check size={14} /> Action Executed</> : <><X size={14} /> Request Rejected</>}
+                                        <span className="flex items-center gap-2">
+                                            {actionStatus === 'approved' ? <><Check size={14} /> Action Executed</> : <><X size={14} /> Request Rejected</>}
+                                        </span>
+                                        <span className="text-[9px] uppercase tracking-widest opacity-50 font-black">Locked</span>
                                     </div>
                                 ) : autoApprove ? (
                                     <div className="flex-1 py-2 text-primary text-xs font-bold rounded-xl bg-primary/10 flex items-center justify-center gap-2">
@@ -795,6 +814,14 @@ const Chat = () => {
     const handleFileSelect = async (e) => {
         const file = e.target.files[0]
         if (!file) return
+        
+        // Load for UI preview
+        const fileDataUrl = await new Promise(resolve => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(file);
+        });
+
         const token = useStore.getState().auth?.user?.accessToken
         const formData = new FormData()
         formData.append('file', file)
@@ -806,19 +833,22 @@ const Chat = () => {
             })
             if (!res.ok) throw new Error('Upload failed')
             const { file_path, file_name } = await res.json()
+            
             // inject a user message and trigger AI process with file_path
             const msgText = `Summarise this file: ${file_name}`
             setInput(msgText)
+            
             // auto-send
             const msgId = `user-${Date.now()}`
             const userMsg = {
                 id: msgId, role: 'user', sender: user.name || 'You',
                 text: msgText, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
-                source: 'Web', attachments: []
+                source: 'Web', attachments: [{ name: file.name, type: file.type, data: fileDataUrl }]
             }
             setMessages(prev => [...prev, userMsg])
             setInput('')
             setLoading(true)
+            
             const data = await apiFetch('/ai/process', {
                 method: 'POST',
                 body: JSON.stringify({

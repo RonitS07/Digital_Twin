@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # External APIs
     GOOGLE_GENAI_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
+    OPENROUTER_API_KEY: Optional[str] = None
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     
     # Database

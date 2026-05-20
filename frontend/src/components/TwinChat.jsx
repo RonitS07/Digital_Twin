@@ -801,7 +801,12 @@ function SessionSidebar({ sessions, activeId, loading, onSelect, onNew }) {
   return (
     <div className="flex flex-col h-full bg-surface-container/30 border-r border-neutral/10">
       <div className="p-4 border-b border-neutral/10 flex items-center justify-between">
-        <h2 className="text-xl font-manrope font-extrabold text-on-surface">Twin Chat</h2>
+        <div className="flex items-center gap-2">
+          <button onClick={() => useStore.getState().setView('home')} className="lg:hidden p-2 text-neutral hover:text-on-surface -ml-2 rounded-xl transition-colors hover:bg-white/5">
+            <ArrowLeft size={20} />
+          </button>
+          <h2 className="text-xl font-manrope font-extrabold text-on-surface">Twin Chat</h2>
+        </div>
         <button onClick={onNew} className="p-2 rounded-xl bg-primary text-white hover:brightness-110 transition-all">
           <Plus size={18} />
         </button>

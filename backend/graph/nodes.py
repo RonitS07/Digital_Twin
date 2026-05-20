@@ -500,9 +500,16 @@ def _build_args_for_intent(intent: str, state: dict) -> dict:
         }
 
     elif intent == "file_read":
+        chat_hist = state.get("chat_history", [])
+        hist_str = "\\n".join(f"{m.get('role', 'user')}: {m.get('text', '')}" for m in chat_hist[-6:]) if chat_hist else ""
         return {
             **base,
             "file_path": state.get("file_path", ""),
+            "user_request": state.get(
+                "input",
+                "Summarise this file"
+            ),
+            "chat_history": hist_str,
         }
 
     elif intent == "telegram_read":
@@ -1338,21 +1345,19 @@ Action Block Format:
                 "approval_required": False,
             }
 
+    # VISUAL / IMAGE GENERATION REQUESTS
+    if state["intent"] == "visual" or (state["intent"] == "file_generate" and any(w in state.get("input", "").lower() for w in ['generate an image', 'create an image', 'make an image', 'generate image', 'picture of', 'photo of'])):
+        state = {**state, "intent": "visual"}
+        image_url = generate_hf_image(state["input"])
+        return {
+            **state,
+            "output": "Here's your generated image.",
+            "response_type": "visual",
+            "image_url": image_url,
+        }
+
     # FILE GENERATION REQUESTS
     if state["intent"] == "file_generate":
-        # BUG 5 FIX D: Guard — redirect image requests
-        _input_lower = state.get("input", "").lower()
-        _image_words = ['generate an image', 'create an image', 'make an image', 'generate image', 'picture of', 'photo of']
-        if any(w in _input_lower for w in _image_words):
-            state = {**state, "intent": "visual"}
-            image_url = generate_hf_image(state["input"])
-            return {
-                **state,
-                "output": "Here's your generated image.",
-                "response_type": "visual",
-                "image_url": image_url,
-            }
-
         try:
             from tools.file_generator import generate_file, detect_file_type
             from db.models import FileAsset
@@ -1365,7 +1370,7 @@ Action Block Format:
             # Generate content via LLM — BUG 5 FIX B: precise content matching
             system_msg = (
                 f"You are an expert document writer. Generate the exact content the user requested for a {file_type.upper()} file.\n"
-                f"User request: {user_input!r}\n\n"
+                "Use the provided chat context to write highly accurate, detailed, and relevant content.\n\n"
                 "Rules:\n"
                 "- Write ONLY the requested content, no meta-commentary.\n"
                 "- Match the exact word count if specified (e.g. 300 words = ~300 words).\n"
@@ -1374,7 +1379,15 @@ Action Block Format:
                 "For pptx: respond in JSON: {\"title\":\"...\", \"slides\":[{\"title\":\"...\",\"content\":\"...\"},...] }\n"
                 "For all other types: respond with clean content only. First line must start with # as the document title."
             )
-            raw_content = _llm(system=system_msg, user=user_input)
+            
+            from llm.client import chat_complete
+            messages = [{"role": "system", "content": system_msg}]
+            # Add context from history
+            for m in state.get("chat_history", [])[-6:]:
+                messages.append(m)
+            messages.append({"role": "user", "content": user_input})
+            
+            raw_content = chat_complete(messages=messages, tier="intelligence", max_tokens=3000)
 
             # BUG 5 FIX A: Smart filename — extract meaningful words from user input
             _stopwords = {
@@ -1472,169 +1485,51 @@ Action Block Format:
 
     # VISUALIZATION REQUESTS
     if state["intent"] == "visualize":
-        user_id = state.get("user_id")
-        try:
-            source_data = ""
-            for f in state.get("files", []):
-                if not f.get("type", "").startswith("image/"):
-                    try:
-                        raw = base64.b64decode(f.get("data", "").split(",")[-1]).decode("utf-8", errors="ignore")
-                        source_data += f"\n[FILE: {f['name']}]\n{raw[:4000]}\n"
-                    except Exception:
-                        pass
+        from llm.client import chat_complete_visualization
+        from duckduckgo_search import DDGS
+        import logging
 
-            # Detect and fetch real-time live data from active credentials/database
-            is_real_data = False
-            real_data_source = ""
-            prompt_lower = state["input"].lower()
+        user_input = state.get("input", "")
+        context_data = state.get("context", "")
 
-            # 1. Google Calendar Real-Time Fetch
-            if any(k in prompt_lower for k in ["calendar", "schedule", "meeting", "agenda", "events", "time"]):
-                try:
-                    from tools.calendar_tool import get_upcoming_events
-                    with next(get_db()) as db:
-                        events = get_upcoming_events(db=db, user_id=user_id, max_results=40)
-                        if events:
-                            is_real_data = True
-                            real_data_source = "Google Calendar API"
-                            source_data += "\n=== LIVE GOOGLE CALENDAR EVENTS ===\n"
-                            for e in events:
-                                source_data += f"- Event: {e.get('title') or e.get('summary')}, Start: {e.get('start')}, End: {e.get('end')}\n"
-                except Exception as e:
-                    logger.error(f"[Visualize live data] Calendar fetch failed: {e}")
+        # Use DuckDuckGo to find real-world data if context is missing
+        if not context_data or len(context_data.strip()) < 10:
+            try:
+                # Ask fast LLM to extract a search query
+                search_query = _llm(
+                    system="Extract a concise web search query to find statistical data, numbers, or facts for this user request. Reply with ONLY the search query, no quotes.",
+                    user=user_input,
+                    force_fast=True
+                ).strip()
 
-            # 2. Gmail Inbox Real-Time Fetch
-            if any(k in prompt_lower for k in ["email", "gmail", "inbox", "messages", "sender"]):
-                try:
-                    from tools.gmail_tool import read_recent_emails
-                    with next(get_db()) as db:
-                        emails = read_recent_emails(db=db, user_id=user_id, max_results=40)
-                        if emails:
-                            is_real_data = True
-                            real_data_source = "Gmail API"
-                            source_data += "\n=== LIVE GMAIL INBOX DATA ===\n"
-                            for em in emails:
-                                source_data += f"- Email from: {em.get('from')}, Subject: {em.get('subject')}, Date: {em.get('date')}\n"
-                except Exception as e:
-                    logger.error(f"[Visualize live data] Gmail fetch failed: {e}")
+                if search_query and len(search_query) > 3:
+                    with DDGS() as ddgs:
+                        results = [r for r in ddgs.text(search_query, max_results=4)]
+                        if results:
+                            web_context = "\\n".join([f"- {r['title']}: {r['body']}" for r in results])
+                            context_data = f"Real-world data fetched from web search for '{search_query}':\\n{web_context}\\n\\n" + context_data
+            except Exception as e:
+                logger.error(f"[Visualization Search] Web search failed: {e}")
 
-            # 3. Task Log / Digital Twin Telemetry Real-Time Fetch
-            if any(k in prompt_lower for k in ["usage", "history", "prompt", "activity", "actions", "telemetry"]):
-                try:
-                    from db.models import TaskLog
-                    with next(get_db()) as db:
-                        logs = db.query(TaskLog).filter(TaskLog.user_id == user_id).order_by(TaskLog.created_at.desc()).limit(100).all()
-                        if logs:
-                            is_real_data = True
-                            real_data_source = "Digital Twin Logs"
-                            source_data += "\n=== LIVE DIGITAL TWIN TELEMETRY ===\n"
-                            for log in logs:
-                                source_data += f"- Time: {log.created_at}, Intent: {log.intent}, Approved: {log.approved}\n"
-                except Exception as e:
-                    logger.error(f"[Visualize live data] TaskLog fetch failed: {e}")
-
-            # Select system prompt based on verified real data vs illustrative fallback
-            if is_real_data or state.get("files"):
-                # Real Data System Prompt - strictly forbids illustrative placeholders
-                viz_system = (
-                    "You are an expert data visualization AI. "
-                    "You are provided with 100% VERIFIED REAL-TIME LIVE DATA fetched directly from the user's active API integrations/databases.\n"
-                    f"Data source: {real_data_source or 'User uploaded file'}\n\n"
-                    "Return ONLY valid JSON. Do NOT include any text outside the JSON object.\n\n"
-                    "JSON format:\n"
-                    "{\n"
-                    '  "chart_type": "bar|line|area|pie|scatter|radar",\n'
-                    '  "title": "Chart title",\n'
-                    '  "description": "One sentence insight based exclusively on this real data",\n'
-                    '  "disclaimer": null,\n' # Set disclaimer strictly to null for verified data
-                    '  "x_key": "field name for x-axis",\n'
-                    '  "y_keys": [{"key":"fieldname","label":"Display Label","color":"#hexcolor"}],\n'
-                    '  "data": [ {...data rows parsed from the live source...} ],\n'
-                    '  "insights": ["Factual key insight 1", "Factual key insight 2", "Factual key insight 3"],\n'
-                    '  "drill_down": null\n'
-                    "}\n\n"
-                    "=== STRICT HARD CONSTRAINTS ===\n"
-                    "1. Since you have VERIFIED live data, use it EXCLUSIVELY to build the dataset.\n"
-                    "2. Do NOT invent, estimate, or simulate any numbers. Extract/summarize the actual counts, event distributions, or timeline items from the text.\n"
-                    "3. Set disclaimer strictly to null (since the data is completely authentic and real).\n"
-                    "4. Choose a title that reflects the live data source (e.g., 'Google Calendar Event Density' or 'Recent Email Categories').\n"
-                    "5. Keep the chart highly professional and responsive.\n"
-                    "=== END STRICT HARD CONSTRAINTS ==="
-                )
-            else:
-                # Illustrative Fallback System Prompt
-                viz_system = (
-                    "You are an expert data visualization AI. "
-                    "Return ONLY valid JSON. Do NOT include any text outside the JSON object.\n\n"
-                    "JSON format:\n"
-                    "{\n"
-                    '  "chart_type": "bar|line|area|pie|scatter|radar",\n'
-                    '  "title": "Chart title",\n'
-                    '  "description": "One sentence insight",\n'
-                    '  "disclaimer": "Illustrative data — verify with official sources" or null,\n'
-                    '  "x_key": "field name for x-axis",\n'
-                    '  "y_keys": [{"key":"fieldname","label":"Display Label","color":"#hexcolor"}],\n'
-                    '  "data": [ {...data rows...} ],\n'
-                    '  "insights": ["Key insight 1", "Key insight 2", "Key insight 3"],\n'
-                    '  "drill_down": null\n'
-                    "}\n\n"
-                    "=== HARD CONSTRAINTS — YOU MUST FOLLOW ALL OF THESE ===\n"
-                    "1. You do NOT have access to real-time, live, or officially verified data.\n"
-                    "2. For ANY statistics, counts, or metrics NOT provided by the user in a file:\n"
-                    "   a. Use clearly approximate/illustrative values (round numbers, rough estimates)\n"
-                    '   b. ALWAYS set disclaimer to: "Illustrative data — verify with official sources"\n'
-                    "   c. NEVER present invented numbers as if they are real facts\n"
-                    "3. If the user asks for live/real data (stock prices, actual office counts,\n"
-                    "   real employee numbers, live metrics): set data to [] and use description\n"
-                    "   to explain you cannot source real-time data and suggest they provide a file.\n"
-                    "4. If user-provided FILE data is present: use it exclusively, set disclaimer to null.\n"
-                    "5. chart_type must be the BEST fit for the data shape.\n"
-                    "6. Use colors: #6366f1, #a855f7, #10b981, #f59e0b, #3b82f6, #ef4444.\n"
-                    "7. For pie charts each row needs 'name' and 'value' fields.\n"
-                    "8. Aim for 5-15 data rows for readability.\n"
-                    "=== END HARD CONSTRAINTS ==="
-                )
-
-            user_msg = state["input"]
-            if source_data:
-                user_msg += f"\n\nSource data:\n{source_data}"
-
-            result = _llm(system=viz_system, user=user_msg)
-            json_match = re.search(r'\{.*\}', result, re.DOTALL)
-            if not json_match:
-                raise ValueError("No JSON in visualization response")
-            config = json.loads(json_match.group())
-
-            output = (
-                f"I've generated a visualization of **{config.get('title', 'the requested data')}** for you below."
-            )
-
-            # BUG 5 FIX C: Show disclaimer if data is illustrative
-            if config.get("disclaimer"):
-                output += f"\n\n⚠️ *{config['disclaimer']}*"
-
-            # If the model couldn't find real data, it will return empty data list
-            if not config.get("data") or len(config.get("data")) == 0:
-                output = f"### ⚠️ Data Unavailable\n\n{config.get('description', 'I do not have access to the real-world data requested for this time period.')}\n\nWould you like me to generate a **simulated projection** based on historical trends instead, or can you provide a data file for analysis?"
-                return {
-                    **state,
-                    "output": output,
-                    "response_type": "text",
-                    "viz_config": None
-                }
-
-            return {
-                **state,
-                "output": output,
-                "response_type": "visualization",
-                "viz_config": config,
-            }
-        except Exception as e:
-            logger.error(f"[Visualize node] {e}")
-        result = _llm(
-            system=f"You are the Digital Twin of {user_name}. Describe what visualization you would create.",
-            user=state["input"]
+        # Generate structured chart data
+        chart_data = chat_complete_visualization(
+            user_request=user_input,
+            context_data=context_data,
+            chat_history=history_prompt,
         )
+
+        state["response_type"] = "visualization"
+        state["chart_data"] = chart_data
+        state["output"] = (
+            f"I've generated a visualization of "
+            f"**{chart_data.get('title', 'your data')}**"
+            + (
+                f"\n\n⚠️ {chart_data['disclaimer']}"
+                if chart_data.get("disclaimer")
+                else ""
+            )
+        )
+        return state
 
     # GENERAL / CODE / QUESTION / CASUAL
     # 🟢 Multimodal: Extract images from state['files']

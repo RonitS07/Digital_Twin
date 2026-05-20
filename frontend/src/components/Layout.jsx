@@ -31,21 +31,42 @@ const WhatsAppModal = ({ onClose }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        let intervalId = null;
+        let stopped = false;
+
         const checkStatus = async () => {
             try {
                 const data = await apiFetch('/mcp/whatsapp/qr');
-                setReady(data.ready);
-                setQr(data.qr);
+                if (stopped) return;
                 setLoading(false);
+
+                if (data.ready) {
+                    // Already connected — stop polling immediately so we don't
+                    // accidentally flip back to QR on a momentary hiccup
+                    setReady(true);
+                    setQr(null);
+                    if (intervalId) {
+                        clearInterval(intervalId);
+                        intervalId = null;
+                    }
+                } else {
+                    setReady(false);
+                    setQr(data.qr || null);
+                }
             } catch (err) {
-                console.error("WA Bridge unreachable", err);
-                setLoading(false);
+                if (!stopped) {
+                    console.error("WA Bridge unreachable", err);
+                    setLoading(false);
+                }
             }
         };
 
         checkStatus();
-        const interval = setInterval(checkStatus, 5000);
-        return () => clearInterval(interval);
+        intervalId = setInterval(checkStatus, 5000);
+        return () => {
+            stopped = true;
+            if (intervalId) clearInterval(intervalId);
+        };
     }, []);
 
     return (

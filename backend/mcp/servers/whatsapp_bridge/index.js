@@ -13,8 +13,8 @@ const client = new Client({
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            '--single-process',
-            '--no-zygote'
+            '--disable-accelerated-2d-canvas',
+            '--disable-software-rasterizer'
         ],
         timeout: 60000
     }
@@ -22,16 +22,22 @@ const client = new Client({
 
 let isReady = false
 let qrCode = null
+let isInitializing = false
+
+// Reasons that require a full re-init (user explicitly logged out or account conflict)
+const REINIT_REASONS = new Set(['LOGOUT', 'CONFLICT', 'UNLAUNCHED'])
 
 client.on('qr', (qr) => {
     qrCode = qr
     isReady = false
+    isInitializing = false  // QR received — init cycle complete
     console.log('[WA Bridge] QR ready — scan in admin panel')
 })
 
 client.on('ready', () => {
     isReady = true
     qrCode = null
+    isInitializing = false
     console.log('[WA Bridge] WhatsApp client ready')
 })
 
@@ -39,19 +45,53 @@ client.on('auth_failure', (msg) => {
     isReady = false
     qrCode = null
     console.error('[WA Bridge] Authentication failure:', msg)
+    // Auth failure always needs a fresh init
+    if (!isInitializing) {
+        isInitializing = true
+        setTimeout(() => {
+            console.log('[WA Bridge] Re-initializing after auth failure...')
+            client.initialize().catch(e => {
+                console.error('[WA Bridge] Re-init error:', e)
+                isInitializing = false
+            })
+        }, 3000)
+    }
 })
 
 client.on('disconnected', async (reason) => {
     isReady = false
+    console.log('[WA Bridge] Disconnected:', reason)
+
+    // Only fully re-initialize on explicit logouts — NOT on transient network issues.
+    // CONNECTION_LOST, NAVIGATING, etc. are temporary and will self-recover.
+    if (!REINIT_REASONS.has(reason)) {
+        console.log(`[WA Bridge] Transient disconnect (${reason}) — skipping re-init to preserve session.`)
+        qrCode = null
+        return
+    }
+
+    if (isInitializing) {
+        console.log('[WA Bridge] Already re-initializing, skipping duplicate.')
+        return
+    }
+
+    isInitializing = true
     qrCode = null
-    console.log('[WA Bridge] Client was logged out/disconnected:', reason)
+
     try {
         await client.destroy()
     } catch (e) {
         console.error('[WA Bridge] Error destroying client on disconnect:', e)
     }
-    console.log('[WA Bridge] Re-initializing WhatsApp client...')
-    client.initialize()
+
+    // Small cooldown before re-init to let WhatsApp servers settle
+    setTimeout(() => {
+        console.log('[WA Bridge] Re-initializing WhatsApp client after logout...')
+        client.initialize().catch(e => {
+            console.error('[WA Bridge] Re-init error:', e)
+            isInitializing = false
+        })
+    }, 2000)
 })
 
 app.get('/status', (req, res) => {
@@ -152,7 +192,11 @@ app.post('/disconnect', async (req, res) => {
     }
 })
 
-client.initialize()
+isInitializing = true
+client.initialize().then(() => { isInitializing = false }).catch(e => {
+    console.error('[WA Bridge] Initial startup error:', e)
+    isInitializing = false
+})
 const PORT = process.env.PORT || 3001
 
 app.listen(PORT, '0.0.0.0', () => {

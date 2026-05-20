@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../store/useStore'
 import { Mail, Calendar, MessageSquare, ExternalLink, Unlink, MessageCircle, QrCode, Cpu, Power, Zap, ChevronDown, ChevronUp } from 'lucide-react'
@@ -18,6 +18,10 @@ const Workspace = () => {
     const [mcpExpanded, setMcpExpanded] = useState(false);
     const [showQrModal, setShowQrModal] = useState(false);
     const [qrCode, setQrCode] = useState(null);
+    // Use a ref so the polling interval can read the latest modal state
+    // without being in the dependency array (prevents interval recreation loop)
+    const showQrModalRef = useRef(false);
+    const waReadyConfirmRef = useRef(null);  // debounce timer for auto-close
 
     const loadMcpStatus = useCallback(async () => {
         setMcpLoading(true);
@@ -70,23 +74,41 @@ const Workspace = () => {
 
         const pollInterval = setInterval(() => {
             loadMcpStatus();
-            
-            // If the QR modal is open, poll the QR status in real-time
-            if (showQrModal) {
+
+            // Use ref instead of closure over showQrModal state to avoid
+            // making showQrModal a dep (which would restart the interval each open/close)
+            if (showQrModalRef.current) {
                 apiFetch(`/mcp/whatsapp/qr`)
                     .then(data => {
                         setQrCode(data?.qr || null);
                         if (data?.ready) {
-                            setShowQrModal(false);
-                            setWhatsappStatus('ok');
+                            // Confirm ready for 2s before auto-closing to avoid
+                            // a brief ready=false flash kicking the QR back open
+                            if (!waReadyConfirmRef.current) {
+                                waReadyConfirmRef.current = setTimeout(() => {
+                                    setShowQrModal(false);
+                                    showQrModalRef.current = false;
+                                    setWhatsappStatus('ok');
+                                    waReadyConfirmRef.current = null;
+                                }, 2000);
+                            }
+                        } else {
+                            // Not ready — cancel any pending auto-close confirmation
+                            if (waReadyConfirmRef.current) {
+                                clearTimeout(waReadyConfirmRef.current);
+                                waReadyConfirmRef.current = null;
+                            }
                         }
                     })
                     .catch(console.error);
             }
         }, 5000);
 
-        return () => clearInterval(pollInterval);
-    }, [storeAuth.user?.uid, loadMcpStatus, showQrModal])
+        return () => {
+            clearInterval(pollInterval);
+            if (waReadyConfirmRef.current) clearTimeout(waReadyConfirmRef.current);
+        };
+    }, [storeAuth.user?.uid, loadMcpStatus]) // intentionally excludes showQrModal — use ref instead
 
     const handleMcpToggle = async () => {
         const newEnabled = !mcpData.mcp_enabled;
@@ -149,6 +171,7 @@ const Workspace = () => {
                 const data = await apiFetch(`/mcp/whatsapp/qr`);
                 setQrCode(data?.qr || null);
                 setShowQrModal(true);
+                showQrModalRef.current = true;
             } catch (e) {
                 alert("WhatsApp QR not available: " + e.message);
             } finally {
@@ -213,7 +236,7 @@ const Workspace = () => {
             {showQrModal && (
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-                    onClick={() => setShowQrModal(false)}
+                    onClick={() => { setShowQrModal(false); showQrModalRef.current = false; }}
                 >
                     <motion.div
                         initial={{ opacity: 0, scale: 0.9 }}
@@ -236,7 +259,7 @@ const Workspace = () => {
                             <p className="text-sm text-neutral">QR code not available yet. Start the WhatsApp bridge first.</p>
                         )}
                         <button
-                            onClick={() => setShowQrModal(false)}
+                            onClick={() => { setShowQrModal(false); showQrModalRef.current = false; }}
                             className="text-xs text-neutral hover:text-on-surface transition-colors"
                         >
                             Close

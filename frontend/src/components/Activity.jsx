@@ -177,13 +177,27 @@ const Activity = () => {
                         <div className="h-[1px] flex-1 bg-gradient-to-r from-neutral/20 to-transparent"></div>
                     </div>
 
-                    <div className="relative ml-2 sm:ml-4 pl-6 sm:pl-10 border-l-2 border-neutral/10 space-y-6 sm:space-y-10">
+                    <div className="space-y-10">
                         {loading ? (
-                            <div className="text-neutral animate-pulse text-sm">Syncing timeline...</div>
+                            <div className="text-neutral animate-pulse text-sm ml-2 sm:ml-4">Syncing timeline...</div>
                         ) : filteredLogs.length > 0 ? (
-                            filteredLogs.map(log => <TimelineItem key={log.id} log={log} />)
+                            Object.entries(filteredLogs.reduce((acc, log) => {
+                                const dateStr = new Date(log.timestamp).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+                                if (!acc[dateStr]) acc[dateStr] = [];
+                                acc[dateStr].push(log);
+                                return acc;
+                            }, {})).map(([date, logs]) => (
+                                <div key={date} className="relative">
+                                    <h4 className="text-[10px] font-black text-neutral uppercase tracking-[0.2em] mb-6 sticky top-16 bg-surface-base/90 py-3 backdrop-blur-xl z-20 w-fit rounded-full px-4 border border-neutral/10">
+                                        {date}
+                                    </h4>
+                                    <div className="relative ml-2 sm:ml-4 pl-6 sm:pl-10 border-l-2 border-neutral/10 space-y-6 sm:space-y-10">
+                                        {logs.map(log => <TimelineItem key={log.id} log={log} />)}
+                                    </div>
+                                </div>
+                            ))
                         ) : (
-                            <div className="flex flex-col items-center justify-center py-20 bg-surface-container/30 rounded-3xl border border-dashed border-neutral/20">
+                            <div className="flex flex-col items-center justify-center py-20 bg-surface-container/30 rounded-3xl border border-dashed border-neutral/20 ml-2 sm:ml-4">
                                 <div className="w-16 h-16 rounded-full bg-surface-container flex items-center justify-center mb-6">
                                     <Zap size={32} className="text-neutral opacity-20" />
                                 </div>

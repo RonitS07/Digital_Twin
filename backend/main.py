@@ -389,6 +389,13 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                                     draft_email(db=db, user_id=uid, to=info["from"], subject=f"Re: {info['subject']}", body=clean_reply)
                                     entry.action_taken = "drafted"
                                     logger.info(f"[EmailMonitor] Auto-drafted reply for: {info['subject'][:50]}")
+                                    
+                                    # Send Telegram notification for the new draft
+                                    if user and user.telegram_enabled:
+                                        send_telegram_message(
+                                            user.telegram_chat_id, 
+                                            f"📝 *Draft Created*\n\nI have drafted a reply to: *{info['subject']}* from {info['from']}.\n\nPlease check your Gmail Drafts folder to review and send it."
+                                        )
                             except Exception as draft_e:
                                 logger.error(f"Auto-draft failed: {draft_e}")
                                 entry.action_taken = "indexed"
@@ -1236,7 +1243,7 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
         "files": req.files or [],
         "access_token": current_user.access_token if hasattr(current_user, "access_token") else "",
         "generated_file": None,
-        "viz_config": None,
+        "chart_data": None,
     }
 
     # Augment prompt with text file contents (PDFs decoded as text, etc.)
@@ -1344,8 +1351,8 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
                         "approval_required": final_state.get("approval_required", False),
                         "task_plan": final_state.get("task_plan", []),
                         "files": req.files or [],
-                        # Persist viz_config so charts survive page refresh
-                        "viz_config": final_state.get("viz_config"),
+                        # Persist chart_data so charts survive page refresh
+                        "chart_data": final_state.get("chart_data"),
                         "response_type": final_state.get("response_type"),
                         "image_url": final_state.get("image_url"),
                         "generated_file": final_state.get("generated_file"),
@@ -1367,7 +1374,7 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
             "response_type": final_state.get("response_type", "text"),
             "image_url": final_state.get("image_url"),
             "generated_file": final_state.get("generated_file"),
-            "viz_config": final_state.get("viz_config"),
+            "chart_data": final_state.get("chart_data"),
         }
     except HTTPException:
         raise
@@ -1391,7 +1398,12 @@ def generate_chat_title(req: GenerateTitleRequest, current_user: User = Depends(
         # Limit text length per message for title generation
         context += f"{role}: {text[:200]}...\n"
     
-    system_prompt = "You are a professional assistant. Generate a concise, smart, and professional title (3-5 words) for this chat conversation based on the provided context. Return ONLY the title text, no quotes or punctuation."
+    system_prompt = (
+        "You are a highly creative AI. Generate a smart, highly descriptive, "
+        "and dynamic title (3-6 words) that perfectly summarizes the intent "
+        "and essence of this conversation. Include one relevant emoji at the start. "
+        "Return ONLY the title string, no quotes."
+    )
     user_prompt = f"Context:\n{context}\n\nTitle:"
     
     try:
@@ -2107,6 +2119,9 @@ def update_telegram(req: dict, current_user: User = Depends(get_current_user), d
     chat_id = req.get("chat_id")
     if chat_id is not None:
         chat_id = str(chat_id).strip()
+        # If frontend sent the masked string back, do NOT overwrite the real ID!
+        if "****" in chat_id:
+            chat_id = current_user.telegram_chat_id
     else:
         chat_id = ""
     if chat_id:
