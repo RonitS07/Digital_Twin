@@ -109,17 +109,23 @@ const Workspace = () => {
             if (window.confirm(`Are you sure you want to disconnect ${tool.name}?`)) {
                 setConnecting(true);
                 try {
-                    const provider = (tool.name === 'Gmail' || tool.name === 'Calendar') ? 'google' : 'slack';
-                    await apiFetch(`/integrations/${provider}/disconnect`, { method: 'POST' });
-                    setPreference(tool.key, false);
-                    if (provider === 'google') {
-                        setGmailConnected(false);
-                        setCalendarConnected(false);
-                        setPreference('gmailSync', false);
-                        setPreference('calendarSync', false);
-                    } else if (provider === 'slack') {
-                        setSlackConnected(false);
-                        setPreference('slackSync', false);
+                    if (tool.name === 'WhatsApp') {
+                        await apiFetch(`/mcp/whatsapp/disconnect`, { method: 'POST' });
+                        setWhatsappStatus('offline');
+                        setPreference('whatsappSync', false);
+                    } else {
+                        const provider = (tool.name === 'Gmail' || tool.name === 'Calendar') ? 'google' : 'slack';
+                        await apiFetch(`/integrations/${provider}/disconnect`, { method: 'POST' });
+                        setPreference(tool.key, false);
+                        if (provider === 'google') {
+                            setGmailConnected(false);
+                            setCalendarConnected(false);
+                            setPreference('gmailSync', false);
+                            setPreference('calendarSync', false);
+                        } else if (provider === 'slack') {
+                            setSlackConnected(false);
+                            setPreference('slackSync', false);
+                        }
                     }
                 } catch (e) {
                     console.error("Disconnect failed", e);

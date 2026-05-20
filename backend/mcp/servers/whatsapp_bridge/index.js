@@ -96,6 +96,20 @@ app.get('/messages/:chatId', async (req, res) => {
     }
 })
 
+app.post('/disconnect', async (req, res) => {
+    try {
+        if (client) {
+            await client.logout()
+        }
+        isReady = false
+        qrCode = null
+        res.json({ ok: true, message: 'Logged out successfully' })
+    } catch (e) {
+        console.error('[WA Bridge] Error during logout:', e)
+        res.status(500).json({ ok: false, error: e.message })
+    }
+})
+
 client.initialize()
 const PORT = process.env.PORT || 3001
 

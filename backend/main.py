@@ -2577,6 +2577,18 @@ async def get_wa_qr(current_user: User = Depends(get_current_user)):
     except Exception:
         return {"qr": None, "ready": False, "error": "Bridge not running"}
 
+@app.post("/mcp/whatsapp/disconnect")
+async def disconnect_whatsapp(current_user: User = Depends(get_current_user)):
+    import httpx
+    import os
+    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{bridge_url}/disconnect")
+            return r.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to communicate with WhatsApp bridge: {e}")
+
 @app.post("/ai/approve/{action_id}")
 async def approve_action(
     action_id: str,
