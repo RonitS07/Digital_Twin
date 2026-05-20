@@ -135,11 +135,18 @@ def classifier_node(state: State):
         return {**state, "intent": "email_search"}
 
     # telegram / slack / email / whatsapp action prioritization
+    read_keywords = ["read", "get", "show", "history", "recent", "received", "last", "what did", "what was", "inbox", "chats"]
     if "whatsapp" in user_input:
+        if any(kw in user_input for kw in read_keywords):
+            return {**state, "intent": "whatsapp_read"}
         return {**state, "intent": "whatsapp_send"}
     if "telegram" in user_input:
+        if any(kw in user_input for kw in read_keywords):
+            return {**state, "intent": "telegram_read"}
         return {**state, "intent": "telegram_send"}
     if "slack" in user_input and "briefing" not in user_input:
+        if any(kw in user_input for kw in read_keywords):
+            return {**state, "intent": "slack_read"}
         return {**state, "intent": "slack_send"}
 
     # Image generation fast-path — MUST come BEFORE file generation checks

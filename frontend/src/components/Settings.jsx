@@ -108,9 +108,13 @@ const Settings = () => {
             .then(data => { if (isMounted) setSlackConnected(data.connected); })
             .catch(() => { if (isMounted) setSlackConnected(false); });
 
-        apiFetch(`/mcp/whatsapp/qr`)
-            .then(data => { if (isMounted) setWhatsappConnected(!!data.ready); })
-            .catch(() => { if (isMounted) setWhatsappConnected(false); });
+        const checkWhatsapp = () => {
+            apiFetch(`/mcp/whatsapp/qr`)
+                .then(data => { if (isMounted) setWhatsappConnected(!!data.ready); })
+                .catch(() => { if (isMounted) setWhatsappConnected(false); });
+        };
+        checkWhatsapp();
+        const waInterval = setInterval(checkWhatsapp, 5000);
 
         const handleMessage = (event) => {
             if (event.data === 'google_oauth_success') {
@@ -124,6 +128,7 @@ const Settings = () => {
         return () => { 
             isMounted = false; 
             window.removeEventListener('message', handleMessage);
+            clearInterval(waInterval);
         };
     }, [user.uid]); // uid is a stable string — only re-runs if the user actually changes
 

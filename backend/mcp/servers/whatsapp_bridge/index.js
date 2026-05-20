@@ -22,6 +22,7 @@ let qrCode = null
 
 client.on('qr', (qr) => {
     qrCode = qr
+    isReady = false
     console.log('[WA Bridge] QR ready — scan in admin panel')
 })
 
@@ -29,6 +30,25 @@ client.on('ready', () => {
     isReady = true
     qrCode = null
     console.log('[WA Bridge] WhatsApp client ready')
+})
+
+client.on('auth_failure', (msg) => {
+    isReady = false
+    qrCode = null
+    console.error('[WA Bridge] Authentication failure:', msg)
+})
+
+client.on('disconnected', async (reason) => {
+    isReady = false
+    qrCode = null
+    console.log('[WA Bridge] Client was logged out/disconnected:', reason)
+    try {
+        await client.destroy()
+    } catch (e) {
+        console.error('[WA Bridge] Error destroying client on disconnect:', e)
+    }
+    console.log('[WA Bridge] Re-initializing WhatsApp client...')
+    client.initialize()
 })
 
 app.get('/status', (req, res) => {

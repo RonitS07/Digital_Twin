@@ -52,22 +52,41 @@ const Workspace = () => {
     }, []);
 
     useEffect(() => {
-        if (storeAuth.user?.uid) {
-            apiFetch(`/integrations/google/status`)
-                .then((data) => {
-                    setGmailConnected(!!data?.gmail_connected);
-                    setCalendarConnected(!!data?.calendar_connected);
-                })
-                .catch(console.error)
-                .finally(() => setConnecting(false))
+        if (!storeAuth.user?.uid) return;
 
-            apiFetch(`/integrations/slack/status`)
-                .then((data) => setSlackConnected(!!data?.connected))
-                .catch(console.error)
+        apiFetch(`/integrations/google/status`)
+            .then((data) => {
+                setGmailConnected(!!data?.gmail_connected);
+                setCalendarConnected(!!data?.calendar_connected);
+            })
+            .catch(console.error)
+            .finally(() => setConnecting(false))
 
+        apiFetch(`/integrations/slack/status`)
+            .then((data) => setSlackConnected(!!data?.connected))
+            .catch(console.error)
+
+        loadMcpStatus();
+
+        const pollInterval = setInterval(() => {
             loadMcpStatus();
-        }
-    }, [storeAuth.user?.uid, loadMcpStatus])
+            
+            // If the QR modal is open, poll the QR status in real-time
+            if (showQrModal) {
+                apiFetch(`/mcp/whatsapp/qr`)
+                    .then(data => {
+                        setQrCode(data?.qr || null);
+                        if (data?.ready) {
+                            setShowQrModal(false);
+                            setWhatsappStatus('ok');
+                        }
+                    })
+                    .catch(console.error);
+            }
+        }, 5000);
+
+        return () => clearInterval(pollInterval);
+    }, [storeAuth.user?.uid, loadMcpStatus, showQrModal])
 
     const handleMcpToggle = async () => {
         const newEnabled = !mcpData.mcp_enabled;
