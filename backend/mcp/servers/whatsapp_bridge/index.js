@@ -56,19 +56,51 @@ app.get('/status', (req, res) => {
 })
 
 app.post('/send', async (req, res) => {
-    if (!isReady) {
+    if (!isReady || !client.info) {
         return res.status(503).json({
+            ok: false,
             error: 'WhatsApp not ready'
         })
     }
-    const { to, message } = req.body
-    // Format: 919876543210@c.us for Indian numbers
-    const chatId = to.includes('@') ? to : `${to}@c.us`
+
+    const { to, message } = req.body || {}
+
+    // Guard: both fields are required
+    if (!to || !message) {
+        return res.status(400).json({
+            ok: false,
+            error: 'Missing required fields: to, message'
+        })
+    }
+
     try {
-        await client.sendMessage(chatId, message)
-        res.json({ ok: true, to: chatId })
+        const cleanNumber = String(to).replace(/\D/g, '')
+        if (!cleanNumber) {
+            return res.status(400).json({ ok: false, error: 'Invalid phone number' })
+        }
+        const chatId = `${cleanNumber}@c.us`
+
+        const isRegistered = await client.isRegisteredUser(chatId)
+        if (!isRegistered) {
+            return res.status(400).json({
+                ok: false,
+                error: 'Number is not registered on WhatsApp'
+            })
+        }
+
+        const result = await client.sendMessage(chatId, message)
+        res.json({
+            ok: true,
+            to: chatId,
+            id: result.id._serialized
+        })
+
     } catch (e) {
-        res.status(500).json({ ok: false, error: e.message })
+        console.error('WhatsApp send failed:', e)
+        res.status(500).json({
+            ok: false,
+            error: e.message
+        })
     }
 })
 

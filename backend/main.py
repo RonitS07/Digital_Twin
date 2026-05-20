@@ -2592,7 +2592,8 @@ async def disconnect_whatsapp(current_user: User = Depends(get_current_user)):
     import httpx
     bridge_url = os.getenv("WHATSAPP_BRIDGE_URL")
     if not bridge_url:
-        raise HTTPException(status_code=500, detail="WHATSAPP_BRIDGE_URL not configured")
+        # Bridge not configured — treat as already disconnected
+        return {"success": True, "message": "WhatsApp disconnected (bridge not configured)"}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(f"{bridge_url}/disconnect")
@@ -2601,7 +2602,12 @@ async def disconnect_whatsapp(current_user: User = Depends(get_current_user)):
             raise HTTPException(status_code=500, detail=f"Bridge returned non-JSON response: {r.text}")
     except HTTPException:
         raise
+    except (httpx.ConnectError, httpx.TimeoutException):
+        # Bridge is down/crashed — session is already gone, treat as success
+        logger.warning("WhatsApp bridge unreachable during disconnect — treating as already disconnected")
+        return {"success": True, "message": "WhatsApp disconnected (bridge was offline)"}
     except Exception as e:
+        logger.error(f"WhatsApp disconnect error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to communicate with WhatsApp bridge: {e}")
 
 @app.post("/ai/approve/{action_id}")
