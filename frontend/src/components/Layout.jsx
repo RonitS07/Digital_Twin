@@ -389,7 +389,9 @@ const Layout = ({ children, currentView, setView }) => {
                             }, 3500);
                         }
                     }
-                } catch (err) { }
+                } catch (err) {
+                    console.error("Twin WS message error:", err);
+                }
             };
             ws.onclose = () => {
                 if (alive) setTimeout(connect, 1200);
@@ -410,7 +412,9 @@ const Layout = ({ children, currentView, setView }) => {
                     ['scheduling_proposal', 'scheduling_confirm'].includes(m.msg_type)
                 ).length;
                 setAgentUnread(pending);
-            } catch { }
+            } catch (err) {
+                console.error("Inbox poll error:", err);
+            }
         };
         checkInbox();
         const id = setInterval(checkInbox, 10000);
