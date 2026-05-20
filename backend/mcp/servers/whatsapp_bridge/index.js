@@ -98,15 +98,15 @@ app.get('/messages/:chatId', async (req, res) => {
 
 app.post('/disconnect', async (req, res) => {
     try {
-        if (client) {
-            await client.logout()
-        }
-        isReady = false
-        qrCode = null
-        res.json({ ok: true, message: 'Logged out successfully' })
+        await client.logout()
+        res.json({
+            success: true,
+            message: 'WhatsApp disconnected'
+        })
     } catch (e) {
-        console.error('[WA Bridge] Error during logout:', e)
-        res.status(500).json({ ok: false, error: e.message })
+        res.status(500).json({
+            error: e.message
+        })
     }
 })
 

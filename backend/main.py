@@ -2282,7 +2282,9 @@ async def send_whatsapp_msg(
             detail=f"Could not find a phone number for '{to}' in my memories. Try telling me: '{to}'s number is +919876543210' first!"
         )
 
-    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL")
+    if not bridge_url:
+        raise HTTPException(status_code=500, detail="WHATSAPP_BRIDGE_URL not configured")
     try:
         import httpx
         async with httpx.AsyncClient(timeout=15) as client:
@@ -2290,7 +2292,10 @@ async def send_whatsapp_msg(
                 f"{bridge_url}/send",
                 json={"to": to_clean, "message": message}
             )
-            res = r.json()
+            if "application/json" in r.headers.get("content-type", ""):
+                res = r.json()
+            else:
+                raise HTTPException(status_code=500, detail=f"Bridge returned non-JSON response: {r.text}")
             if r.status_code != 200 or not res.get("ok"):
                 error_msg = res.get("error") or "Failed to send message via WhatsApp bridge"
                 raise HTTPException(status_code=400, detail=error_msg)
@@ -2568,24 +2573,34 @@ async def upload_file(
 @app.get("/mcp/whatsapp/qr")
 async def get_wa_qr(current_user: User = Depends(get_current_user)):
     import httpx
-    import os
-    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL")
+    if not bridge_url:
+        raise HTTPException(status_code=500, detail="WHATSAPP_BRIDGE_URL not configured")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{bridge_url}/status")
-            return r.json()
+            if "application/json" in r.headers.get("content-type", ""):
+                return r.json()
+            raise HTTPException(status_code=500, detail=f"Bridge returned non-JSON response: {r.text}")
+    except HTTPException:
+        raise
     except Exception:
         return {"qr": None, "ready": False, "error": "Bridge not running"}
 
 @app.post("/mcp/whatsapp/disconnect")
 async def disconnect_whatsapp(current_user: User = Depends(get_current_user)):
     import httpx
-    import os
-    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL")
+    if not bridge_url:
+        raise HTTPException(status_code=500, detail="WHATSAPP_BRIDGE_URL not configured")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(f"{bridge_url}/disconnect")
-            return r.json()
+            if "application/json" in r.headers.get("content-type", ""):
+                return r.json()
+            raise HTTPException(status_code=500, detail=f"Bridge returned non-JSON response: {r.text}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to communicate with WhatsApp bridge: {e}")
 
@@ -2658,22 +2673,26 @@ def get_mcp_status_public(
                 
                 # Dynamic health check for WhatsApp bridge
                 if name == "whatsapp" and _mcp_enabled:
-                    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
-                    try:
-                        r = requests.get(f"{bridge_url}/status", timeout=2)
-                        if r.status_code == 200:
-                            data = r.json()
-                            if data.get("ready"):
-                                status = "ok"
-                            else:
-                                status = "error" # Trigger SCAN QR in the frontend
-                                error_msg = "WhatsApp client is not ready. Scan the QR code."
-                        else:
-                            status = "offline"
-                            error_msg = f"Bridge returned status code {r.status_code}"
-                    except Exception as e:
+                    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL")
+                    if not bridge_url:
                         status = "offline"
-                        error_msg = f"WhatsApp bridge unreachable: {e}"
+                        error_msg = "WHATSAPP_BRIDGE_URL not configured"
+                    else:
+                        try:
+                            r = requests.get(f"{bridge_url}/status", timeout=2)
+                            if r.status_code == 200 and "application/json" in r.headers.get("content-type", ""):
+                                data = r.json()
+                                if data.get("ready"):
+                                    status = "ok"
+                                else:
+                                    status = "error"
+                                    error_msg = "WhatsApp client is not ready. Scan the QR code."
+                            else:
+                                status = "offline"
+                                error_msg = f"Bridge returned status code {r.status_code}"
+                        except Exception as e:
+                            status = "offline"
+                            error_msg = f"WhatsApp bridge unreachable: {e}"
 
                 servers.append({
                     "name": name,
