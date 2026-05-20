@@ -186,7 +186,9 @@ const MessageBubble = React.memo(({ msg, isOwn, onAction, user }) => {
       setCleanText(msg.content.replace(/<action>[\s\S]*?<\/action>/g, '').trim())
       try {
         setActionData(JSON.parse(match[1].trim()))
-      } catch (e) {}
+      } catch (e) {
+        console.error("Action JSON parse failed", e)
+      }
     } else {
       setCleanText(msg.content)
     }
@@ -520,6 +522,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
           actionData.intent === 'email' ? '/gmail/send' : 
           actionData.intent === 'telegram' ? '/telegram/send' : 
           actionData.intent === 'slack' ? '/slack/send' : 
+          (actionData.intent === 'whatsapp' || actionData.intent === 'whatsapp_send') ? '/whatsapp/send' :
           '/calendar/create'
       
       const payload = { ...actionData, user_id: user.uid }

@@ -538,7 +538,7 @@ def planner_node(state: State) -> State:
 You are a task planner and argument extractor.
 Based on the user's intent, extract the necessary arguments into a JSON object.
 
-If the intent is 'whatsapp_send', extract: "to" (phone number with country code), "message".
+If the intent is 'whatsapp_send', extract: "to" (phone number with country code, OR a recipient person's name if they specified a name like "Arjun" or "Ronit"), "message".
 If the intent is 'email_draft' or 'email_send', extract: "to", "subject", "body".
 If the intent is 'telegram_send', extract: "text".
 If the intent is 'calendar_create', extract: "summary", "start", "end", "description", "attendees".
@@ -546,7 +546,7 @@ If the intent is 'calendar_create', extract: "summary", "start", "end", "descrip
 Return ONLY valid JSON.
 
 Format:
-{"task_plan": {"to": "+919004940578", "message": "Hello!"}}
+{"task_plan": {"to": "Arjun", "message": "Hello!"}}
 """,
         user=f"Input: {state['input']}\nIntent: {state['intent']}",
         force_fast=True
@@ -1465,6 +1465,7 @@ Action Block Format:
 
     # VISUALIZATION REQUESTS
     if state["intent"] == "visualize":
+        user_id = state.get("user_id")
         try:
             source_data = ""
             for f in state.get("files", []):

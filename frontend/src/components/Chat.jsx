@@ -869,6 +869,7 @@ const Chat = () => {
                 actionData.intent === 'email' ? '/gmail/send' : 
                 actionData.intent === 'telegram' ? '/telegram/send' : 
                 actionData.intent === 'slack' ? '/slack/send' : 
+                (actionData.intent === 'whatsapp' || actionData.intent === 'whatsapp_send') ? '/whatsapp/send' :
                 '/calendar/create'
             
             const payload = { ...actionData, user_id: user.uid }
@@ -884,6 +885,7 @@ const Chat = () => {
                     actionData.intent === 'email' ? 'Email sent to ' + actionData.to : 
                     actionData.intent === 'slack' ? 'Slack message posted to #' + (actionData.channel_name || actionData.channel_id) :
                     actionData.intent === 'telegram' ? 'Notification pushed to your Telegram' : 
+                    (actionData.intent === 'whatsapp' || actionData.intent === 'whatsapp_send') ? 'WhatsApp message sent to ' + actionData.to :
                     'Calendar event scheduled'
                 }\n\n*Your Twin has completed this task. You can check the history for details.*`,
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'

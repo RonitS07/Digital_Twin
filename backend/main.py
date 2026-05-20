@@ -2212,6 +2212,98 @@ def send_msg(req: dict, current_user: User = Depends(get_current_user), db: Sess
         logger.error(f"Slack Send Error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+def resolve_contact_phone(to_name: str, user_id: str, db: Session) -> str | None:
+    name_clean = to_name.strip()
+    if not name_clean:
+        return None
+    # If it looks like a phone number (just digits and + or -), return clean digits
+    just_digits = "".join(c for c in name_clean if c.isdigit())
+    if just_digits and len(just_digits) >= 8:
+        return just_digits
+
+    # Look up in StructuredMemory
+    from db.models import StructuredMemory
+    structured_rows = db.query(StructuredMemory).filter(StructuredMemory.user_id == user_id).all()
+    structured_context = "\n".join([f"- {r.category} ({r.key}): {r.value}" for r in structured_rows])
+
+    # Look up in Chroma DB
+    semantic_context = ""
+    try:
+        from memory.chroma import retrieve_memory
+        semantic_context = retrieve_memory(user_id, f"phone number contact of {to_name}", n=5)
+    except Exception as e:
+        logger.error(f"Failed to retrieve Chroma memory: {e}")
+
+    system_prompt = f"""
+You are a contact phone number resolver. 
+Your goal is to extract or resolve the phone number for the contact "{to_name}" from the user's memories.
+
+Memory context:
+---
+[Structured Memories]
+{structured_context}
+
+[Semantic Memories]
+{semantic_context}
+---
+
+Instructions:
+1. Scan the memories carefully for any phone number associated with "{to_name}".
+2. Return ONLY the digits of the phone number (including country code if available) with no other text, spaces, or characters.
+3. If no phone number is found in the memories for "{to_name}", return ONLY the word "NONE".
+"""
+    try:
+        from graph.llm_utils import _llm
+        result = _llm(system=system_prompt, user=f"Resolve phone number for: {to_name}", force_fast=True).strip()
+        clean_res = "".join(c for c in result if c.isdigit() or c in ("N", "O", "E"))
+        if "NONE" in clean_res or not clean_res:
+            return None
+        return clean_res
+    except Exception as e:
+        logger.error(f"Failed to resolve phone number via LLM: {e}")
+        return None
+
+@app.post("/whatsapp/send")
+async def send_whatsapp_msg(
+    req: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    to = req.get("to") or req.get("phone_number")
+    message = req.get("message") or req.get("text")
+    if not to or not message:
+        raise HTTPException(status_code=400, detail="Missing 'to' or 'message'")
+
+    # Try resolving contact name to phone number from memories if it's alphabetical
+    to_clean = resolve_contact_phone(to, current_user.id, db)
+    if not to_clean:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not find a phone number for '{to}' in my memories. Try telling me: '{to}'s number is +919876543210' first!"
+        )
+
+    bridge_url = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                f"{bridge_url}/send",
+                json={"to": to_clean, "message": message}
+            )
+            res = r.json()
+            if r.status_code != 200 or not res.get("ok"):
+                error_msg = res.get("error") or "Failed to send message via WhatsApp bridge"
+                raise HTTPException(status_code=400, detail=error_msg)
+            return {"status": "success", "details": res}
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="WhatsApp bridge is offline. Please link your phone in the Workspace tab."
+        )
+    except Exception as e:
+        logger.error(f"WhatsApp Send Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/slack/events")
 async def slack_events(request: Request, db: Session = Depends(get_db)):
     data = await request.json()

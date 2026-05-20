@@ -221,7 +221,7 @@ const Workspace = () => {
             )}
 
             <div>
-                <h2 className="text-3xl lg:text-4xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2">Connected Workspace</h2>
+                <h2 className="text-3xl lg:text-4xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2">Connected Integrations</h2>
                 <p className="text-on-surface-variant text-sm lg:text-base max-w-2xl">Manage the external applications and permissions your AI Twin utilizes to execute autonomous actions.</p>
             </div>
 
@@ -294,11 +294,10 @@ const Workspace = () => {
                         {/* Toggle button */}
                         <button
                             onClick={handleMcpToggle}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border ${
-                                mcpData.mcp_enabled
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border ${mcpData.mcp_enabled
                                     ? 'bg-green-500/10 text-green-400 border-green-500/20 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20'
                                     : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20 hover:bg-green-500/10 hover:text-green-400 hover:border-green-500/20'
-                            }`}
+                                }`}
                         >
                             <Power size={11} />
                             {mcpData.mcp_enabled ? 'Enabled' : 'Disabled'}
@@ -320,20 +319,18 @@ const Workspace = () => {
                         {mcpData.servers.map(server => (
                             <div
                                 key={server.name}
-                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
-                                    !mcpData.mcp_enabled
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${!mcpData.mcp_enabled
                                         ? 'bg-yellow-500/5 border-yellow-500/15 text-yellow-400/70'
                                         : server.status === 'ok'
                                             ? 'bg-green-500/5 border-green-500/15 text-green-400'
                                             : 'bg-red-500/5 border-red-500/15 text-red-400'
-                                }`}
+                                    }`}
                                 title={`${server.tool_count ?? 0} tools`}
                             >
-                                <span className={`w-1.5 h-1.5 rounded-full ${
-                                    !mcpData.mcp_enabled ? 'bg-yellow-500/50'
-                                    : server.status === 'ok' ? 'bg-green-500'
-                                    : 'bg-red-500'
-                                }`} />
+                                <span className={`w-1.5 h-1.5 rounded-full ${!mcpData.mcp_enabled ? 'bg-yellow-500/50'
+                                        : server.status === 'ok' ? 'bg-green-500'
+                                            : 'bg-red-500'
+                                    }`} />
                                 {server.name}
                                 <span className="opacity-50">·{server.tool_count ?? 0}</span>
                             </div>
@@ -360,11 +357,10 @@ const Workspace = () => {
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2">
                                                 <span className="text-sm font-medium text-on-surface capitalize">{server.name}</span>
-                                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                                                    !mcpData.mcp_enabled ? 'bg-yellow-500/10 text-yellow-400'
-                                                    : server.status === 'ok' ? 'bg-green-500/10 text-green-400'
-                                                    : 'bg-red-500/10 text-red-400'
-                                                }`}>
+                                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${!mcpData.mcp_enabled ? 'bg-yellow-500/10 text-yellow-400'
+                                                        : server.status === 'ok' ? 'bg-green-500/10 text-green-400'
+                                                            : 'bg-red-500/10 text-red-400'
+                                                    }`}>
                                                     {!mcpData.mcp_enabled ? 'disabled' : server.status}
                                                 </span>
                                                 <span className="text-[10px] text-on-surface-variant ml-auto">{server.tool_count ?? 0} tool{server.tool_count !== 1 ? 's' : ''}</span>
