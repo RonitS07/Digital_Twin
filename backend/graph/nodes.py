@@ -136,6 +136,10 @@ def classifier_node(state: State):
 
     # Gmail/Email — explicit email words
     if any(k in user_input for k in ["email", "mail", "gmail", "inbox", "messages"]):
+        # Prioritize explicit send requests
+        if "send " in user_input or "send it" in user_input or "send this" in user_input:
+            return {**state, "intent": "email_send"}
+            
         if any(k in user_input for k in [
             "search", "find", "show", "show me", "read", "unread", "recent", "what did",
             "check", "promotion", "offer", "deal", "bank", "statement", "receipt",
