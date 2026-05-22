@@ -783,7 +783,7 @@ const Chat = () => {
             })
             setPendingIntentHint('auto')
             const aiMsg = {
-                id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: 'ai', sender: 'Assistant',
+                id: data.msg_id || `ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: 'ai', sender: 'Assistant',
                 text: data.output, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
                 source: data.intent?.toUpperCase() || 'AI', responseType: data.response_type, imageUrl: data.image_url,
                 generatedFile: data.generated_file || null,
@@ -795,7 +795,7 @@ const Chat = () => {
                 if (newMessages.length === 2 || newMessages.length === 4) {
                     apiFetch('/ai/generate-title', {
                         method: 'POST',
-                        body: JSON.stringify({ history: newMessages.map(m => ({ role: m.role, text: m.text })) })
+                        body: JSON.stringify({ session_id: sessionId, history: newMessages.map(m => ({ role: m.role, text: m.text })) })
                     }).then(res => {
                         if (res.title) {
                             setSessions(sPrev => sPrev.map(s => s.id === sessionId ? { ...s, title: res.title } : s));

@@ -1369,12 +1369,16 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
             )
             db.add(new_log)
             db.commit()
+            db.refresh(new_log)
+            generated_msg_id = str(new_log.id) + "_ai"
         except Exception as log_err:
             logger.warning(f"Task log write failed: {log_err}")
             db.rollback()
+            generated_msg_id = None
 
         logger.info(f"[AI Process] Returning Final State: response_type={final_state.get('response_type')}, has_image={bool(final_state.get('image_url'))}")
         return {
+            "msg_id": generated_msg_id,
             "output": final_state.get("output"),
             "intent": final_state.get("intent"),
             "approval_required": final_state.get("approval_required", False),
@@ -1391,10 +1395,12 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
 
 class GenerateTitleRequest(BaseModel):
     history: List[dict]
+    session_id: Optional[str] = None
 
 @app.post("/ai/generate-title")
-def generate_chat_title(req: GenerateTitleRequest, current_user: User = Depends(get_current_user)):
+def generate_chat_title(req: GenerateTitleRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     from graph.llm_utils import _llm
+    from db.models import StructuredMemory
     
     # Format history for the LLM
     context = ""
@@ -1418,6 +1424,16 @@ def generate_chat_title(req: GenerateTitleRequest, current_user: User = Depends(
         # Clean up title
         title = title.strip().strip('"').strip("'").split('\n')[0]
         if len(title) > 50: title = title[:47] + "..."
+        
+        if req.session_id:
+            existing = db.query(StructuredMemory).filter_by(user_id=current_user.id, category="session_title", key=req.session_id).first()
+            if existing:
+                existing.value = title
+            else:
+                new_title = StructuredMemory(user_id=current_user.id, category="session_title", key=req.session_id, value=title)
+                db.add(new_title)
+            db.commit()
+            
         return {"title": title}
     except Exception as e:
         logger.error(f"Title generation failed: {e}")
@@ -1797,21 +1813,20 @@ def get_recent_activity(
 @app.get("/sessions")
 def get_sessions(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        # Get unique session IDs and their latest message timestamp
-        from sqlalchemy import func
-        # Let's use a simple approach for compatibility and to avoid grouping errors.
-        
-        # Note: SQLite doesn't support distinct on column or first_value easily in some versions.
-        # Let's use a simpler approach for broad compatibility.
-        
+        from db.models import StructuredMemory
         all_logs = db.query(TaskLog).filter(TaskLog.user_id == current_user.id).filter(TaskLog.session_id.isnot(None)).order_by(TaskLog.created_at.desc()).all()
+        
+        titles = db.query(StructuredMemory).filter_by(user_id=current_user.id, category="session_title").all()
+        title_map = {t.key: t.value for t in titles}
+        
         sessions_map = {}
         for log in all_logs:
             sid = log.session_id
             if sid not in sessions_map:
+                title = title_map.get(sid, log.input[:30] + "..." if len(log.input) > 30 else log.input)
                 sessions_map[sid] = {
                     "id": sid,
-                    "title": log.input[:30] + "..." if len(log.input) > 30 else log.input,
+                    "title": title,
                     "updatedAt": log.created_at.timestamp() * 1000
                 }
         
