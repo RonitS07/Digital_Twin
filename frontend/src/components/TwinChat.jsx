@@ -26,6 +26,7 @@ import {
 import { apiFetch } from '../utils/apiClient'
 import { useStore } from '../store/useStore'
 import { API_BASE } from '../config'
+import VisualizationRenderer from './VisualizationRenderer'
 
 const TWIN_INTENT_OPTIONS = [
   { key: 'general', label: 'General' },
@@ -214,6 +215,12 @@ const MessageBubble = React.memo(({ msg, isOwn, onAction, user }) => {
                 <SimpleMarkdown>{cleanText}</SimpleMarkdown>
               </div>
             ) : null
+          )}
+
+          {(metadata.chart_data || metadata.viz_config) && (
+              <div className="mt-4">
+                  <VisualizationRenderer config={metadata.chart_data || metadata.viz_config} />
+              </div>
           )}
 
           {metadata.files && metadata.files.length > 0 && (

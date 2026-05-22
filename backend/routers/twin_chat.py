@@ -512,6 +512,7 @@ async def send_message(
             "response_type": final_state.get("response_type", "text"),
             "image_url": final_state.get("image_url"),
             "viz_config": final_state.get("viz_config"),
+            "chart_data": final_state.get("chart_data"),
             "generated_file": final_state.get("generated_file"),
             "source": "ai_response"
         }
@@ -887,7 +888,10 @@ async def ai_process_in_chat(
         "intent": intent,
         "approval_required": approval_required,
         "source": "ai_pipeline",
-        "files": body.files, # Include files if any
+        "files": body.files,
+        "chart_data": final_state.get("chart_data"),
+        "viz_config": final_state.get("viz_config"),
+        "generated_file": final_state.get("generated_file"),
     }
 
     ai_msg = DirectChatMessage(
