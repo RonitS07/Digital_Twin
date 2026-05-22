@@ -653,6 +653,7 @@ const Chat = () => {
                     responseType: h.response_type || h.metadata?.response_type || 'text',
                     imageUrl: h.image_url || h.metadata?.image_url || null,
                     vizConfig: h.metadata?.viz_config || null,
+                    chartData: h.metadata?.chart_data || null,
                     generatedFile: h.metadata?.generated_file || null,
                     attachments: h.metadata?.attachments || [],
                     source: h.metadata?.source || h.intent?.toUpperCase() || (h.role === 'assistant' ? 'AI' : 'Web'),
@@ -787,6 +788,7 @@ const Chat = () => {
                 text: data.output, time: new Date().toLocaleTimeString([], { timeStyle: 'short' }),
                 source: data.intent?.toUpperCase() || 'AI', responseType: data.response_type, imageUrl: data.image_url,
                 generatedFile: data.generated_file || null,
+                chartData: data.chart_data || null,
                 vizConfig: data.viz_config || null,
             }
             setMessages(prev => {
@@ -869,6 +871,7 @@ const Chat = () => {
                 image_url: data.image_url,
                 file_name: data.file_name || file_name,
                 generatedFile: data.generated_file || null,
+                chartData: data.chart_data || null,
                 vizConfig: data.viz_config || null,
             }
             setMessages(prev => [...prev, aiMsg])
@@ -1245,14 +1248,34 @@ const Chat = () => {
                             <p className="text-center text-xs text-neutral/50 font-bold uppercase tracking-widest flex items-center justify-center gap-1.5"><Sparkles size={12} /> Try asking</p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-2xl mx-auto">
                                 {[
-                                    { icon: Mail, label: 'Summarize my inbox', prompt: 'Show me my most important unread emails' },
-                                    { icon: Calendar, label: 'Check my schedule', prompt: "What meetings do I have today?" },
-                                    { icon: Zap, label: 'Generate a report', prompt: 'Generate a PDF report on my assistant activity for this month' },
-                                    { icon: Sparkles, label: 'Visualize data', prompt: 'Create a bar chart showing monthly revenue trends for a SaaS company' },
-                                ].map(({ icon: Icon, label, prompt }) => (
+                                    { icon: Mail, label: 'Summarize my inbox', prompts: [
+                                        'Show me my most important unread emails',
+                                        'Summarize my inbox for the last 2 days',
+                                        'Are there any urgent emails from the team?',
+                                        'Scan my inbox for pending action items'
+                                    ] },
+                                    { icon: Calendar, label: 'Check my schedule', prompts: [
+                                        'What meetings do I have today?',
+                                        'Do I have any conflicts in my schedule tomorrow?',
+                                        'What does my agenda look like for this week?',
+                                        'When is my next free slot today?'
+                                    ] },
+                                    { icon: Zap, label: 'Generate a report', prompts: [
+                                        'Generate a PDF report on my assistant activity for this month',
+                                        'Create an executive summary report of my emails',
+                                        'Generate an XLSX sheet of my upcoming meetings',
+                                        'Prepare a briefing document for tomorrow'
+                                    ] },
+                                    { icon: Sparkles, label: 'Visualize data', prompts: [
+                                        'Create a bar chart showing monthly revenue trends for a SaaS company',
+                                        'Visualize website traffic across different regions',
+                                        'Draw a pie chart showing department budget allocations',
+                                        'Create a line graph of daily active users over a month'
+                                    ] },
+                                ].map(({ icon: Icon, label, prompts }) => (
                                     <button
                                         key={label}
-                                        onClick={() => { setInput(prompt); textareaRef.current?.focus(); }}
+                                        onClick={() => { setInput(prompts[Math.floor(Math.random() * prompts.length)]); textareaRef.current?.focus(); }}
                                         className="flex items-center gap-3 p-3 rounded-xl bg-surface-container hover:bg-surface-container-high border border-neutral/10 hover:border-primary/20 text-left transition-all group"
                                     >
                                         <div className="p-1.5 rounded-lg bg-primary/10 text-primary shrink-0"><Icon size={14} /></div>

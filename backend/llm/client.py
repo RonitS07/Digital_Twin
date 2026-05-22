@@ -323,20 +323,16 @@ generate chart data as clean JSON.
 CRITICAL RULES:
 1. Output ONLY valid JSON — no markdown, no explanation,
    no backticks, no preamble
-2. YOU MUST STRICTLY USE the real-world data provided in the
-   [USER REQUEST] or [CHAT HISTORY].
-3. DO NOT USE ANY DUMMY, FAKE, OR ILLUSTRATIVE DATA.
-   If you do not have enough real data to build a chart,
-   generate an empty dataset and explain in "insights"
-   that no real data was found.
-4. Set "data_source": "factual".
+2. Use real-world data provided in the [USER REQUEST] or [CHAT HISTORY] if available.
+3. IF NO REAL DATA IS PROVIDED, YOU MUST GENERATE REALISTIC DEMONSTRATION DATA. Never return an empty chart.
+4. Set "data_source": "factual" or "demonstration".
 5. The JSON must match this exact schema:
    {
      "chart_type": "bar"|"line"|"pie"|"scatter"|"area",
      "title": "string",
      "subtitle": "string (empty if none)",
-     "data_source": "factual",
-     "disclaimer": "string (empty if no issues)",
+     "data_source": "factual"|"demonstration",
+     "disclaimer": "string (empty if no issues, or note that data is demonstration)",
      "labels": ["label1", "label2", ...],
      "datasets": [
        {
@@ -427,15 +423,14 @@ def chat_complete_visualization(
             "subtitle": "",
             "data_source": "factual",
             "disclaimer": (
-                "Could not find sufficient real-world data."
+                "Could not generate chart data."
             ),
-            "labels": [],
-            "datasets": [],
+            "labels": ["Error"],
+            "datasets": [{"label": "Value", "data": [0]}],
             "x_axis_label": "",
             "y_axis_label": "",
             "insights": [
-                "Could not generate chart data. "
-                "Please provide specific data."
+                "Could not generate chart data. Please provide specific data."
             ]
         }
 
