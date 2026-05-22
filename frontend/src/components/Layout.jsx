@@ -367,7 +367,7 @@ const MoreMenu = ({ items, currentView, setView, onClose }) => (
 )
 
 const Layout = ({ children, currentView, setView }) => {
-    const { auth, isAdmin, twinChatActiveSessionId, addUnreadTwinChat, unreadTwinChats } = useStore();
+    const { auth, isAdmin, authInitialized, twinChatActiveSessionId, addUnreadTwinChat, unreadTwinChats } = useStore();
     const user = auth.user || {};
     const [isTaskModalOpen, setTaskModalOpen] = useState(false);
     const [isHelpOpen, setHelpOpen] = useState(false);
@@ -379,9 +379,13 @@ const Layout = ({ children, currentView, setView }) => {
     const wsRef = useRef(null);
 
     // Global Twin Chat WebSocket
+    // Gate on authInitialized to prevent connecting with a stale/partial token
+    // during Firebase's async init, which causes the "closed before established" error.
     useEffect(() => {
-        if (!user?.accessToken) return;
+        if (!authInitialized || !user?.accessToken) return;
         let alive = true;
+        let retryDelay = 1200;
+
         const connect = () => {
             const proto = (API_BASE ? API_BASE.startsWith('https') : window.location.protocol === 'https:') ? 'wss' : 'ws';
             const host = API_BASE ? API_BASE.replace(/^https?:\/\//, '') : window.location.host;
@@ -389,15 +393,16 @@ const Layout = ({ children, currentView, setView }) => {
             const ws = new WebSocket(url);
             wsRef.current = ws;
 
+            ws.onopen = () => {
+                retryDelay = 1200; // reset backoff on successful connect
+            };
+
             ws.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data);
                     if (data.event === 'new_message' && data.message.sender_id !== user.uid) {
-                        // Determine if we should show a notification
-                        // Check if the user is currently in this specific chat
                         const isViewingChat = window.location.pathname.includes('twin-chat') || currentView === 'twin-chat';
                         const isActiveSession = useStore.getState().twinChatActiveSessionId === data.message.session_id;
-
                         if (!(isViewingChat && isActiveSession)) {
                             addUnreadTwinChat(data.message);
                             setPopupNotification({
@@ -410,17 +415,26 @@ const Layout = ({ children, currentView, setView }) => {
                             }, 3500);
                         }
                     }
+                    // Instant WhatsApp status push — updates all open tabs immediately
+                    if (data.event === 'whatsapp_status') {
+                        useStore.getState().setWhatsappReady(data.ready === true);
+                    }
                 } catch (err) {
                     console.error("Twin WS message error:", err);
                 }
             };
-            ws.onclose = () => {
-                if (alive) setTimeout(connect, 1200);
+            ws.onclose = (ev) => {
+                // 4001/4003 = auth errors — do NOT retry, token is bad
+                if (ev.code === 4001 || ev.code === 4003) return;
+                if (alive) {
+                    setTimeout(connect, retryDelay);
+                    retryDelay = Math.min(retryDelay * 1.5, 8000); // exponential backoff, cap at 8s
+                }
             };
         };
         connect();
         return () => { alive = false; wsRef.current?.close(); };
-    }, [user?.accessToken, user?.uid, currentView, addUnreadTwinChat]);
+    }, [authInitialized, user?.accessToken, user?.uid, currentView, addUnreadTwinChat]);
 
     // Poll for unread agent inbox messages every 30s
     React.useEffect(() => {

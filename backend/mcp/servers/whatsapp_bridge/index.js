@@ -180,16 +180,60 @@ app.get('/messages/:chatId', async (req, res) => {
 
 app.post('/disconnect', async (req, res) => {
     try {
-        await client.logout()
-        res.json({
-            success: true,
-            message: 'WhatsApp disconnected'
-        })
+        isReady = false;
+        qrCode = null;
+
+        // 1. Logout clears the WhatsApp session server-side
+        try {
+            await client.logout();
+        } catch (logoutErr) {
+            console.warn('[WA Bridge] logout() error (may already be logged out):', logoutErr.message);
+        }
+
+        // 2. Destroy the browser instance
+        try {
+            await client.destroy();
+        } catch (destroyErr) {
+            console.warn('[WA Bridge] destroy() error:', destroyErr.message);
+        }
+
+        res.json({ success: true, message: 'WhatsApp disconnected' });
+
+        // 3. Re-initialize so bridge is ready for a fresh QR scan immediately
+        if (!isInitializing) {
+            isInitializing = true;
+            setTimeout(() => {
+                console.log('[WA Bridge] Re-initializing after manual disconnect...');
+                client.initialize().catch(e => {
+                    console.error('[WA Bridge] Re-init error:', e);
+                    isInitializing = false;
+                });
+            }, 1500);
+        }
     } catch (e) {
-        res.status(500).json({
-            error: e.message
-        })
+        res.status(500).json({ error: e.message });
     }
+})
+
+// Health / reinit endpoint — allows the Python backend to trigger a fresh init
+app.post('/reinit', async (req, res) => {
+    if (isInitializing) {
+        return res.json({ ok: true, message: 'Already initializing' });
+    }
+    if (isReady) {
+        return res.json({ ok: true, message: 'Already connected' });
+    }
+    isInitializing = true;
+    try {
+        await client.destroy().catch(() => {});
+    } catch (_) {}
+    setTimeout(() => {
+        client.initialize().catch(e => {
+            console.error('[WA Bridge] Reinit error:', e);
+            isInitializing = false;
+        });
+    }, 1000);
+    res.json({ ok: true, message: 'Re-initializing' });
 })
 
 isInitializing = true

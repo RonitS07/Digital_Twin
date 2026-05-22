@@ -1758,6 +1758,42 @@ def get_history(session_id: str = None, current_user: User = Depends(get_current
         logger.exception(f"History Error: {e}")
         return []
 
+@app.get("/activity/recent")
+def get_recent_activity(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns recent AI Twin task executions for the dashboard Recent Activity panel
+    and the full Activity page. Shape is stable and separate from /history (which
+    returns chat messages).
+    """
+    try:
+        logs = (
+            db.query(TaskLog)
+            .filter(TaskLog.user_id == current_user.id)
+            .order_by(TaskLog.created_at.desc())
+            .limit(min(limit, 100))
+            .all()
+        )
+        return {
+            "activity": [
+                {
+                    "id": str(log.id),
+                    "intent": log.intent or "general",
+                    "input": log.input or "",
+                    "output": log.output or "",
+                    "approved": bool(log.approved),
+                    "timestamp": log.created_at.isoformat() if log.created_at else None,
+                }
+                for log in logs
+            ]
+        }
+    except Exception as e:
+        logger.exception(f"Activity fetch error: {e}")
+        return {"activity": []}
+
 @app.get("/sessions")
 def get_sessions(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
@@ -1938,13 +1974,15 @@ def api_send_telegram(request: Request, req: TelegramSendRequest, current_user: 
 @app.post("/gmail/send")
 def send_mail(req: EmailSendRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        if not req.subject.strip():
-            _tool_error("Please provide an email subject.", "BAD_REQUEST")
-        if not req.body.strip():
-            _tool_error("Please provide an email body.", "BAD_REQUEST")
+        if not req.to or not req.to.strip():
+            raise HTTPException(status_code=400, detail="Recipient email address is required.")
+        if not req.subject or not req.subject.strip():
+            raise HTTPException(status_code=400, detail="Email subject is required.")
+        if not req.body or not req.body.strip():
+            raise HTTPException(status_code=400, detail="Email body is required.")
         res = send_email(db=db, user_id=current_user.id, to=req.to, subject=req.subject, body=req.body)
         
-        # 🟢 Log Execution
+        # Log execution
         try:
             log = TaskLog(
                 user_id=current_user.id,
@@ -1959,7 +1997,9 @@ def send_mail(req: EmailSendRequest, current_user: User = Depends(get_current_us
         except Exception:
             db.rollback()
 
-        return {"details": res}
+        return {"status": "sent", "to": req.to, "subject": req.subject, "details": res}
+    except HTTPException:
+        raise
     except RuntimeError as e:
         _tool_error(str(e), "GOOGLE_AUTH", status_code=401)
     except HttpError as e:
@@ -1968,6 +2008,42 @@ def send_mail(req: EmailSendRequest, current_user: User = Depends(get_current_us
     except Exception as e:
         logger.exception(e)
         _tool_error("Email sending failed. Please try again.", "EMAIL_FAILED", status_code=500)
+
+@app.post("/gmail/draft")
+def save_mail_draft(req: EmailSendRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Save an email to Gmail Drafts folder without sending."""
+    try:
+        if not req.to or not req.to.strip():
+            raise HTTPException(status_code=400, detail="Recipient email address is required.")
+        from tools.gmail_tool import save_draft
+        res = save_draft(db=db, user_id=current_user.id, to=req.to, subject=req.subject or "(no subject)", body=req.body or "")
+
+        try:
+            log = TaskLog(
+                user_id=current_user.id,
+                kind="draft",
+                input=f"Drafted email to: {req.to}",
+                intent="email",
+                output=f"Subject: {req.subject}",
+                approved=False
+            )
+            db.add(log)
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        return {"status": "draft_saved", "draft_id": res.get("draft_id"), "to": req.to, "subject": req.subject}
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        _tool_error(str(e), "GOOGLE_AUTH", status_code=401)
+    except HttpError as e:
+        sc, payload = _map_google_http_error(e)
+        raise HTTPException(status_code=sc, detail=payload)
+    except Exception as e:
+        logger.exception(e)
+        _tool_error("Failed to save draft. Please try again.", "DRAFT_FAILED", status_code=500)
+
 
 @app.post("/auth/register")
 def register(req: RegisterRequest, db: Session = Depends(get_db)):
@@ -2625,13 +2701,37 @@ async def disconnect_whatsapp(current_user: User = Depends(get_current_user)):
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(f"{bridge_url}/disconnect")
             if "application/json" in r.headers.get("content-type", ""):
-                return r.json()
-            raise HTTPException(status_code=500, detail=f"Bridge returned non-JSON response: {r.text}")
+                result = r.json()
+            else:
+                raise HTTPException(status_code=500, detail=f"Bridge returned non-JSON response: {r.text}")
+
+        # Push instant status update to the user via WebSocket (no waiting for next poll)
+        try:
+            from routers.twin_chat import manager as ws_manager
+            await ws_manager.send_to_user(current_user.id, {
+                "event": "whatsapp_status",
+                "ready": False,
+                "qr": None,
+            })
+        except Exception as ws_err:
+            logger.debug(f"WS whatsapp_status push skipped: {ws_err}")
+
+        return result
     except HTTPException:
         raise
     except (httpx.ConnectError, httpx.TimeoutException):
         # Bridge is down/crashed — session is already gone, treat as success
         logger.warning("WhatsApp bridge unreachable during disconnect — treating as already disconnected")
+        # Still notify UI via WebSocket
+        try:
+            from routers.twin_chat import manager as ws_manager
+            await ws_manager.send_to_user(current_user.id, {
+                "event": "whatsapp_status",
+                "ready": False,
+                "qr": None,
+            })
+        except Exception:
+            pass
         return {"success": True, "message": "WhatsApp disconnected (bridge was offline)"}
     except Exception as e:
         logger.error(f"WhatsApp disconnect error: {e}")

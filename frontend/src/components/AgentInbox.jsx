@@ -366,7 +366,7 @@ const AgentCard = ({ agent, onSchedule }) => {
 // ─── Main AgentInbox Component ────────────────────────────────────────────────
 
 const AgentInbox = () => {
-  const { auth, unreadTwinChats, setView, setTwinChatActiveSessionId } = useStore()
+  const { auth, authInitialized, unreadTwinChats, setView, setTwinChatActiveSessionId } = useStore()
   const userId = auth?.user?.uid
   const accessToken = auth?.user?.accessToken
 
@@ -414,7 +414,7 @@ const AgentInbox = () => {
 
   // ── WebSocket inbox listener ───────────────────────────────────────────────
   const connectWS = useCallback(() => {
-    if (!userId || !accessToken) return
+    if (!authInitialized || !userId || !accessToken) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
     const proto = API_BASE.startsWith('https') ? 'wss' : (window.location.protocol === 'https:' ? 'wss' : 'ws');
@@ -422,8 +422,11 @@ const AgentInbox = () => {
     const ws = new WebSocket(`${proto}://${host}/agent/ws/${userId}?token=${accessToken}`)
     wsRef.current = ws
 
+    let retryDelay = 5000;
+
     ws.onopen = () => {
       setWsStatus('connected')
+      retryDelay = 5000; // reset on success
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
     }
 
@@ -436,16 +439,20 @@ const AgentInbox = () => {
       } catch {}
     }
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       setWsStatus('disconnected')
-      // Auto-reconnect after 5s
-      reconnectRef.current = setTimeout(connectWS, 5000)
+      // 4001/4003 = auth errors — do NOT retry
+      if (ev.code === 4001 || ev.code === 4003) return;
+      reconnectRef.current = setTimeout(() => {
+        retryDelay = Math.min(retryDelay * 1.5, 30000);
+        connectWS();
+      }, retryDelay)
     }
 
     ws.onerror = () => {
       ws.close()
     }
-  }, [userId, accessToken, fetchInbox])
+  }, [authInitialized, userId, accessToken, fetchInbox])
 
   useEffect(() => {
     fetchInbox()

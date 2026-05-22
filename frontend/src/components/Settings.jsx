@@ -46,13 +46,13 @@ const Toggle = ({ value, onChange }) => (
 );
 
 const Settings = () => {
-    const { auth: storeAuth, theme, setTheme, preferences, setPreferences, logout } = useStore();
+    const { auth: storeAuth, theme, setTheme, preferences, setPreferences, logout, whatsappReady } = useStore();
     const user = storeAuth.user || {};
     const [saved, setSaved] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [gmailConnected, setGmailConnected] = useState(false);
     const [calendarConnected, setCalendarConnected] = useState(false);
-    const [whatsappConnected, setWhatsappConnected] = useState(false);
+    const [whatsappConnected, setWhatsappConnected] = useState(() => whatsappReady === true);
     const [autonomous, setAutonomous] = useState(() => {
         const val = localStorage.getItem(`autonomous_mode_${user.uid}`);
         return val === 'true';
@@ -66,6 +66,11 @@ const Settings = () => {
     useEffect(() => {
         setDraftPreferences(preferences);
     }, [preferences]);
+
+    // Sync WhatsApp status from global store (driven by WebSocket push)
+    useEffect(() => {
+        if (whatsappReady !== null) setWhatsappConnected(whatsappReady);
+    }, [whatsappReady]);
     const [resetConfirm, setResetConfirm] = useState(false);
     
     const [editName, setEditName] = useState(user.name || '');
@@ -113,8 +118,9 @@ const Settings = () => {
                 .then(data => { if (isMounted) setWhatsappConnected(!!data.ready); })
                 .catch(() => { if (isMounted) setWhatsappConnected(false); });
         };
+        // Initial fetch only — do NOT set a recurring interval.
+        // Ongoing status is pushed via WebSocket → Zustand store → whatsappReady effect above.
         checkWhatsapp();
-        const waInterval = setInterval(checkWhatsapp, 5000);
 
         const handleMessage = (event) => {
             if (event.data === 'google_oauth_success') {
@@ -128,7 +134,6 @@ const Settings = () => {
         return () => { 
             isMounted = false; 
             window.removeEventListener('message', handleMessage);
-            clearInterval(waInterval);
         };
     }, [user.uid]); // uid is a stable string — only re-runs if the user actually changes
 

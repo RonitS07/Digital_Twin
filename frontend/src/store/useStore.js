@@ -91,6 +91,11 @@ export const useStore = create(
             removeUnreadTwinChat: (sessionId) => set(state => ({ 
                 unreadTwinChats: state.unreadTwinChats.filter(m => m.session_id !== sessionId) 
             })),
+
+            // WhatsApp live status (driven by WebSocket push from backend)
+            // null = unknown (not yet fetched), true = connected, false = disconnected
+            whatsappReady: null,
+            setWhatsappReady: (ready) => set({ whatsappReady: !!ready }),
         }),
         {
             name: 'ai-twin-storage', // key in localStorage

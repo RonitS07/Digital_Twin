@@ -223,8 +223,22 @@ def save_draft(db: Session, user_id: str, to: str, subject: str, body: str) -> d
     }
 
 def send_email(db: Session, user_id: str, to: str, subject: str, body: str) -> dict:
+    """Send email via Gmail. Strips markdown formatting so recipient gets clean plain text."""
     service = get_gmail_service(db=db, user_id=user_id)
-    message = MIMEText(body)
+
+    # Strip common markdown so the email body is clean plain text
+    import re
+    plain_body = body
+    plain_body = re.sub(r'\*\*(.+?)\*\*', r'\1', plain_body)      # **bold**
+    plain_body = re.sub(r'\*(.+?)\*', r'\1', plain_body)           # *italic*
+    plain_body = re.sub(r'#{1,6}\s*', '', plain_body)              # # headers
+    plain_body = re.sub(r'^[-*+]\s+', '', plain_body, flags=re.MULTILINE)  # bullet points
+    plain_body = re.sub(r'`(.+?)`', r'\1', plain_body)             # `code`
+    plain_body = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', plain_body)   # [link](url)
+    plain_body = re.sub(r'---+', '', plain_body)                    # horizontal rules
+    plain_body = plain_body.strip()
+
+    message = MIMEText(plain_body, 'plain')
     message["to"]      = to
     message["subject"] = subject
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
@@ -232,7 +246,7 @@ def send_email(db: Session, user_id: str, to: str, subject: str, body: str) -> d
         userId="me",
         body={"raw": raw}
     ).execute()
-    return {"message_id": sent["id"], "status": "sent"}
+    return {"message_id": sent["id"], "status": "sent", "to": to, "subject": subject}
 
 def reply_to_email(db: Session, user_id: str, message_id: str, body: str) -> dict:
     service = get_gmail_service(db=db, user_id=user_id)

@@ -1,3 +1,5 @@
+import base64
+import json
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -9,6 +11,23 @@ from security.firebase_config import verify_firebase_token
 from core.config import settings
 
 security = HTTPBearer(auto_error=False)
+
+
+def _is_firebase_token(token: str) -> bool:
+    """
+    Quick O(1) check: Firebase tokens are RS256 JWTs and always have a 'kid'
+    (Key ID) in their header. Backend-issued tokens are HS256 and never have
+    a 'kid'. This avoids hammering Firebase's verification with our own JWTs.
+    """
+    try:
+        header_b64 = token.split(".")[0]
+        # JWT base64url — add padding
+        padding = 4 - len(header_b64) % 4
+        header_json = base64.urlsafe_b64decode(header_b64 + "=" * padding)
+        header = json.loads(header_json)
+        return bool(header.get("kid")) and header.get("alg", "").startswith("RS")
+    except Exception:
+        return False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HARDLOCKED SUPERADMIN — cannot be revoked by anyone, including other admins
@@ -39,7 +58,7 @@ def get_current_user(
 
     token = credentials.credentials
     
-    # 1. Try decoding as backend JWT first
+    # 1. Try decoding as backend JWT first (HS256, no 'kid' header)
     payload = decode_token(token)
     
     if payload and "sub" in payload:
@@ -54,15 +73,22 @@ def get_current_user(
         user = db.query(User).filter(User.id == payload["sub"]).first()
         if user:
             return _apply_hardlock(user)
+        # payload decoded but user not found → hard fail, don't try Firebase
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found for this token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    # 2. Fallback: Try verifying as a Firebase ID Token
-    # This allows direct access from the frontend with a Firebase token if needed,
-    # though usually the frontend exchanges it for a backend JWT via /auth/firebase.
-    fb_decoded = verify_firebase_token(token)
-    if fb_decoded and "uid" in fb_decoded:
-        user = db.query(User).filter(User.id == fb_decoded["uid"]).first()
-        if user:
-            return _apply_hardlock(user)
+    # 2. Fallback: Try verifying as a Firebase ID Token — ONLY if the token
+    #    header actually contains a 'kid' field (RS256). Backend JWTs never
+    #    have 'kid', so this prevents noisy "no kid claim" warnings.
+    if _is_firebase_token(token):
+        fb_decoded = verify_firebase_token(token)
+        if fb_decoded and "uid" in fb_decoded:
+            user = db.query(User).filter(User.id == fb_decoded["uid"]).first()
+            if user:
+                return _apply_hardlock(user)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

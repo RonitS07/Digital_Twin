@@ -981,27 +981,44 @@ async def websocket_endpoint(
       - { "event": "ping" }
     """
     # Authenticate via token
+    # IMPORTANT: Accept the WebSocket FIRST, then validate.
+    # If we close before accept(), FastAPI/Starlette raises
+    # "WebSocket is not connected. Need to call accept first."
     from db.auth import decode_token
     from security.firebase_config import verify_firebase_token
+    from security.auth import _is_firebase_token
+
+    await websocket.accept()
 
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4001)
         return
 
+    # Validate token — backend JWT first, Firebase fallback
     user = None
     payload = decode_token(token)
+    if payload and payload.get("error") == "ExpiredIdTokenError":
+        # Expired backend JWT — tell client to refresh
+        await websocket.send_json({"event": "error", "code": "TOKEN_EXPIRED", "message": "Token expired, please re-authenticate."})
+        await websocket.close(code=4003)
+        return
     if payload and "sub" in payload:
         user = db.query(User).filter(User.id == payload["sub"]).first()
-    if not user:
+    if not user and _is_firebase_token(token):
         fb_decoded = verify_firebase_token(token)
         if fb_decoded and "uid" in fb_decoded:
             user = db.query(User).filter(User.id == fb_decoded["uid"]).first()
     if not user:
+        await websocket.send_json({"event": "error", "code": "UNAUTHORIZED", "message": "Invalid authentication token."})
         await websocket.close(code=4001)
         return
 
-    await manager.connect(user.id, websocket)
+    # Register connection (accept() already called above, don't call again)
+    if user.id not in manager._user_connections:
+        manager._user_connections[user.id] = set()
+    manager._user_connections[user.id].add(websocket)
+    logger.info(f"[WS] User {user.id} connected globally")
     try:
         await manager.send_to_user(user.id, {
             "event": "connected",

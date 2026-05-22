@@ -6,13 +6,18 @@ import { API_BASE } from '../config'
 import { apiFetch } from '../utils/apiClient'
 
 const Workspace = () => {
-    const { preferences, togglePreference, setPreference, auth: storeAuth } = useStore();
+    const { preferences, togglePreference, setPreference, auth: storeAuth, whatsappReady, setWhatsappReady } = useStore();
     const [connecting, setConnecting] = useState(false);
 
     const [gmailConnected, setGmailConnected] = useState(false);
     const [calendarConnected, setCalendarConnected] = useState(false);
     const [slackConnected, setSlackConnected] = useState(false);
-    const [whatsappStatus, setWhatsappStatus] = useState('unknown');
+    const [whatsappStatus, setWhatsappStatus] = useState(() => {
+        // Initialize from store if already known
+        if (whatsappReady === true) return 'ok';
+        if (whatsappReady === false) return 'offline';
+        return 'unknown';
+    });
     const [mcpData, setMcpData] = useState({ servers: [], mcp_enabled: true, total_tools: 0 });
     const [mcpLoading, setMcpLoading] = useState(false);
     const [mcpExpanded, setMcpExpanded] = useState(false);
@@ -34,7 +39,10 @@ const Workspace = () => {
                     total_tools: data.total_tools ?? 0,
                 });
                 const wa = data.servers.find(s => s.name === 'whatsapp');
-                if (wa) setWhatsappStatus(wa.status);
+                if (wa) {
+                    setWhatsappStatus(wa.status);
+                    setWhatsappReady(wa.status === 'ok');
+                }
             }
         } catch {
             // fallback: admin endpoint
@@ -47,13 +55,22 @@ const Workspace = () => {
                         total_tools: data.total_tools ?? 0,
                     }));
                     const wa = data.servers.find(s => s.name === 'whatsapp');
-                    if (wa) setWhatsappStatus(wa.status);
+                    if (wa) {
+                        setWhatsappStatus(wa.status);
+                        setWhatsappReady(wa.status === 'ok');
+                    }
                 }
             } catch (e) { console.error('MCP status failed', e); }
         } finally {
             setMcpLoading(false);
         }
-    }, []);
+    }, [setWhatsappReady]);
+
+    // Sync Zustand whatsappReady into local whatsappStatus immediately
+    useEffect(() => {
+        if (whatsappReady === true) setWhatsappStatus('ok');
+        else if (whatsappReady === false) setWhatsappStatus('offline');
+    }, [whatsappReady]);
 
     useEffect(() => {
         if (!storeAuth.user?.uid) return;
@@ -134,6 +151,7 @@ const Workspace = () => {
                     if (tool.name === 'WhatsApp') {
                         await apiFetch(`/mcp/whatsapp/disconnect`, { method: 'POST' });
                         setWhatsappStatus('offline');
+                        setWhatsappReady(false);
                         setPreference('whatsappSync', false);
                     } else {
                         const provider = (tool.name === 'Gmail' || tool.name === 'Calendar') ? 'google' : 'slack';

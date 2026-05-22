@@ -59,12 +59,15 @@ def classifier_node(state: State):
     # Use explicit intent hints from the UI when available.
     intent_hint = (state.get("intent_hint") or "").strip().lower()
     intent_map = {
-        "email": "email_draft",
+        "email": "email_read",
         "email_draft": "email_draft",
         "email_read": "email_read",
         "email_send": "email_send",
+        "email_search": "email_search",
+        "draft_email": "email_draft",
+        "reply_to_email": "email_reply",
         "schedule": "calendar",
-        "scheduling": "calendar",
+        "scheduling": "calendar",   
         "calendar": "calendar",
         "meeting": "calendar",
         "image": "visual",
@@ -108,6 +111,9 @@ def classifier_node(state: State):
         if "briefing" in last_ai_msg: return {**state, "intent": "slack_send"}
         if any(k in last_ai_msg for k in ["schedule", "meeting", "calendar", "invite", "slot"]): 
             return {**state, "intent": "scheduling"}
+        # Email confirmation — user confirmed sending a draft
+        if any(k in last_ai_msg for k in ["draft", "email", "mail", "gmail", "subject", "dear", "regards", "body"]):
+            return {**state, "intent": "email_send"}
 
     # Scheduling / Calendar (check BEFORE email — "invite" should route here)
     if any(k in user_input for k in ["schedule", "meeting", "calendar", "event", "availability", "free slot", "book a", "set up a", "invite", "meet", "call"]):
@@ -301,7 +307,7 @@ RULES:
     return {**state, "intent": intent, "target_user_handle": parsed.get("target_handle")}
 
 
-def memory_node(state: State) -> State:
+async def memory_node(state: State) -> State:
     # 1. Generate Contextual Search Query
     # If it's a short/ambiguous input, we use history to make it a better RAG query.
     history_context = ""
@@ -320,36 +326,20 @@ def memory_node(state: State) -> State:
     intent = state.get("intent", "general")
     context = ""
 
-    # ── MCP PATH ───────────────────────────────────────────────────────────
+    # ── MCP PATH ─────────────────────────────────────────────────────────────
     import asyncio as _asyncio
     from mcp.executor import mcp_executor
 
-    def _run(coro):
-        """Run a coroutine from a sync context safely."""
-        try:
-            loop = _asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(_asyncio.run, coro)
-                    return future.result()
-            return loop.run_until_complete(coro)
-        except RuntimeError:
-            return _asyncio.run(coro)
-
-    mem_result = _run(mcp_executor.execute(
+    # Run memory retrieval (and optional style retrieval) concurrently
+    mem_coro = mcp_executor.execute(
         intent="_memory_retrieve",
         args={"user_id": user_id, "query": query, "n": 3},
         user_id=user_id,
-    ))
-    context_docs = mem_result.get("result", {}).get("results", [])
-    if isinstance(context_docs, list):
-        if context_docs:
-            context += "\n[RELEVANT CHAT MEMORY]\n" + "\n".join(context_docs) + "\n"
+    )
 
-    # Writing-style context for email drafts
+    # For email drafts, also retrieve writing-style examples concurrently
     if intent in ("email_draft", "email_send"):
-        style_result = _run(mcp_executor.execute(
+        style_coro = mcp_executor.execute(
             intent="_memory_retrieve",
             args={
                 "user_id": user_id,
@@ -358,12 +348,17 @@ def memory_node(state: State) -> State:
                 "memory_type": "sent_mail",
             },
             user_id=user_id,
-        ))
+        )
+        mem_result, style_result = await _asyncio.gather(mem_coro, style_coro)
         style_docs = style_result.get("result", {}).get("results", [])
         if isinstance(style_docs, list):
             state = {**state, "style_context": "\n".join(style_docs)}
+    else:
+        mem_result = await mem_coro
 
-
+    context_docs = mem_result.get("result", {}).get("results", [])
+    if isinstance(context_docs, list) and context_docs:
+        context += "\n[RELEVANT CHAT MEMORY]\n" + "\n".join(context_docs) + "\n"
 
     # Strip any accidentally stored blobs from context
     clean_context = _clean_output(context)
@@ -372,6 +367,7 @@ def memory_node(state: State) -> State:
         **state,
         "context": clean_context
     }
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -777,30 +773,14 @@ def responder_node(state: State) -> State:
 
         return {**state, "output": output_text, "response_type": "text"}
 
-    # EMAIL REQUESTS (Drafting/Sending)
-    # 🟢 Guard: Only proceed if it's truly an ACTION request, not a search
-    is_draft_request = state["intent"] in ("email_draft", "email_send")
-    if is_draft_request:
+    # EMAIL DRAFT — save to Gmail Drafts silently, show clean draft text + confirmation note
+    if state["intent"] == "email_draft":
         if not state.get("gmail_sync", True):
             return {
                 **state,
                 "output": "Action blocked: Gmail sync is currently paused in your web dashboard settings.",
                 "response_type": "text"
             }
-
-        # (a) Email read response from MCP tool_result
-        if state["intent"] == "email_read" and tool_result.get("emails"):
-            emails = tool_result["emails"]
-            lines = []
-            for i, m in enumerate(emails, 1):
-                lines.append(
-                    f"{i}. **{m.get('subject', '(no subject)')}** — From: {m.get('from', '?')}\n"
-                    f"   {m.get('snippet', '')}"
-                )
-            readable = "\n".join(lines)
-            output = f"Here are your recent emails:\n\n{readable}"
-            output = re.sub(r'<action>.*?</action>', '', output, flags=re.DOTALL).strip()
-            return {**state, "output": output, "response_type": "text"}
 
         # Use MCP-fetched writing style
         style_context_raw = state.get("style_context") or ""
@@ -812,26 +792,14 @@ def responder_node(state: State) -> State:
         result = _llm(
             system=f"""
 You are the Digital Twin of {user_name}, an elite executive assistant.
-Objective: Draft a professional email and provide the execution block.
+Objective: Draft a professional email.
 
 [CONSTRAINTS]
-1. BE PROFESSIONAL: Draft emails with a clear opening, well-structured body, and formal closing. Avoid extremely short, one-line drafts.
-2. DO NOT include raw Gmail IDs (like 19dde49...) in your visible text.
-3. Use Markdown for structure.
-4. Never repeat context or explain your drafting process.
-5. SIGNING: Use "{user_name}" or the name explicitly provided. Never sign as "User".
-6. DRAFTING LIMITS: Only draft an email if the user explicitly asked to "draft", "write", "send", or "reply". If the user is asking to "see" or "show" an email, and you can't find it, DO NOT draft a request to the company/sender for it. Instead, just inform the user it wasn't found.
-
-[ACTION BLOCK]
-Include this at the very end ONLY if you have a recipient and subject.
-<action>
-{{
-  "intent": "email",
-  "to": "recipient@example.com",
-  "subject": "Professional Subject",
-  "body": "Full body with signatures"
-}}
-</action>
+1. BE PROFESSIONAL: Draft emails with a clear opening, well-structured body, and formal closing.
+2. Use plain text formatting (no raw HTML). Use **bold** sparingly.
+3. SIGNING: Use "{user_name}" or the name explicitly provided. Never sign as "User".
+4. CRITICAL: Output ONLY the email body text. Do NOT include <action> blocks, JSON, or instructions.
+5. Structure: Subject line on first line (Subject: ...), then blank line, then body.
 {sent_mail_context}
 [CONTEXT]
 {context_block}
@@ -840,20 +808,86 @@ Include this at the very end ONLY if you have a recipient and subject.
             user=f"Draft email for: {state['input']}",
             intent="email"
         )
+        # Strip any leaked action tags
         visible = re.sub(r'<action>.*?</action>', '', result, flags=re.DOTALL).strip()
 
-        # BUG 4 FIX D: email_draft — strip action block, show clean draft, note saved to Drafts
+        # Did the MCP executor already save it to Drafts?
         tool_result_ok = (state.get("tool_result") or {}).get("ok")
         if tool_result_ok:
-            draft_note = "\n\n---\n✅ **Draft saved to your Gmail Drafts folder.** Open Gmail to review and send."
+            draft_note = "\n\n---\n✅ **Draft saved to your Gmail Drafts folder.** Open Gmail to review and send, or just tell me **'send it'** and I'll send it directly."
         else:
-            draft_note = "\n\n---\n📝 *Review the draft above. It will be saved to Gmail Drafts when you approve.*"
+            draft_note = "\n\n---\n📝 *Review the draft above. Tell me **'send it'** to send directly, or I can save it to Gmail Drafts first.*"
 
         return {
             **state,
             "output": visible + draft_note,
             "response_type": "email_draft",
             "approval_required": False,
+        }
+
+    # EMAIL SEND — extract details from draft context and show approval card
+    if state["intent"] == "email_send":
+        if not state.get("gmail_sync", True):
+            return {
+                **state,
+                "output": "Action blocked: Gmail sync is currently paused in your web dashboard settings.",
+                "response_type": "text"
+            }
+
+        # Pull recipient, subject, body from task_plan (set by planner_node)
+        tp = state.get("task_plan") or {}
+
+        # If planner couldn't extract (e.g. user just said "send it"), try to recover from history
+        to_addr = tp.get("to", "")
+        subject = tp.get("subject", "")
+        body = tp.get("body", "")
+
+        # Recover from the last AI message if fields are empty ("send it" flow)
+        if not to_addr or not body:
+            last_ai = ""
+            for m in reversed(state.get("chat_history", [])):
+                if m.get("role") in ("ai", "assistant"):
+                    last_ai = m.get("text", "")
+                    break
+            if not to_addr:
+                # Extract email-like address from last AI msg
+                import re as _re
+                emails_found = _re.findall(r'[\w.+-]+@[\w-]+\.[\w.]+', last_ai)
+                to_addr = emails_found[0] if emails_found else ""
+            if not subject:
+                subj_match = re.search(r'Subject:\s*(.+)', last_ai, re.IGNORECASE)
+                subject = subj_match.group(1).strip() if subj_match else "(from draft)"
+            if not body:
+                # Use everything after the subject line from the last AI message (strip notes)
+                body_text = re.sub(r'---.*$', '', last_ai, flags=re.DOTALL).strip()
+                body_text = re.sub(r'<action>.*?</action>', '', body_text, flags=re.DOTALL).strip()
+                body = body_text
+
+        if not to_addr:
+            return {
+                **state,
+                "output": "I need a recipient email address to send this. Who should I send it to?",
+                "response_type": "text",
+                "approval_required": False,
+            }
+
+        # Emit an action card — user must approve before /gmail/send is called
+        action_block = json.dumps({
+            "intent": "email",
+            "to": to_addr,
+            "subject": subject,
+            "body": body,
+        })
+        output_text = (
+            f"Ready to send this email to **{to_addr}** with subject **\"{subject}\"**.\n\n"
+            f"Tap **Approve & Execute** below to send, or **Reject** to cancel."
+            f"\n\n<action>\n{action_block}\n</action>"
+        )
+        return {
+            **state,
+            "output": output_text,
+            "response_type": "email_send",
+            "approval_required": True,
         }
 
     # CALENDAR LOOKUP (Search/List)

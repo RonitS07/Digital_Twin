@@ -243,7 +243,7 @@ const ActivityDetailModal = ({ log, onClose }) => {
 };
 
 const Dashboard = () => {
-    const { auth, tasks, removeTask, preferences, setView } = useStore();
+    const { auth, authInitialized, tasks, removeTask, preferences, setView } = useStore();
     const user = auth.user || {};
     const accessToken = user.accessToken;
 
@@ -344,8 +344,8 @@ const Dashboard = () => {
     const pollHistory = async () => {
         if (!user?.uid) return;
         try {
-            const data = await apiFetch(`/history`);
-            if (data.history) setHistory(data.history.slice(0, 5));
+            const data = await apiFetch(`/activity/recent?limit=5`);
+            if (data.activity) setHistory(data.activity.slice(0, 5));
             setLoadingHistory(false);
         } catch (err) { console.error(err); }
     };
@@ -371,11 +371,8 @@ const Dashboard = () => {
         else if (hour < 18) setGreeting('Good afternoon');
         else setGreeting('Good evening');
 
-        // 🟢 Guard: Don't start polling until user is fully authenticated with a valid token
-        if (!user.uid || !auth.isLoggedIn || !accessToken) {
-            console.log("Dashboard: Waiting for auth before polling...");
-            return;
-        }
+        // Guard: wait for auth to fully resolve before any network calls
+        if (!authInitialized || !user.uid || !auth.isLoggedIn || !accessToken) return;
 
         // Initial fetch
         if (preferences.gmailSync) pollGmail();
@@ -389,8 +386,8 @@ const Dashboard = () => {
 
         const gmailInt = preferences.gmailSync ? setInterval(pollGmail, 60000) : null;
         const calInt = preferences.calendarSync ? setInterval(pollCalendar, 120000) : null;
-        const histInt = setInterval(pollHistory, 60000);
-        const analyticsInt = setInterval(pollAnalytics, 60000);
+        const histInt = setInterval(pollHistory, 45000);
+        const analyticsInt = setInterval(pollAnalytics, 90000);
 
         return () => {
             if (gmailInt) clearInterval(gmailInt);
@@ -398,7 +395,7 @@ const Dashboard = () => {
             clearInterval(histInt);
             clearInterval(analyticsInt);
         };
-    }, [user.uid, accessToken, preferences]);
+    }, [authInitialized, user.uid, accessToken, preferences]);
 
     const sendToTelegram = async () => {
         setSendingTelegram(true);

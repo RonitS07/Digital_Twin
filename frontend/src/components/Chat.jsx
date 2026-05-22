@@ -731,8 +731,6 @@ const Chat = () => {
     const handleSend = async (e) => {
         if (e) e.preventDefault()
         
-        console.log("Chat: Send requested", { input, loading, uid: user.uid });
-
         if ((!input.trim() && attachedFiles.length === 0) || loading) return
         
         if (!user.uid) {
@@ -885,16 +883,43 @@ const Chat = () => {
     const handleAction = async (action, actionData) => {
         if (action === 'reject') {
             setMessages(prev => [...prev, {
+                id: `reject-${Date.now()}`,
                 role: 'ai', sender: 'Assistant', 
-                text: `### ❌ Task Cancelled\n\n*The proposed action (${actionData.intent}) has been rejected and will not be executed.*`,
+                text: `### ❌ Task Cancelled\n\n*The proposed action has been rejected and will not be executed.*`,
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
             }])
             return
         }
-        const token = useStore.getState().auth?.user?.accessToken;
 
+        // 'save_draft' — save to Gmail Drafts without sending
+        if (action === 'save_draft') {
+            const token = useStore.getState().auth?.user?.accessToken;
+            if (!token) return;
+            try {
+                await apiFetch('/gmail/draft', {
+                    method: 'POST',
+                    body: JSON.stringify({ to: actionData.to, subject: actionData.subject, body: actionData.body })
+                });
+                setMessages(prev => [...prev, {
+                    id: `draft-ok-${Date.now()}`,
+                    role: 'ai', sender: 'Assistant',
+                    text: `✅ **Draft saved to Gmail Drafts.** Open Gmail to review and send whenever you're ready.`,
+                    time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'EMAIL'
+                }]);
+            } catch (err) {
+                setMessages(prev => [...prev, {
+                    id: `draft-err-${Date.now()}`,
+                    role: 'ai', sender: 'Assistant',
+                    text: `❌ **Failed to save draft:** ${err.message}`,
+                    time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
+                }]);
+            }
+            return;
+        }
+        const token = useStore.getState().auth?.user?.accessToken;
         if (!token) {
             setMessages(prev => [...prev, {
+                id: `auth-err-${Date.now()}`,
                 role: 'ai', sender: 'Assistant',
                 text: '⚠️ **Session expired.** Please refresh the page and sign in again.',
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
@@ -902,9 +927,21 @@ const Chat = () => {
             return;
         }
 
+        // Validate email fields before hitting the network
+        const isEmail = actionData.intent === 'email' || actionData.intent === 'email_send';
+        if (isEmail && !actionData.to?.trim()) {
+            setMessages(prev => [...prev, {
+                id: `val-err-${Date.now()}`,
+                role: 'ai', sender: 'Assistant',
+                text: `❌ **Missing recipient.** Please tell me who to send this email to.`,
+                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
+            }]);
+            return;
+        }
+
         try {
             const endpoint = 
-                actionData.intent === 'email' ? '/gmail/send' : 
+                isEmail ? '/gmail/send' :
                 actionData.intent === 'telegram' ? '/telegram/send' : 
                 actionData.intent === 'slack' ? '/slack/send' : 
                 (actionData.intent === 'whatsapp' || actionData.intent === 'whatsapp_send') ? '/whatsapp/send' :
@@ -917,19 +954,33 @@ const Chat = () => {
                 body: JSON.stringify(payload)
             })
 
+            // Build a rich success message using server response
+            let successText = '### ✅ Execution Successful\n\n';
+            if (isEmail) {
+                const recipient = data.to || actionData.to;
+                const subject = data.subject || actionData.subject;
+                successText += `**Email sent** to \`${recipient}\``;
+                if (subject) successText += `\n\n> **Subject:** ${subject}`;
+                successText += `\n\n*The message has been delivered via Gmail.*`;
+            } else if (actionData.intent === 'slack') {
+                successText += `**Slack message posted** to #${actionData.channel_name || actionData.channel_id}\n\n*Check Slack to confirm delivery.*`;
+            } else if (actionData.intent === 'telegram') {
+                successText += `**Telegram notification sent.**\n\n*Check your Telegram app.*`;
+            } else if (actionData.intent === 'whatsapp' || actionData.intent === 'whatsapp_send') {
+                successText += `**WhatsApp message sent** to ${actionData.to}\n\n*Check WhatsApp to confirm.*`;
+            } else {
+                successText += `**Calendar event scheduled.**\n\n*Check your calendar for the new event.*`;
+            }
+
             setMessages(prev => [...prev, {
+                id: `ok-${Date.now()}`,
                 role: 'ai', sender: 'Assistant', 
-                text: `### ✅ Execution Successful\n\n**Action:** ${
-                    actionData.intent === 'email' ? 'Email sent to ' + actionData.to : 
-                    actionData.intent === 'slack' ? 'Slack message posted to #' + (actionData.channel_name || actionData.channel_id) :
-                    actionData.intent === 'telegram' ? 'Notification pushed to your Telegram' : 
-                    (actionData.intent === 'whatsapp' || actionData.intent === 'whatsapp_send') ? 'WhatsApp message sent to ' + actionData.to :
-                    'Calendar event scheduled'
-                }\n\n*Your Twin has completed this task. You can check the history for details.*`,
-                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
+                text: successText,
+                time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: isEmail ? 'EMAIL' : 'SYSTEM'
             }])
         } catch (err) {
             setMessages(prev => [...prev, {
+                id: `err-${Date.now()}`,
                 role: 'ai', sender: 'Assistant',
                 text: `❌ **Execution Failed:** ${err.message}`,
                 time: new Date().toLocaleTimeString([], { timeStyle: 'short' }), source: 'SYSTEM'
@@ -1212,7 +1263,7 @@ const Chat = () => {
                         </div>
                     )}
 
-                    {messages.map((msg, i) => <ChatMessage key={msg.id || i} msg={msg} onAction={handleAction} autoApprove={autoMode} user={user} />)}
+                    {messages.map((msg, i) => <ChatMessage key={msg.id || `msg-${i}-${msg.role}`} msg={msg} onAction={handleAction} autoApprove={autoMode} user={user} />)}
                     {loading && <div key="loading-indicator" className="flex gap-3 lg:gap-5 animate-pulse"><div className="w-9 h-9 lg:w-11 lg:h-11 rounded-2xl bg-primary/10 shrink-0" /><div className="bg-surface-container-low px-4 py-3 rounded-3xl text-sm italic opacity-50 flex items-center gap-2"><Loader2 className="animate-spin" size={14} />Twin is thinking...</div></div>}
                     <div ref={endRef} />
                 </div>
