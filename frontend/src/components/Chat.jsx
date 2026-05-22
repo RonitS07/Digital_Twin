@@ -428,7 +428,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
                                         </p>
                                     </div>
                                 )}
-                                <p className="text-xs text-white/50 line-clamp-2 mt-2 italic">{actionData.message || actionData.body || actionData.description}</p>
+                                <p className="text-xs text-white/50 line-clamp-2 mt-2 italic">{actionData.body || actionData.description}</p>
                             </div>
 
                             <div className={`flex gap-2 pt-2 ${isExecuted ? 'pointer-events-none select-none' : ''}`}>

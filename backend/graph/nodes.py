@@ -115,6 +115,21 @@ def classifier_node(state: State):
         if any(k in last_ai_msg for k in ["draft", "email", "mail", "gmail", "subject", "dear", "regards", "body"]):
             return {**state, "intent": "email_send"}
 
+    # Explicit Messaging Channel Prioritization (must check before domain intents like Scheduling)
+    read_keywords = ["read", "get", "show", "history", "recent", "received", "last", "what did", "what was", "inbox", "chats"]
+    if "whatsapp" in user_input:
+        if any(kw in user_input for kw in read_keywords):
+            return {**state, "intent": "whatsapp_read"}
+        return {**state, "intent": "whatsapp_send"}
+    if "telegram" in user_input:
+        if any(kw in user_input for kw in read_keywords):
+            return {**state, "intent": "telegram_read"}
+        return {**state, "intent": "telegram_send"}
+    if "slack" in user_input and "briefing" not in user_input:
+        if any(kw in user_input for kw in read_keywords):
+            return {**state, "intent": "slack_read"}
+        return {**state, "intent": "slack_send"}
+
     # Scheduling / Calendar (check BEFORE email — "invite" should route here)
     if any(k in user_input for k in ["schedule", "meeting", "calendar", "event", "availability", "free slot", "book a", "set up a", "invite", "meet", "call"]):
         return {**state, "intent": "scheduling"}
@@ -146,20 +161,7 @@ def classifier_node(state: State):
     if any(trigger in user_input for trigger in implicit_search_triggers):
         return {**state, "intent": "email_search"}
 
-    # telegram / slack / email / whatsapp action prioritization
-    read_keywords = ["read", "get", "show", "history", "recent", "received", "last", "what did", "what was", "inbox", "chats"]
-    if "whatsapp" in user_input:
-        if any(kw in user_input for kw in read_keywords):
-            return {**state, "intent": "whatsapp_read"}
-        return {**state, "intent": "whatsapp_send"}
-    if "telegram" in user_input:
-        if any(kw in user_input for kw in read_keywords):
-            return {**state, "intent": "telegram_read"}
-        return {**state, "intent": "telegram_send"}
-    if "slack" in user_input and "briefing" not in user_input:
-        if any(kw in user_input for kw in read_keywords):
-            return {**state, "intent": "slack_read"}
-        return {**state, "intent": "slack_send"}
+
 
     # Image generation fast-path — MUST come BEFORE file generation checks
     image_keywords = [
@@ -336,31 +338,52 @@ async def memory_node(state: State) -> State:
     import asyncio as _asyncio
     from mcp.executor import mcp_executor
 
-    # Run memory retrieval (and optional style retrieval) concurrently
+    # Run memory retrieval
     mem_coro = mcp_executor.execute(
         intent="_memory_retrieve",
         args={"user_id": user_id, "query": query, "n": 3},
         user_id=user_id,
     )
-
-    # For email drafts, also retrieve writing-style examples concurrently
-    if intent in ("email_draft", "email_send"):
+    
+    coros = [mem_coro]
+    
+    is_email = intent in ("email_draft", "email_send")
+    if is_email:
         style_coro = mcp_executor.execute(
             intent="_memory_retrieve",
-            args={
-                "user_id": user_id,
-                "query": state["input"],
-                "n": 3,
-                "memory_type": "sent_mail",
-            },
+            args={"user_id": user_id, "query": state["input"], "n": 3, "memory_type": "sent_mail"},
             user_id=user_id,
         )
-        mem_result, style_result = await _asyncio.gather(mem_coro, style_coro)
+        coros.append(style_coro)
+        
+    needs_calendar = any(k in state["input"].lower() for k in ["today", "schedule", "meeting", "briefing", "calendar", "event"])
+    if needs_calendar:
+        import datetime
+        today = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0).isoformat() + "Z"
+        cal_coro = mcp_executor.execute(
+            intent="calendar",
+            args={"user_id": user_id, "max_results": 10, "timeMin": today},
+            user_id=user_id,
+        )
+        coros.append(cal_coro)
+        
+    results = await _asyncio.gather(*coros)
+    mem_result = results[0]
+    
+    if is_email:
+        style_result = results[1]
         style_docs = style_result.get("result", {}).get("results", [])
         if isinstance(style_docs, list):
             state = {**state, "style_context": "\n".join(style_docs)}
-    else:
-        mem_result = await mem_coro
+            
+    if needs_calendar:
+        cal_idx = 2 if is_email else 1
+        cal_result = results[cal_idx]
+        events = cal_result.get("result", {}).get("events", [])
+        if events:
+            context += "\n[TODAY'S CALENDAR EVENTS]\n" + str(events) + "\n"
+        else:
+            context += "\n[TODAY'S CALENDAR EVENTS]\nYou don't have any meetings scheduled for today.\n"
 
     context_docs = mem_result.get("result", {}).get("results", [])
     if isinstance(context_docs, list) and context_docs:

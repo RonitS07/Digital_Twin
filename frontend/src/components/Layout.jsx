@@ -557,7 +557,7 @@ const Layout = ({ children, currentView, setView }) => {
             <div className="lg:ml-64 flex-1 flex flex-col min-w-0 h-full relative">
 
                 {/* ── HEADER (hidden on mobile when in Chat view — Chat has its own) ── */}
-                <header className={`h-14 lg:h-16 flex items-center justify-between px-4 lg:px-8 bg-surface-base/90 backdrop-blur-3xl sticky top-0 z-30 border-b border-neutral/5 shrink-0 ${isChatView ? 'hidden lg:flex' : ''}`}>
+                <header className={`h-14 lg:h-16 flex items-center justify-between px-4 lg:px-8 bg-surface-base/90 backdrop-blur-3xl sticky top-0 z-50 border-b border-neutral/5 shrink-0 ${isChatView ? 'hidden lg:flex' : ''}`}>
                     {/* Mobile: logo + view title */}
                     <div className="flex items-center gap-3 lg:hidden">
                         <div className="w-8 h-8 rounded-xl flex items-center justify-center overflow-hidden ai-glow">
@@ -609,19 +609,29 @@ const Layout = ({ children, currentView, setView }) => {
                                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
                                         animate={{ opacity: 1, y: 0, scale: 1 }}
                                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                        className="absolute right-0 top-full mt-2 w-80 bg-surface-container/95 backdrop-blur-2xl border border-neutral/10 rounded-2xl shadow-2xl overflow-hidden z-50"
+                                        className="absolute right-0 top-full mt-2 w-80 lg:w-96 bg-surface-container/95 backdrop-blur-3xl border border-neutral/10 rounded-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] overflow-hidden z-[100]"
                                     >
                                         <div className="p-4 border-b border-neutral/10 flex justify-between items-center bg-surface-base/50">
                                             <h3 className="text-sm font-bold text-on-surface">Notifications</h3>
                                             {unreadTwinChats.length > 0 && (
-                                                <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded-full font-bold">{unreadTwinChats.length} new</span>
+                                                <div className="flex items-center gap-3">
+                                                    <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded-full font-bold">{unreadTwinChats.length} new</span>
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); useStore.setState({ unreadTwinChats: [] }); }} 
+                                                        className="text-[10px] font-bold uppercase tracking-widest text-neutral hover:text-on-surface transition-colors"
+                                                    >
+                                                        Clear All
+                                                    </button>
+                                                </div>
                                             )}
                                         </div>
-                                        <div className="max-h-80 overflow-y-auto custom-scrollbar p-2">
+                                        <div className="max-h-96 overflow-y-auto custom-scrollbar p-2 space-y-1">
                                             {unreadTwinChats.length === 0 ? (
-                                                <div className="p-4 text-center text-neutral text-xs py-8">
-                                                    <Bell size={24} className="mx-auto mb-2 opacity-20" />
-                                                    No new notifications
+                                                <div className="p-4 text-center text-neutral text-xs py-10 flex flex-col items-center justify-center">
+                                                    <div className="w-12 h-12 rounded-full bg-neutral/5 flex items-center justify-center mb-3">
+                                                        <Bell size={20} className="opacity-40" />
+                                                    </div>
+                                                    <span className="font-medium">No new notifications</span>
                                                 </div>
                                             ) : (
                                                 unreadTwinChats.map((msg, i) => (
@@ -632,18 +642,18 @@ const Layout = ({ children, currentView, setView }) => {
                                                             useStore.getState().setTwinChatActiveSessionId(msg.session_id);
                                                             setView('twin-chat');
                                                         }}
-                                                        className="w-full text-left p-3 hover:bg-surface-base rounded-xl transition-colors flex items-start gap-3 group"
+                                                        className="w-full text-left p-3 hover:bg-white/5 active:bg-white/10 rounded-xl transition-all flex items-start gap-3 group border border-transparent hover:border-white/5"
                                                     >
-                                                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0 font-bold text-primary group-hover:bg-primary group-hover:text-white transition-colors">
+                                                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0 font-bold text-primary group-hover:bg-primary group-hover:text-white group-hover:scale-105 transition-all shadow-inner">
                                                             {(msg.sender_name || msg.sender?.name || '?')[0]}
                                                         </div>
-                                                        <div className="flex-1 min-w-0">
-                                                            <p className="text-xs font-bold uppercase tracking-widest text-primary mb-0.5 flex justify-between">
+                                                        <div className="flex-1 min-w-0 pt-0.5">
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-primary mb-1 flex justify-between items-center">
                                                                 Twin Message
-                                                                <span className="text-[9px] text-neutral normal-case opacity-60">Just now</span>
+                                                                <span className="text-[9px] font-medium text-neutral normal-case opacity-60">Just now</span>
                                                             </p>
-                                                            <p className="text-sm font-semibold text-on-surface truncate">{msg.sender_name || msg.sender?.name || 'Contact'}</p>
-                                                            <p className="text-xs text-on-surface-variant truncate">{msg.content}</p>
+                                                            <p className="text-sm font-bold text-on-surface truncate mb-0.5">{msg.sender_name || msg.sender?.name || 'Contact'}</p>
+                                                            <p className="text-xs text-on-surface-variant line-clamp-2 leading-relaxed opacity-80">{msg.content}</p>
                                                         </div>
                                                     </button>
                                                 ))
