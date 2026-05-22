@@ -7,16 +7,21 @@ const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
         headless: true,
-        protocolTimeout: 60000,
+        protocolTimeout: 180000,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
             '--disable-accelerated-2d-canvas',
-            '--disable-software-rasterizer'
+            '--disable-software-rasterizer',
+            '--disable-extensions',
+            '--disable-features=site-per-process',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process'
         ],
-        timeout: 60000
+        timeout: 180000
     }
 })
 
