@@ -1,5 +1,26 @@
 const { Client, LocalAuth } = require('whatsapp-web.js')
 const express = require('express')
+const http = require('http')
+
+function pushStatus(ready, qr) {
+    try {
+        const data = JSON.stringify({ ready, qr });
+        const req = http.request({
+            hostname: '127.0.0.1',
+            port: process.env.PORT || 8080,
+            path: '/mcp/whatsapp/webhook',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data)
+            }
+        });
+        req.on('error', () => {}); // Ignore connection errors silently
+        req.write(data);
+        req.end();
+    } catch (e) {}
+}
+
 const app = express()
 app.use(express.json())
 
@@ -37,6 +58,7 @@ client.on('qr', (qr) => {
     isReady = false
     isInitializing = false  // QR received — init cycle complete
     console.log('[WA Bridge] QR ready — scan in admin panel')
+    pushStatus(false, qr)
 })
 
 client.on('ready', () => {
@@ -44,6 +66,7 @@ client.on('ready', () => {
     qrCode = null
     isInitializing = false
     console.log('[WA Bridge] WhatsApp client ready')
+    pushStatus(true, null)
 })
 
 client.on('auth_failure', (msg) => {
@@ -65,6 +88,7 @@ client.on('auth_failure', (msg) => {
 
 client.on('disconnected', async (reason) => {
     isReady = false
+    pushStatus(false, null)
     console.log('[WA Bridge] Disconnected:', reason)
 
     // Only fully re-initialize on explicit logouts — NOT on transient network issues.
@@ -200,34 +224,27 @@ app.post('/disconnect', async (req, res) => {
     try {
         isReady = false;
         qrCode = null;
+        pushStatus(false, null);
 
-        // 1. Logout clears the WhatsApp session server-side
+        // 1. Logout clears the WhatsApp session server-side.
+        // This automatically triggers the 'disconnected' event listener above,
+        // which handles the clean destroy() and re-initialize() flow.
         try {
             await client.logout();
         } catch (logoutErr) {
             console.warn('[WA Bridge] logout() error (may already be logged out):', logoutErr.message);
-        }
-
-        // 2. Destroy the browser instance
-        try {
-            await client.destroy();
-        } catch (destroyErr) {
-            console.warn('[WA Bridge] destroy() error:', destroyErr.message);
+            // If logout fails (e.g. already logged out), trigger manual fallback destroy
+            try { await client.destroy() } catch (e) {}
+            if (!isInitializing) {
+                isInitializing = true;
+                setTimeout(() => {
+                    console.log('[WA Bridge] Re-initializing after manual disconnect fallback...');
+                    client.initialize().catch(e => { isInitializing = false });
+                }, 1500);
+            }
         }
 
         res.json({ success: true, message: 'WhatsApp disconnected' });
-
-        // 3. Re-initialize so bridge is ready for a fresh QR scan immediately
-        if (!isInitializing) {
-            isInitializing = true;
-            setTimeout(() => {
-                console.log('[WA Bridge] Re-initializing after manual disconnect...');
-                client.initialize().catch(e => {
-                    console.error('[WA Bridge] Re-init error:', e);
-                    isInitializing = false;
-                });
-            }, 1500);
-        }
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

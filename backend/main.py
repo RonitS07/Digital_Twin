@@ -2675,6 +2675,20 @@ async def upload_file(
         "size_bytes": len(contents)
     }
 
+@app.post("/mcp/whatsapp/webhook")
+async def whatsapp_webhook(payload: dict):
+    try:
+        from routers.twin_chat import manager as ws_manager
+        await ws_manager.broadcast_all({
+            "event": "whatsapp_status",
+            "ready": payload.get("ready", False),
+            "qr": payload.get("qr", None)
+        })
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Webhook err: {e}")
+        return {"ok": False, "error": str(e)}
+
 @app.get("/mcp/whatsapp/qr")
 async def get_wa_qr(current_user: User = Depends(get_current_user)):
     import httpx

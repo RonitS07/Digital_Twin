@@ -83,6 +83,15 @@ class ConnectionManager:
                 except Exception:
                     self._user_connections[user_id].discard(ws)
 
+    async def broadcast_all(self, payload: dict):
+        """Send payload to all connected WebSockets globally."""
+        for user_id, connections in list(self._user_connections.items()):
+            for ws in list(connections):
+                try:
+                    await ws.send_json(payload)
+                except Exception:
+                    self._user_connections[user_id].discard(ws)
+
     async def broadcast_to_session(self, session: DirectChatSession, payload: dict, exclude_user_id: Optional[str] = None):
         """Send payload to all participants of a session."""
         uids = [session.initiator_id, session.partner_id]
