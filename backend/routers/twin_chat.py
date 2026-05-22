@@ -456,7 +456,11 @@ async def send_message(
     }
     
     try:
-        final_state = await twin_graph.ainvoke(initial_state)
+        # Bypass AI processing if it's a normal message with no files
+        if body.intent_hint == "general" and not body.files:
+            final_state = {"intent": "general", "output": body.content}
+        else:
+            final_state = await twin_graph.ainvoke(initial_state)
     except Exception as e:
         logger.error(f"AI classification failed: {e}")
         final_state = {"intent": "general", "output": body.content}
@@ -484,9 +488,13 @@ async def send_message(
     db.commit()
     db.refresh(human_msg)
 
-    # 3. If it was a task, or even if it was general, save the AI response as a separate message
+    # 3. Only save the AI response as a separate message if it actually contains a task, action, or visual
     ai_msg = None
-    if ai_output and ai_output.strip() != body.content.strip():
+    has_action = "<action>" in ai_output if ai_output else False
+    is_task = intent not in ["general", "other"]
+    has_visual = bool(final_state.get("image_url") or final_state.get("chart_data") or final_state.get("viz_config") or final_state.get("generated_file"))
+    
+    if (has_action or is_task or has_visual) and ai_output and ai_output.strip() != body.content.strip():
         # Execute tasks if necessary (e.g. email) before saving
         final_ai_content = ai_output
         action_match = re.search(r"<action>(.*?)</action>", final_ai_content, re.DOTALL)

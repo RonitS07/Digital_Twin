@@ -507,12 +507,21 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
         
         // If the AI response is pending, show it in the suggestion panel
         if (data.ai_response && data.ai_response.status === 'pending') {
-          setPendingSuggestion({
-            suggestions: data.ai_response.suggestions || [],
-            msgId: data.ai_response.id,
-            respondingTo: text,
-            isEnhancement: true
-          })
+          const hasAction = data.ai_response.content?.includes('<action>')
+          const isTask = data.ai_response.metadata?.intent && data.ai_response.metadata.intent !== 'general' && data.ai_response.metadata.intent !== 'other'
+
+          if (hasAction || isTask) {
+            await apiFetch(`/twin-chat/sessions/${session.id}/approve/${data.ai_response.id}`, {
+              method: 'POST', body: JSON.stringify({ content: data.ai_response.content })
+            })
+          } else {
+            setPendingSuggestion({
+              suggestions: data.ai_response.suggestions || [],
+              msgId: data.ai_response.id,
+              respondingTo: text,
+              isEnhancement: true
+            })
+          }
         }
       }
     } catch (e) {
@@ -582,12 +591,22 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
       })
       // The AI response comes back as a suggestion, so we display it in the pending panel
       if (data.suggestion) {
-        setPendingSuggestion({
-          suggestions: data.suggestion.suggestions_json ? JSON.parse(data.suggestion.suggestions_json) : [],
-          msgId: data.suggestion.id,
-          respondingTo: text,
-          isEnhancement: true
-        })
+        const hasAction = data.suggestion.content?.includes('<action>')
+        const intent = data.ai_response?.intent || 'general'
+        const isTask = intent !== 'general' && intent !== 'other'
+
+        if (hasAction || isTask) {
+          await apiFetch(`/twin-chat/sessions/${session.id}/approve/${data.suggestion.id}`, {
+            method: 'POST', body: JSON.stringify({ content: data.suggestion.content })
+          })
+        } else {
+          setPendingSuggestion({
+            suggestions: data.suggestion.suggestions || [],
+            msgId: data.suggestion.id,
+            respondingTo: text,
+            isEnhancement: true
+          })
+        }
       }
     } catch (e) { console.error(e) }
     setEnhancing(false)
