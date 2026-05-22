@@ -6,13 +6,13 @@ from core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Initialize direct Groq client for lightning fast text responses
-groq_client = Groq(api_key=settings.GROQ_API_KEY)
+# Initialize direct Groq client safely (uses placeholder fallback to prevent crash if not set at startup)
+groq_client = Groq(api_key=settings.GROQ_API_KEY or "no-groq-key-provided")
 
-# Initialize direct OpenRouter client for robust vision/image reading
+# Initialize direct OpenRouter client safely (uses placeholder fallback to prevent crash if not set at startup)
 openrouter_client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=settings.OPENROUTER_API_KEY or "",
+    api_key=settings.OPENROUTER_API_KEY or "no-openrouter-key-provided",
 )
 
 # Text models (Groq)
