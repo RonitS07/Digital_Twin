@@ -28,6 +28,7 @@ class State(TypedDict, total=False):
     generated_file: Optional[dict]
     # ── Visualization config (Recharts JSON) ─────────────────────────────────
     viz_config: Optional[dict]
+    chart_data: Optional[dict]
     # ── Auth passthrough for internal API calls ──────────────────────────────
     access_token: Optional[str]
     # ── MCP executor output (Sprint 3) ───────────────────────────────────────
