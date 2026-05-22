@@ -128,7 +128,13 @@ def classifier_node(state: State):
             "when", "did", "any new", "get", "list", "fetch"
         ]):
             return {**state, "intent": "email_read"}
-        return {**state, "intent": "email_draft"}
+            
+        # Explicit draft request
+        if any(k in user_input for k in ["draft", "compose", "save draft", "create draft", "write draft"]):
+            return {**state, "intent": "email_draft"}
+            
+        # Default for sending
+        return {**state, "intent": "email_send"}
 
     # Implicit email search — user asks about topics that live in their inbox (no 'email' keyword needed)
     implicit_search_triggers = [
@@ -542,6 +548,95 @@ def _build_args_for_intent(intent: str, state: dict) -> dict:
     return base
 
 
+def generate_severity_aware_email(user_name: str, to_addr: str, subject: str, input_text: str, context_block: str, history_prompt: str) -> tuple[str, str]:
+    """
+    Intelligently drafts a highly customized, severity-aware email body and subject.
+    Detects urgency/seriousness and returns a tuple of (subject, body).
+    """
+    # 1. Analyze severity
+    severity_keywords = ["legal", "notice", "final day", "court", "sue", "breach", "terminate", "deadline", "urgent", "immediate", "ownership", "warning", "important"]
+    subject_lower = subject.lower() if subject else ""
+    input_lower = input_text.lower() if input_text else ""
+    
+    is_high_severity = any(k in subject_lower or k in input_lower for k in severity_keywords)
+    
+    if is_high_severity:
+        severity_instruction = """
+[CRITICAL SEVERITY - HIGH URGENCY/LEGAL/FINANCIAL MATTER]
+This email is categorized as HIGH SEVERITY. 
+- Tone: Extremely formal, firm, serious, direct, objective, and authoritative.
+- Style: Direct and concise. Clear declaration of deadlines and specific legal or financial next steps.
+- DO NOT use casual greetings, apologetic language, polite placeholders, or warm closing statements.
+- Avoid words like 'just', 'friendly reminder', 'hope you are well', 'apologize'. 
+"""
+    else:
+        severity_instruction = """
+[STANDARD SEVERITY]
+- Tone: Professional, polite, helpful, and business-like.
+"""
+
+    prompt = f"""
+You are the Digital Twin of {user_name}, a premier, highly intelligent AI assistant.
+Your task is to draft a professional email on behalf of {user_name}.
+
+[SENDER]
+Name: {user_name}
+
+[RECIPIENT]
+Email/Name: {to_addr}
+CRITICAL RULE: The sender is {user_name}. Never address the email's greeting "Dear {user_name}," because the sender is {user_name}!
+- If the email is addressed to {user_name}'s own personal address (e.g. self-addressed reminder), structure it as a personal memo/reminder draft.
+- If it is to another recipient, use a formal greeting (e.g., "Dear Sir/Madam," "To Whom It May Concern," "Dear Team," or use the name of the recipient if explicitly mentioned in the request).
+
+{severity_instruction}
+
+[CONSTRAINTS]
+1. BE PROFESSIONAL: Draft with a clean formal opening, clear and well-structured body paragraphs, and a standard closing.
+2. Formatting: Plain text only. Do not use raw HTML. Do not use markdown bolding in the final email.
+3. SIGNING: Sign the email professionally as "{user_name}".
+4. Output Format:
+Your output must start with the Subject line exactly on the first line:
+Subject: <Clean, polished, and severity-appropriate subject line>
+followed by a blank line, and then the complete email body.
+Do NOT include any surrounding tags, instructions, notes, or action blocks.
+
+[CONTEXT]
+{context_block}
+
+[CHAT HISTORY]
+{history_prompt}
+
+[USER REQUEST]
+{input_text}
+Original Subject (if provided): {subject}
+"""
+
+    result = _llm(
+        system=f"You are the executive email engine for {user_name}.",
+        user=prompt,
+        intent="email"
+    )
+    
+    # Clean up the output
+    lines = result.strip().split("\n")
+    cleaned_subject = subject
+    body_lines = []
+    
+    subject_found = False
+    for line in lines:
+        if line.lower().startswith("subject:"):
+            cleaned_subject = line[8:].strip()
+            subject_found = True
+        elif subject_found or line.strip():
+            if subject_found:
+                body_lines.append(line)
+            else:
+                body_lines.append(line)
+                
+    cleaned_body = "\n".join(body_lines).strip()
+    return cleaned_subject or subject or "Important Update", cleaned_body
+
+
 def planner_node(state: State) -> State:
     result = _llm(
         system="""
@@ -565,13 +660,36 @@ Format:
     parsed = _parse_json(result)
     plan = parsed.get("task_plan", {})
 
+    # Generate highly intelligent, severity-aware email if intent is draft/send
+    if state["intent"] in ("email_draft", "email_send"):
+        to_addr = plan.get("to", "")
+        subject = plan.get("subject", "")
+        
+        user_name = state.get("user_name", "User")
+        context_block = state.get("context", "")
+        history_prompt = ""
+        for msg in state.get("chat_history", [])[-8:]:
+            history_prompt += f"{msg.get('role', 'user').upper()}: {msg.get('text', '')}\n"
+            
+        refined_subject, refined_body = generate_severity_aware_email(
+            user_name=user_name,
+            to_addr=to_addr,
+            subject=subject or plan.get("subject") or state["input"],
+            input_text=state["input"],
+            context_block=context_block,
+            history_prompt=history_prompt
+        )
+        plan["subject"] = refined_subject
+        plan["body"] = refined_body
+
     needs_approval = state["intent"] in [
         # BUG 4 FIX: email_draft no longer needs approval (saves to Drafts folder silently)
         "calendar",
         "slack_send",
         "telegram_send",
         "whatsapp_send",
-        "scheduling"
+        "scheduling",
+        "email_send"
     ]
 
     return {
@@ -782,34 +900,11 @@ def responder_node(state: State) -> State:
                 "response_type": "text"
             }
 
-        # Use MCP-fetched writing style
-        style_context_raw = state.get("style_context") or ""
-        sent_mail_context = (
-            f"\n[WRITING STYLE EXAMPLES — HOW THIS USER WRITES]\n{style_context_raw}\n"
-            if style_context_raw else ""
-        )
+        tp = state.get("task_plan") or {}
+        subject = tp.get("subject", "Important Update")
+        body = tp.get("body", "")
 
-        result = _llm(
-            system=f"""
-You are the Digital Twin of {user_name}, an elite executive assistant.
-Objective: Draft a professional email.
-
-[CONSTRAINTS]
-1. BE PROFESSIONAL: Draft emails with a clear opening, well-structured body, and formal closing.
-2. Use plain text formatting (no raw HTML). Use **bold** sparingly.
-3. SIGNING: Use "{user_name}" or the name explicitly provided. Never sign as "User".
-4. CRITICAL: Output ONLY the email body text. Do NOT include <action> blocks, JSON, or instructions.
-5. Structure: Subject line on first line (Subject: ...), then blank line, then body.
-{sent_mail_context}
-[CONTEXT]
-{context_block}
-{history_prompt}
-""",
-            user=f"Draft email for: {state['input']}",
-            intent="email"
-        )
-        # Strip any leaked action tags
-        visible = re.sub(r'<action>.*?</action>', '', result, flags=re.DOTALL).strip()
+        visible = f"Subject: {subject}\n\n{body}"
 
         # Did the MCP executor already save it to Drafts?
         tool_result_ok = (state.get("tool_result") or {}).get("ok")
@@ -837,12 +932,11 @@ Objective: Draft a professional email.
         # Pull recipient, subject, body from task_plan (set by planner_node)
         tp = state.get("task_plan") or {}
 
-        # If planner couldn't extract (e.g. user just said "send it"), try to recover from history
         to_addr = tp.get("to", "")
         subject = tp.get("subject", "")
         body = tp.get("body", "")
 
-        # Recover from the last AI message if fields are empty ("send it" flow)
+        # Recover from history only if fields are empty ("send it" flow)
         if not to_addr or not body:
             last_ai = ""
             for m in reversed(state.get("chat_history", [])):
@@ -879,7 +973,10 @@ Objective: Draft a professional email.
             "body": body,
         })
         output_text = (
-            f"Ready to send this email to **{to_addr}** with subject **\"{subject}\"**.\n\n"
+            f"**Subject:** {subject}\n\n"
+            f"{body}\n\n"
+            f"---\n"
+            f"Ready to send this email to **{to_addr}**.\n"
             f"Tap **Approve & Execute** below to send, or **Reject** to cancel."
             f"\n\n<action>\n{action_block}\n</action>"
         )
