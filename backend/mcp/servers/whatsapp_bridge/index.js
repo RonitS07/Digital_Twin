@@ -61,6 +61,11 @@ client.on('qr', (qr) => {
     pushStatus(false, qr)
 })
 
+client.on('authenticated', () => {
+    qrCode = null
+    console.log('[WA Bridge] WhatsApp authenticated!')
+})
+
 client.on('ready', () => {
     isReady = true
     qrCode = null
@@ -168,7 +173,7 @@ app.post('/send', async (req, res) => {
         if (e.message && (e.message.includes('detached Frame') || e.message.includes('Execution context was destroyed'))) {
             isReady = false
             qrCode = null
-            console.log('[WA Bridge] Detached frame or execution context destroyed detected — performing clean session reset...')
+            console.log('[WA Bridge] Detached frame or execution context destroyed detected — performing clean session reset...');
             
             // Execute clean destroy and re-init asynchronously
             (async () => {

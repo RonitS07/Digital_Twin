@@ -1,12 +1,79 @@
 import asyncio
 import logging
 import os
+import uuid
 
 from mcp.client import MCPClient
 from mcp.registry import mcp_registry
 
 logger = logging.getLogger(__name__)
 MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
+
+# M10 FIX: Hard Human-In-The-Loop gate.
+# These intents ALWAYS require explicit user approval before any tool is called.
+# Adding an intent here is the ONLY safe way to enforce HITL — upstream nodes
+# (classifier, planner) must never be the sole gate for destructive actions.
+ALWAYS_REQUIRE_APPROVAL: set[str] = {
+    "send_email",
+    "email_send",
+    "create_calendar_event",
+    "calendar_create",
+    "send_slack_message",
+    "slack_send",
+    "send_whatsapp_message",
+    "whatsapp_send",
+    "send_telegram_message",
+    "telegram_send",
+}
+
+
+def _build_preview(intent: str, params: dict) -> str:
+    """Build a human-readable preview of the pending action."""
+    if intent in ("send_email", "email_send"):
+        return f"Send email to {params.get('to', '?')} — Subject: {params.get('subject', '(none)')}"
+    if intent in ("create_calendar_event", "calendar_create"):
+        return f"Create event: {params.get('title', '?')} at {params.get('start_datetime', '?')}"
+    if intent in ("send_slack_message", "slack_send"):
+        return f"Post to Slack #{params.get('channel_name', params.get('channel_id', '?'))}: {str(params.get('text', ''))[:80]}"
+    if intent in ("send_whatsapp_message", "whatsapp_send"):
+        return f"WhatsApp to {params.get('to', '?')}: {str(params.get('message', ''))[:80]}"
+    if intent in ("send_telegram_message", "telegram_send"):
+        return f"Telegram to {params.get('chat_id', '?')}: {str(params.get('message', ''))[:80]}"
+    return f"Action: {intent}"
+
+
+def _create_approval_record(user_id: str, intent: str, params: dict) -> str:
+    """
+    Persist an approval record and return its ID.
+    Uses SessionLocal to avoid circular imports with FastAPI's dependency injection.
+    """
+    approval_id = str(uuid.uuid4())
+    try:
+        from db.database import SessionLocal
+        from db.models import TaskLog
+        import json
+        db = SessionLocal()
+        try:
+            record = TaskLog(
+                id=approval_id,
+                user_id=user_id,
+                input=_build_preview(intent, params),
+                intent=intent,
+                output="",
+                kind="approval",
+                approved=False,
+                metadata_json=json.dumps({"intent": intent, "params": params}),
+            )
+            db.add(record)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[MCPExecutor] Failed to persist approval record: {e}")
+    return approval_id
 
 
 class MCPExecutor:
@@ -20,9 +87,15 @@ class MCPExecutor:
         self.client = MCPClient(mcp_registry)
 
     async def execute(self, intent: str, args: dict,
-                      user_id: str) -> dict:
+                      user_id: str, _bypass_hitl: bool = False) -> dict:
         """
         Routes intent to correct MCP server + tool.
+
+        M10 FIX: Intents in ALWAYS_REQUIRE_APPROVAL are intercepted here
+        BEFORE any tool mapping lookup. _bypass_hitl=True is ONLY used by
+        the explicit post-approval execution path (e.g. /approve endpoint)
+        and must never be set by classifier/planner nodes.
+
         Returns standard envelope:
         {
             "ok": bool,
@@ -32,6 +105,29 @@ class MCPExecutor:
             "requires_hitl": bool
         }
         """
+        # ── M10 FIX: Hard HITL gate — cannot be bypassed by upstream nodes ──
+        if intent in ALWAYS_REQUIRE_APPROVAL and not _bypass_hitl:
+            approval_id = _create_approval_record(user_id, intent, args)
+            preview = _build_preview(intent, args)
+            logger.info(
+                f"[MCPExecutor] HITL gate triggered for intent={intent} "
+                f"user={user_id} approval_id={approval_id}"
+            )
+            return {
+                "ok": False,
+                "intent": intent,
+                "result": {},
+                "error": None,
+                "requires_hitl": True,
+                "status": "pending_approval",
+                "approval_id": approval_id,
+                "preview": preview,
+                "message": (
+                    f"This action requires your approval before it runs. "
+                    f"Preview: {preview}"
+                ),
+            }
+        # ── Route to MCP server ───────────────────────────────────────────────
         mapping = self._get_intent_mapping()
         if intent not in mapping:
             return {
@@ -119,3 +215,4 @@ class MCPExecutor:
 
 # Global singleton
 mcp_executor = MCPExecutor()
+

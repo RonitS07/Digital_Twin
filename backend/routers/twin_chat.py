@@ -49,6 +49,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/twin-chat", tags=["twin-chat"])
 
 # ────────────────────────────────────────────────────────────────────
+# M6 FIX: Payload size enforcement
+# ────────────────────────────────────────────────────────────────────
+# 64 KB limit — prevents memory exhaustion / DoS from oversized WS frames.
+MAX_PAYLOAD_BYTES = 65_536
+
+async def receive_safe(websocket: WebSocket) -> dict:
+    """
+    M6 FIX: Receive a WebSocket frame and enforce MAX_PAYLOAD_BYTES.
+    Raises WebSocketDisconnect (so callers don't need special handling)
+    after closing with 4008 if the payload exceeds the limit.
+    Returns parsed JSON dict if within limit.
+    """
+    raw = await websocket.receive()
+    # Starlette surfaces bytes in raw["bytes"] and text in raw["text"]
+    text = raw.get("text") or ""
+    data_bytes = raw.get("bytes") or b""
+    payload_len = len(text.encode("utf-8")) if text else len(data_bytes)
+    if payload_len > MAX_PAYLOAD_BYTES:
+        logger.warning(f"[WS] Payload too large: {payload_len} bytes — closing 4008")
+        await websocket.close(code=4008, reason="Payload too large")
+        raise WebSocketDisconnect(code=4008)
+    try:
+        return json.loads(text or data_bytes.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.warning(f"[WS] Invalid JSON payload: {exc}")
+        raise WebSocketDisconnect(code=4000)
+
+# ────────────────────────────────────────────────────────────────────
 # WebSocket Connection Manager
 # ────────────────────────────────────────────────────────────────────
 
@@ -222,7 +250,7 @@ def _serialize_message(msg: DirectChatMessage, include_sender_name: bool = True)
         "session_id": msg.session_id,
         "sender_id": msg.sender_id,
         "sender_name": msg.sender.name if msg.sender else None,
-        "sender_photo": msg.sender.name if msg.sender else None,
+        "sender_photo": getattr(msg.sender, "photo_url", None) if msg.sender else None,  # H5 FIX: was incorrectly returning .name
         "sender_type": msg.sender_type,
         "status": msg.status,
         "content": msg.content,
@@ -577,7 +605,9 @@ async def send_message(
     # Generate Twin enrichment for the partner asynchronously for faster UX.
     is_task = intent not in ["general", "other"]
     if not is_task and session.twin_mode:
-        asyncio.create_task(
+        # H4 FIX: Store task reference to prevent silent GC before completion.
+        # Attach a done-callback to log any exception so errors are observable.
+        _task = asyncio.create_task(
             _generate_partner_suggestion_async(
                 session_id=session_id,
                 partner_id=partner_id,
@@ -585,6 +615,10 @@ async def send_message(
                 incoming_message=body.content,
             )
         )
+        def _log_task_error(t: asyncio.Task):
+            if not t.cancelled() and t.exception():
+                logger.error(f"[TwinChat] partner suggestion task failed: {t.exception()}")
+        _task.add_done_callback(_log_task_error)
 
     return {
         "message": human_serialized,
@@ -987,7 +1021,12 @@ async def websocket_endpoint(
 ):
     """
     Global real-time WebSocket for twin-chat.
-    Client must pass `?token=<jwt>` in the query string.
+
+    C5 FIX: First-frame authentication.
+    Client must NOT include token in query params. Instead:
+      1. Open: ws://.../twin-chat/ws  (no token)
+      2. Immediately send: { "event": "auth", "token": "<jwt_or_firebase_token>" }
+      3. If the auth frame is not received within 5 s, the socket is closed with 4008.
 
     Events sent by server:
       - connected       → connection confirmed
@@ -997,30 +1036,40 @@ async def websocket_endpoint(
       - error           → error message
 
     Events sent by client (JSON):
-      - { "event": "typing", "session_id": "..." }
-      - { "event": "stop_typing", "session_id": "..." }
+      - { "event": "auth",         "token": "..." }   ← MUST be first frame
+      - { "event": "typing",       "session_id": "..." }
+      - { "event": "stop_typing",  "session_id": "..." }
       - { "event": "ping" }
     """
-    # Authenticate via token
-    # IMPORTANT: Accept the WebSocket FIRST, then validate.
-    # If we close before accept(), FastAPI/Starlette raises
-    # "WebSocket is not connected. Need to call accept first."
     from db.auth import decode_token
     from security.firebase_config import verify_firebase_token
     from security.auth import _is_firebase_token
 
+    # C5 FIX: Accept FIRST, then authenticate via first frame.
+    # Starlette requires accept() before any send/receive/close.
     await websocket.accept()
 
-    token = websocket.query_params.get("token")
-    if not token:
+    # ── Step 1: await auth frame (5-second timeout) ─────────────────────────
+    try:
+        auth_frame = await asyncio.wait_for(receive_safe(websocket), timeout=5.0)
+    except asyncio.TimeoutError:
+        await websocket.send_json({"event": "error", "code": "AUTH_TIMEOUT", "message": "Auth frame not received within 5 seconds."})
+        await websocket.close(code=4008)
+        return
+    except WebSocketDisconnect:
+        return
+
+    if auth_frame.get("event") != "auth" or not auth_frame.get("token"):
+        await websocket.send_json({"event": "error", "code": "AUTH_REQUIRED", "message": "First frame must be {event: 'auth', token: '...'}."})
         await websocket.close(code=4001)
         return
 
-    # Validate token — backend JWT first, Firebase fallback
+    token = auth_frame["token"]
+
+    # ── Step 2: validate token ───────────────────────────────────────────────
     user = None
     payload = decode_token(token)
     if payload and payload.get("error") == "ExpiredIdTokenError":
-        # Expired backend JWT — tell client to refresh
         await websocket.send_json({"event": "error", "code": "TOKEN_EXPIRED", "message": "Token expired, please re-authenticate."})
         await websocket.close(code=4003)
         return
@@ -1047,7 +1096,7 @@ async def websocket_endpoint(
         })
 
         while True:
-            data = await websocket.receive_json()
+            data = await receive_safe(websocket)  # M6 FIX: enforces MAX_PAYLOAD_BYTES
             event = data.get("event")
             sid = data.get("session_id")
 

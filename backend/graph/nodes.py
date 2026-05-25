@@ -1065,9 +1065,14 @@ Never say "Cricket meeting" or similar; simply say "Busy".
     # DAILY BRIEFING
     if state["intent"] == "briefing":
         try:
-            with next(get_db()) as db:
-                briefing = generate_daily_briefing(db, state["user_id"], state.get("user_name", "User"))
+            # H1 FIX: Use SessionLocal() directly.
+            from db.database import SessionLocal as _SL
+            _db = _SL()
+            try:
+                briefing = generate_daily_briefing(_db, state["user_id"], state.get("user_name", "User"))
                 return {**state, "output": briefing, "response_type": "text"}
+            finally:
+                _db.close()
         except Exception as e:
             logger.error(f"Briefing node failed: {e}")
             return {**state, "output": "I encountered an error generating your briefing.", "response_type": "text"}
@@ -1087,8 +1092,13 @@ Never say "Cricket meeting" or similar; simply say "Busy".
         
         if is_briefing_request or is_continuing_briefing:
             try:
-                with next(get_db()) as db:
-                    briefing_content = generate_daily_briefing(db, state["user_id"], state.get("user_name", "User"))
+                # H1 FIX: Use SessionLocal() directly.
+                from db.database import SessionLocal as _SL2
+                _db2 = _SL2()
+                try:
+                    briefing_content = generate_daily_briefing(_db2, state["user_id"], state.get("user_name", "User"))
+                finally:
+                    _db2.close()
             except Exception as e:
                 logger.error(f"Failed to generate briefing for Slack: {e}")
 
@@ -1318,7 +1328,10 @@ Action Block Format:
 
         # Invoke the Agent Broker scheduling endpoint internally
         try:
-            with next(get_db()) as db:
+            # H1 FIX: Use SessionLocal() directly.
+            from db.database import SessionLocal as _SL3
+            db = _SL3()
+            try:
                 # Resolve target agent
                 target_agent = None
                 if email:
@@ -1493,6 +1506,12 @@ Action Block Format:
                     "response_type": "text",
                     "approval_required": True,
                 }
+
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
         except Exception as e:
             logger.error(f"[schedule_with_user] Error: {e}")

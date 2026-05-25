@@ -17,11 +17,17 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://127.0.0.1:5173"
     BACKEND_URL: Optional[str] = None
     NGROK_URL: Optional[str] = None
+    # Deployment environment: "development" | "production"
+    ENVIRONMENT: str = "production"
     
     # Security
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "DEVELOPMENT_SECRET_KEY_CHANGE_ME")
+    # C2 FIX: No hardcoded fallback — empty string forces startup validation to catch missing key.
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 # 24 hours
+    
+    # M2 FIX: Superadmin email loaded from env, not hardcoded in source.
+    SUPERADMIN_EMAIL: str = ""
     
     # Firebase
     FIREBASE_CREDENTIALS_FILE: str = "firebase-credentials.json"

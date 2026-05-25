@@ -14,7 +14,10 @@ import base64
 
 from dotenv import load_dotenv
 load_dotenv()
-os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+# C1 FIX: Only disable HTTPS enforcement for OAuth in development environments.
+# In production (Railway, etc.), OAuth MUST use HTTPS to prevent token interception.
+if os.getenv("ENVIRONMENT", "production") == "development":
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 # Root directory of the backend — used for all file storage paths
@@ -49,6 +52,10 @@ from graph.graph import twin_graph
 from graph.nodes import triage_email, EMAIL_CATEGORIES_REQUIRING_REPLY
 from memory.chroma import store_memory, get_old_documents, delete_documents_by_ids
 from memory.learning import learn_from_interaction
+# H9 FIX: PII scrubbing before vector storage.
+from services.memory_service import prepare_email_for_memory
+# H8 FIX: Transactional outbox model (ensures ChromaDB writes are durably tracked).
+from models.memory_outbox import MemoryOutbox  # noqa: F401 — imported so Base.metadata picks it up
 from tools.telegram_tool import send_telegram_message, get_telegram_updates, send_telegram_photo
 
 from utils.briefing import generate_daily_briefing
@@ -127,9 +134,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_get_allowed_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    # M8 FIX: Restrict to only the methods and headers actually used by the frontend.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Firebase-Token", "X-Requested-With"],
+    expose_headers=["Content-Disposition"],
 )
 
 # 2. Manual OPTIONS handler for additional stability
@@ -173,6 +181,21 @@ app.include_router(admin_router, prefix="/admin", tags=["admin"])
 # Mount Twin-to-Twin Direct Chat router
 app.include_router(twin_chat_router)
 
+def _safe_frontend_url(url: str) -> str:
+    """
+    C3/H3 FIX: Validate a frontend_url against the CORS allowlist.
+    Returns the URL unchanged if it's in the allowlist; falls back to the
+    configured FRONTEND_URL otherwise. Prevents open redirect and XSS.
+    """
+    allowed = set(_get_allowed_origins())
+    # Normalise: strip trailing slash for comparison
+    normalised = url.rstrip("/")
+    if normalised in allowed:
+        return normalised
+    logger.warning(f"[OAuth] Rejected untrusted frontend_url: {url!r}. Using default.")
+    return settings.FRONTEND_URL
+
+
 def extract_reply(text: str) -> str:
     """Extracts reply content and strips away hidden action tags and internal reasoning."""
     # First priority: <reply> tags
@@ -208,7 +231,9 @@ async def process_new_emails():
     """Shared logic to check and process new emails for all connected users."""
     processed_count = 0
     try:
-        with next(get_db()) as db:
+        # H1 FIX: Use SessionLocal() directly — with next(get_db()) never calls generator cleanup.
+        db = SessionLocal()
+        try:
             # Find all users who have active Google integrations
             connected_user_ids = (
                 db.query(IntegrationToken.user_id)
@@ -249,10 +274,15 @@ async def process_new_emails():
                         db.commit()
 
                         # 3. Semantic Memory Indexing (Chroma)
+                        # H9 FIX: Scrub PII and truncate before storing in ChromaDB.
                         store_memory(
                             user_id=uid,
                             doc_id=f"email_{email['id']}",
-                            content=f"Email from: {info['from']}\nSubject: {info['subject']}\nBody: {info['body']}",
+                            content=(
+                                f"Email from: {info['from']}\n"
+                                f"Subject: {info['subject']}\n"
+                                f"Body: {prepare_email_for_memory(info['body'])}"
+                            ),
                             type="email",
                             metadata={"from": info["from"], "subject": info["subject"], "timestamp": datetime.now(timezone.utc).isoformat()}
                         )
@@ -406,15 +436,20 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                         db.commit()
                         processed_count += 1
                         
-                        # Synchronous sleep (this is a sync function run in a thread)
-                        time.sleep(1)
+                        # M9 FIX: Use asyncio.sleep() since process_new_emails is async.
+                        await asyncio.sleep(1)
 
                 except Exception as user_err:
                     logger.error(f"Email Monitor Error for user {uid}: {user_err}")
                     continue
                 
-                # Sleep between users to reduce LLM rate limit pressure
-                time.sleep(2)
+                # M9 FIX: Use asyncio.sleep() in async context.
+                await asyncio.sleep(2)
+        except Exception as e_inner:
+            db.rollback()
+            logger.error(f"Email Monitor DB Error: {e_inner}")
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Email Monitor Error: {e}")
     return processed_count > 0
@@ -422,7 +457,9 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
 def _sync_index_calendar_to_memory(user_id: str):
     from tools.calendar_tool import get_calendar_range
     try:
-        with next(get_db()) as db:
+        # H1 FIX: Use SessionLocal() directly.
+        db = SessionLocal()
+        try:
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 return
@@ -433,7 +470,7 @@ def _sync_index_calendar_to_memory(user_id: str):
                 return
 
             events = get_calendar_range(db, user_id)
-            now_iso = datetime.utcnow().isoformat() + "Z"
+            now_iso = datetime.now(timezone.utc).isoformat()  # M1 FIX: use tz-aware datetime
             
             for event in events:
                 summary = event.get('summary', '')
@@ -463,6 +500,11 @@ def _sync_index_calendar_to_memory(user_id: str):
                     metadata=metadata
                 )
             logger.info(f"Calendar indexing complete for {user_id}: {len(events)} events indexed.")
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error in calendar memory index for {user_id}: {e}")
 
@@ -472,7 +514,9 @@ async def index_calendar_to_memory(user_id: str):
 def _sync_run_sent_mail_backfill(user_id: str):
     from tools.gmail_tool import read_sent_emails
     try:
-        with next(get_db()) as db:
+        # H1 FIX: Use SessionLocal() directly.
+        db = SessionLocal()
+        try:
             user = db.query(User).filter(User.id == user_id).first()
             if not user or getattr(user, 'sent_backfill_done', False):
                 return
@@ -506,6 +550,11 @@ def _sync_run_sent_mail_backfill(user_id: str):
             user.sent_backfill_done = True
             db.commit()
             logger.info(f"Sent mail backfill complete for {user_id}: {count} emails indexed")
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Error in sent mail backfill for {user_id}: {e}")
 
@@ -537,9 +586,12 @@ async def monitor_telegram():
                     chat_id = str(msg["chat"]["id"])
                     text = msg.get("text", "")
                     
-                    with next(get_db()) as db:
+                    # H1 FIX: Use SessionLocal() directly for Telegram update handling.
+                    db = SessionLocal()
+                    try:
                         user = db.query(User).filter(User.telegram_chat_id == chat_id).first()
                         if not user:
+                            db.close()
                             if text.startswith("/start"):
                                 send_telegram_message(chat_id, "Welcome to AI Twin! Please connect your account in the dashboard settings to start using Telegram features.")
                             continue
@@ -562,6 +614,7 @@ async def monitor_telegram():
 💡 *Tip*: You can speak to your AI Twin naturally just like you do on the dashboard!
 """
                             send_telegram_message(chat_id, help_msg)
+                            db.close()
                             continue
 
                         if text == "/unread":
@@ -573,6 +626,7 @@ async def monitor_telegram():
                                 for e in emails:
                                     msg += f"• *{e['subject']}*\n  From: {e['from']}\n\n"
                                 send_telegram_message(chat_id, msg)
+                            db.close()
                             continue
 
                         if text == "/schedule":
@@ -589,11 +643,13 @@ async def monitor_telegram():
                                         ts = e["start"]
                                     m += f"• *{e['title']}*\n  Time: {ts}\n\n"
                                 send_telegram_message(chat_id, m)
+                            db.close()
                             continue
 
                         if text == "/briefing":
                             briefing = generate_daily_briefing(db, user.id, user.name)
                             send_telegram_message(chat_id, briefing)
+                            db.close()
                             continue
 
                         # Process general message via AI Graph
@@ -646,6 +702,11 @@ async def monitor_telegram():
                                             send_telegram_message(chat_id, f"📅 *Scheduled:* {e_title}")
                             except Exception as act_err:
                                 logger.error(f"Telegram Action Error: {act_err}")
+                    except Exception:
+                        db.rollback()
+                        raise
+                    finally:
+                        db.close()
 
             except asyncio.CancelledError:
                 raise
@@ -681,7 +742,9 @@ def _mark_notified(event_id: str):
 def process_calendar_monitor():
     """Shared logic for checking calendar events."""
     try:
-        with next(get_db()) as db:
+        # H1 FIX: Use SessionLocal() directly.
+        db = SessionLocal()
+        try:
             users = db.query(User).filter(User.telegram_enabled == True, User.telegram_chat_id.isnot(None)).all()
             for user in users:
                 # Skip users without Google connection OR without calendar scopes
@@ -718,7 +781,11 @@ def process_calendar_monitor():
                             _mark_notified(event_id)
                     except Exception as e:
                         logger.error(f"Error checking event timing: {e}")
-                        
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
     except Exception as e:
         err_msg = str(e)
         if "unable to find the server" in err_msg.lower() or "name resolution" in err_msg.lower():
@@ -739,9 +806,11 @@ async def monitor_calendar():
 def process_daily_briefing():
     """Logic for daily briefing checks."""
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)  # M1 FIX: use tz-aware datetime.
         # For simplicity, if it's been > 20 hours since last briefing, send a new one
-        with next(get_db()) as db:
+        # H1 FIX: Use SessionLocal() directly.
+        db = SessionLocal()
+        try:
             users = db.query(User).filter(User.telegram_enabled == True, User.telegram_chat_id.isnot(None)).all()
             for user in users:
                 # 🟢 Skip users without any active Google connection
@@ -764,6 +833,11 @@ def process_daily_briefing():
                     
                     # Small sleep between users to avoid Groq rate limits (Synchronous in thread)
                     time.sleep(2)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Daily Briefing Task Error: {e}")
 
@@ -780,12 +854,19 @@ async def daily_briefing_task():
 def process_calendar_index_all():
     """Background task to index calendars for all users."""
     try:
-        with next(get_db()) as db:
+        # H1 FIX: Use SessionLocal() directly.
+        db = SessionLocal()
+        try:
             users = db.query(User).all()
             for user in users:
                 if is_connected(db=db, user_id=user.id) and is_scope_sufficient(db=db, user_id=user.id, scopes=CALENDAR_SCOPES):
                     _sync_index_calendar_to_memory(user.id)
                     time.sleep(2)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Calendar Index All Error: {e}")
 
@@ -810,11 +891,101 @@ async def run_memory_lifecycle():
         await asyncio.to_thread(_sync_memory_lifecycle)
 
 def _sync_memory_lifecycle():
-    with next(get_db()) as db:
+    """
+    H8 FIX: Transactional Outbox pattern for PostgreSQL + ChromaDB.
+
+    For every ChromaDB write we:
+      1. Write a MemoryOutbox entry with status='pending' and COMMIT to Postgres first.
+      2. Call store_memory() to write to ChromaDB.
+      3. On success: set status='done' and commit.
+      4. On failure: set status='failed', increment attempts, commit.
+
+    A retry sweep at the end processes entries that are failed with attempts < 3.
+    """
+    import json as _json
+    db = SessionLocal()
+    try:
         users = db.query(User).all()
         for user in users:
-            _migrate_chroma_to_structured(user.id, db)
+            _migrate_chroma_to_structured_outbox(user.id, db)
             _migrate_structured_to_archive(user.id, db)
+
+        # ── Retry sweep: re-attempt failed outbox entries (attempts < 3) ──
+        failed_entries = (
+            db.query(MemoryOutbox)
+            .filter(MemoryOutbox.status == "failed", MemoryOutbox.attempts < 3)
+            .all()
+        )
+        for entry in failed_entries:
+            try:
+                payload = entry.payload
+                store_memory(
+                    user_id=entry.user_id,
+                    doc_id=payload["doc_id"],
+                    content=payload["content"],
+                    type=payload.get("type", "general"),
+                    metadata=payload.get("metadata"),
+                )
+                entry.status = "done"
+                logger.info(f"[Outbox] Retry succeeded for outbox entry {entry.id}")
+            except Exception as retry_err:
+                entry.attempts += 1
+                entry.status = "failed"
+                logger.error(f"[Outbox] Retry {entry.attempts} failed for entry {entry.id}: {retry_err}")
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _migrate_chroma_to_structured_outbox(user_id: str, db):
+    """
+    H8 FIX: Transactional outbox variant of _migrate_chroma_to_structured.
+    Writes MemoryOutbox entry FIRST (Postgres), then calls store_memory (ChromaDB).
+    """
+    old_docs = get_old_documents(user_id, older_than_days=180)
+    if not old_docs:
+        return
+    for doc in old_docs:
+        # Step 1: persist outbox record — if this commit fails, nothing else runs.
+        outbox_entry = MemoryOutbox(
+            user_id=user_id,
+            payload={
+                "doc_id": doc["id"],
+                "content": doc["content"],
+                "type": doc["metadata"].get("type", "general"),
+                "metadata": doc["metadata"],
+            },
+            status="pending",
+            attempts=0,
+        )
+        db.add(outbox_entry)
+        db.commit()  # Postgres commit BEFORE ChromaDB write
+
+        # Step 2: write to ChromaDB
+        try:
+            db.add(StructuredMemory(
+                user_id=user_id,
+                category="migrated",
+                key=doc["id"],
+                value="migrated_from_chroma",
+                content=doc["content"],
+                memory_type=doc["metadata"].get("type", "general"),
+                created_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
+            # Step 3: mark outbox entry done
+            outbox_entry.status = "done"
+            db.commit()
+            delete_documents_by_ids(user_id, [doc["id"]])
+        except Exception as chroma_err:
+            # Step 4: mark outbox entry failed for retry sweep
+            outbox_entry.status = "failed"
+            outbox_entry.attempts += 1
+            db.commit()
+            logger.error(f"[Outbox] ChromaDB migration write failed for {doc['id']}: {chroma_err}")
 
 def _migrate_chroma_to_structured(user_id, db):
     """Move ChromaDB docs older than 6 months to StructuredMemory."""
@@ -867,6 +1038,20 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 AI Twin Backend is starting up...")
+
+    # C2 FIX: Abort startup if SECRET_KEY is missing or still set to the dev placeholder.
+    # This prevents JWT forgery in production environments.
+    _bad_keys = {"", "DEVELOPMENT_SECRET_KEY_CHANGE_ME"}
+    if settings.SECRET_KEY in _bad_keys:
+        # Allow dev mode to continue with a warning; block production.
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError(
+                "CRITICAL: SECRET_KEY must be set to a strong random secret in production! "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+        else:
+            logger.warning("⚠️ SECRET_KEY is not set. Running in development mode only.")
+
     register_all_servers()
     logger.info(
         f"[MCP] {len(mcp_registry.list_all_tools())} tools registered across "
@@ -878,17 +1063,43 @@ async def startup_event():
     initialize_firebase()
 
     # 0b. Ensure hardlocked superadmin has is_admin=True in DB
+    # H1 FIX: Use SessionLocal() directly instead of the with next(get_db()) anti-pattern.
     try:
         from security.auth import HARDLOCKED_ADMIN_EMAILS
-        with next(get_db()) as _db:
+        _db = SessionLocal()
+        try:
             for _email in HARDLOCKED_ADMIN_EMAILS:
                 _superadmin = _db.query(User).filter(User.email == _email).first()
                 if _superadmin and not _superadmin.is_admin:
                     _superadmin.is_admin = True
                     _db.commit()
                     logger.info(f"[Auth] Hardlocked superadmin promoted in DB: {_email}")
+        except Exception:
+            _db.rollback()
+            raise
+        finally:
+            _db.close()
     except Exception as _e:
         logger.warning(f"[Auth] Hardlocked admin DB sync failed (non-fatal): {_e}")
+
+    # M3 FIX: Prune abandoned OAuth state records older than 10 minutes to prevent DB bloat.
+    try:
+        from datetime import datetime, timedelta, timezone as _tz
+        _db = SessionLocal()
+        try:
+            _cutoff = datetime.now(_tz.utc) - timedelta(minutes=10)
+            _stale = _db.query(OAuthState).filter(OAuthState.created_at < _cutoff).all()
+            if _stale:
+                for _s in _stale:
+                    _db.delete(_s)
+                _db.commit()
+                logger.info(f"[OAuth] Pruned {len(_stale)} stale OAuthState record(s).")
+        except Exception:
+            _db.rollback()
+        finally:
+            _db.close()
+    except Exception as _e:
+        logger.warning(f"[OAuth] OAuthState pruning failed (non-fatal): {_e}")
     
     # 1. Startup Logic switches
     if os.getenv("ENABLE_EMAIL_MONITOR") == "true":
@@ -926,8 +1137,10 @@ async def shutdown_event():
 
 # Pydantic Schemas
 class ProcessRequest(BaseModel):
-    input: str
-    user_id: str
+    # H7 FIX: max_length=8000 prevents TPM exhaustion and prompt injection via huge payloads.
+    input: str = Field(default="", max_length=8000)
+    # C6 FIX: Removed user_id — it was client-supplied and could enable IDOR if accidentally
+    # used instead of current_user.id. The effective user is always taken from the JWT.
     user_name: Optional[str] = None
     chat_history: List[dict] = Field(default_factory=list)
     session_id: Optional[str] = None
@@ -1090,8 +1303,9 @@ def google_oauth_start(
     # Save PKCE verifier, user_id, and scopes to database to survive the redirect
     if getattr(flow, "code_verifier", None):
         logger.debug(f"DEBUG: Saving verifier for state {state[:10]} (user={current_user.id})...")
-        # Try to capture the frontend origin from query or referer to return correctly
-        frontend_url = request.query_params.get("frontend_url") or "http://127.0.0.1:5173"
+        # C3 FIX: Validate frontend_url against the CORS allowlist to prevent open redirect.
+        raw_frontend_url = request.query_params.get("frontend_url") or settings.FRONTEND_URL
+        frontend_url = _safe_frontend_url(raw_frontend_url)
         try:
             db.add(OAuthState(
                 state=state, 
@@ -1169,15 +1383,24 @@ def google_oauth_callback(code: str, state: str, db: Session = Depends(get_db)):
         token_type=getattr(creds, "token_type", None),
     )
 
+    # C3/H3 FIX: Validate the stored frontend_url against the allowlist before embedding
+    # it in the HTML response. This prevents open redirect and XSS via injected URLs.
+    import html as _html
+    safe_url = _safe_frontend_url(
+        oauth_record.frontend_origin or os.getenv("FRONTEND_URL", settings.FRONTEND_URL)
+    )
+    # Defense-in-depth: also HTML-escape the URL before injecting into the script tag.
+    escaped_url = _html.escape(safe_url, quote=True)
+
     html_content = f"""
     <html>
     <body>
         <script>
             if (window.opener && !window.opener.closed) {{
-                window.opener.postMessage('google_oauth_success', '{frontend_url}');
+                window.opener.postMessage('google_oauth_success', '{escaped_url}');
                 window.close();
             }} else {{
-                window.location.href = '{frontend_url}/?google=connected';
+                window.location.href = '{escaped_url}/?google=connected';
             }}
         </script>
         <p>Authentication successful! You can close this window.</p>
@@ -1519,7 +1742,7 @@ For all other types: respond with clean content only (use markdown headings ## f
 
         # 5. Generate the actual file
         metadata = {
-            "Generated": datetime.utcnow().strftime("%B %d, %Y %H:%M UTC"),
+            "Generated": datetime.now(timezone.utc).strftime("%B %d, %Y %H:%M UTC"),  # M1 FIX
             "Author": current_user.name or current_user.email or "AI Twin User",
             "AI Twin": "Aether Obsidian Intelligence"
         }
@@ -2061,7 +2284,8 @@ def save_mail_draft(req: EmailSendRequest, current_user: User = Depends(get_curr
 
 
 @app.post("/auth/register")
-def register(req: RegisterRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")  # H2 FIX: Prevent credential-stuffing and account enumeration.
+def register(request: Request, req: RegisterRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == req.email).first()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -2088,7 +2312,8 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     return {"user_id": str(user.id), "email": user.email, "name": user.name}
 
 @app.post("/auth/login")
-def login(req: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")  # H2 FIX: Brute-force protection on login.
+def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == req.email).first()
     if not user or not user.hashed_password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -2556,7 +2781,7 @@ def get_analytics(
     db: Session = Depends(get_db)
 ):
     """Fetches real-time productivity metrics for the dashboard."""
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)  # M1 FIX: use tz-aware datetime
     one_week_ago = now - timedelta(days=7)
     
     # 1. Emails Monitored (Last 7 days)

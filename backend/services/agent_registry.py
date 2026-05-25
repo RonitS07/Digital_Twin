@@ -49,10 +49,14 @@ async def push_to_inbox(user_id: str, message: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _derive_handle(name: str, email: str) -> str:
-    """Derive a unique, clean handle from a user's email or name."""
-    # Use full email prefix + domain as handle for clarity
-    if email:
-        return email.lower()
+    """Derive a unique, clean handle from a user's email prefix or name."""
+    # M4 FIX: Use only the email prefix (before @) to avoid exposing full email in public handle.
+    if email and "@" in email:
+        prefix = email.split("@")[0].lower()
+        # Clean to alphanumeric+underscore only
+        clean = re.sub(r"[^a-z0-9_]", "", prefix)
+        if clean:
+            return clean
 
     # Fall back to name
     if name:
@@ -159,7 +163,10 @@ def update_agent_status(db: Session, user_id: str, status: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _public_profile(agent: AgentRegistry, email: str = None) -> dict:
-    """Serialise ONLY public-safe fields — never memory, tokens, calendar data."""
+    """Serialise ONLY public-safe fields — never memory, tokens, calendar data.
+    M5 FIX: email removed from public profile to prevent email harvesting.
+    Email is only surfaced in admin-specific endpoints.
+    """
     try:
         caps = json.loads(agent.capabilities or "[]")
     except Exception:
@@ -169,7 +176,7 @@ def _public_profile(agent: AgentRegistry, email: str = None) -> dict:
         "user_id": agent.user_id,
         "display_name": agent.display_name,
         "handle": agent.handle,
-        "email": email,
+        # email intentionally omitted — M5 FIX
         "capabilities": caps,
         "status": agent.status,
         "agent_endpoint": agent.agent_endpoint,

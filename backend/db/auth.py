@@ -25,11 +25,15 @@ def create_access_token(data: dict) -> str:
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def decode_token(token: str) -> dict:
+    """
+    H6 FIX: Always return a dict, never None.
+    Callers should check payload.get("error") or "sub" in payload.
+    """
     try:
         if not SECRET_KEY:
-            raise RuntimeError("SECRET_KEY is not set")
+            return {"error": "NO_SECRET_KEY"}
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except jwt.ExpiredSignatureError:
         return {"error": "ExpiredIdTokenError"}
     except JWTError:
-        return None
+        return {}  # Empty dict = invalid token, but not None

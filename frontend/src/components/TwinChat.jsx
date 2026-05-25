@@ -51,17 +51,24 @@ function useTwinChatWS(token, handlers) {
     const connect = () => {
       const proto = API_BASE.startsWith('https') ? 'wss' : 'ws'
       const host = API_BASE.replace(/^https?:\/\//, '')
-      const url = `${proto}://${host}/twin-chat/ws?token=${encodeURIComponent(token)}`
+      // C5 FIX: No token in URL — send it as the first JSON frame in onopen.
+      const url = `${proto}://${host}/twin-chat/ws`
       const ws = new WebSocket(url)
       wsRef.current = ws
 
+      ws.onopen = () => {
+        // C5 FIX: First-frame authentication.
+        ws.send(JSON.stringify({ event: 'auth', token }))
+      }
       ws.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data)
           handlers.current?.(data)
         } catch {}
       }
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
+        // 4001 = bad auth, 4003 = token expired — don't reconnect
+        if (ev.code === 4001 || ev.code === 4003) return
         if (alive) reconnectRef.current = setTimeout(connect, 1200)
       }
       ws.onerror = () => ws.close()

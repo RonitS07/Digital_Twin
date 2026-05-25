@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+# M11 FIX: declarative_base() was moved from ext.declarative to orm in SQLAlchemy 2.0.
+# The old import is removed in 2.1+. Use the canonical path.
+from sqlalchemy.orm import sessionmaker, declarative_base
 import os
 from dotenv import load_dotenv
 

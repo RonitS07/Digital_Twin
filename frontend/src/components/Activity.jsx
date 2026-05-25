@@ -168,10 +168,13 @@ const Activity = () => {
             if (!alive) return;
             const proto = API_BASE.startsWith('https') ? 'wss' : 'ws';
             const host = API_BASE.replace(/^https?:\/\//, '');
-            const ws = new WebSocket(`${proto}://${host}/twin-chat/ws?token=${encodeURIComponent(accessToken)}`);
+            // C5 FIX: No token in URL — send it as the first JSON frame in onopen.
+            const ws = new WebSocket(`${proto}://${host}/twin-chat/ws`);
             wsRef.current = ws;
 
             ws.onopen = () => {
+                // C5 FIX: First-frame authentication.
+                ws.send(JSON.stringify({ event: 'auth', token: accessToken }));
                 setWsStatus('connected');
                 retryDelay = 3000;
             };
@@ -186,6 +189,7 @@ const Activity = () => {
             };
             ws.onclose = (ev) => {
                 setWsStatus('disconnected');
+                // 4001 = bad auth, 4003 = token expired — don't reconnect
                 if (ev.code === 4001 || ev.code === 4003) return;
                 if (alive) setTimeout(connect, retryDelay = Math.min(retryDelay * 1.5, 15000));
             };

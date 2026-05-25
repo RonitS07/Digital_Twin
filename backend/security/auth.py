@@ -31,8 +31,17 @@ def _is_firebase_token(token: str) -> bool:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HARDLOCKED SUPERADMIN — cannot be revoked by anyone, including other admins
+# M2 FIX: Load from env var instead of hardcoding personal email in source.
+# Set SUPERADMIN_EMAIL in your .env or Railway environment variables.
 # ─────────────────────────────────────────────────────────────────────────────
-HARDLOCKED_ADMIN_EMAILS: set[str] = {"ronitshah1124@gmail.com"}
+def _get_hardlocked_admin_emails() -> set[str]:
+    from core.config import settings
+    emails = set()
+    if settings.SUPERADMIN_EMAIL:
+        emails.add(settings.SUPERADMIN_EMAIL.lower().strip())
+    return emails
+
+HARDLOCKED_ADMIN_EMAILS: set[str] = _get_hardlocked_admin_emails()
 
 
 def _apply_hardlock(user: User) -> User:
