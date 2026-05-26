@@ -1178,8 +1178,9 @@ Memory Context: {context_block}
 3. DEFAULTING: If only a time is given (e.g., "9pm"), assume the user means TODAY (if that time hasn't passed) or TOMORROW.
 4. TITLE: If a title is missing, use a generic one like "Meeting with {partner_name}".
 5. If the date/time is completely ambiguous, ask for clarification briefly and DO NOT generate the <action> tag.
-6. Check for overlaps. If there is a conflict, suggest the next free slot and include that in the <action> tag.
-7. OUTPUT: One professional sentence + the <action> block (if valid).
+6. CRITICAL: Use the EXACT time requested by the user. Do NOT invent a new time. Do NOT suggest a different slot unless the user explicitly asks you to find a free slot.
+7. CONFLICTS: If there is a conflict with an existing event, set is_conflict to true and conflict_with to the title, but KEEP the start_datetime and end_datetime EXACTLY as the user requested.
+8. OUTPUT: One professional sentence + the <action> block (if valid).
 
 Action Block Format:
 <action>

@@ -539,29 +539,43 @@ async def send_message(
                 action_data = json.loads(action_match.group(1))
                 action_intent = action_data.get("intent")
                 
-                if action_intent in ["email", "telegram", "slack", "telegram_send", "slack_send", "whatsapp_send"]:
+                if action_intent in ["email", "telegram", "slack", "telegram_send", "slack_send", "whatsapp_send", "calendar", "calendar_create", "calendar_schedule", "meeting", "scheduling"]:
                     # Cross-twin intent: Target the partner's account if it's a direct message to them
                     target_user_id = partner_id
                     
-                    to = action_data.get("to", partner.email if partner else "")
-                    subject = action_data.get("subject", f"Message from {current_user.name}")
-                    body_html = action_data.get("body", action_data.get("message", body.content))
-                    
                     from db.models import TaskLog
+                    if action_intent in ["calendar", "calendar_create", "calendar_schedule", "meeting", "scheduling"]:
+                        title = action_data.get("title", action_data.get("summary", f"Meeting with {current_user.name}"))
+                        # CRITICAL: Use exact time requested by sender
+                        start_time = action_data.get("start_datetime", action_data.get("start", ""))
+                        end_time = action_data.get("end_datetime", action_data.get("end", ""))
+                        attendees = action_data.get("attendees", [partner.email if partner else "", current_user.email])
+                        description = action_data.get("description", action_data.get("body", action_data.get("message", body.content)))
+                        
+                        task_plan = [{"tool": "calendar_create", "args": {"title": title, "start_datetime": start_time, "end_datetime": end_time, "attendees": attendees, "description": description, "target_user_id": target_user_id}}]
+                        intent_label = "calendar_create"
+                        summary_msg = f"Schedule meeting '{title}'"
+                    else:
+                        to = action_data.get("to", partner.email if partner else "")
+                        subject = action_data.get("subject", f"Message from {current_user.name}")
+                        body_html = action_data.get("body", action_data.get("message", body.content))
+                        
+                        task_plan = [{"tool": action_intent, "args": {"to": to, "subject": subject, "body": body_html, "message": body_html, "target_user_id": target_user_id}}]
+                        intent_label = action_intent
+                        summary_msg = f"Execute {action_intent} for {to}"
+
                     new_task = TaskLog(
                         user_id=current_user.id, # We still want the sender to approve the task
                         session_id=session_id,
                         kind="approval",
                         input=body.content,
-                        intent=action_intent,
+                        intent=intent_label,
                         output=ai_output,
                         approved=False,
                         response_type="text",
                         metadata_json=json.dumps({
                             "approval_required": True,
-                            "task_plan": [{"tool": action_intent, "args": {"to": to, "subject": subject, "body": body_html, "message": body_html, "target_user_id": target_user_id}}],
-                            "recipient": to,
-                            "subject": subject,
+                            "task_plan": task_plan,
                             "target_user_id": target_user_id
                         })
                     )
@@ -570,7 +584,7 @@ async def send_message(
                     
                     # Sanitize output content so plaintext XML doesn't leak
                     final_ai_content = re.sub(r"<action>.*?</action>", "", final_ai_content, flags=re.DOTALL)
-                    final_ai_content += f"\n\n*(Pending approval: Execute {action_intent} for {to}. Please approve this action.)*"
+                    final_ai_content += f"\n\n*(Pending approval: {summary_msg}. Please approve this action.)*"
             except Exception as e:
                 logger.error(f"[TwinChat] Action parsing failed: {e}")
 

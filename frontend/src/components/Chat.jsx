@@ -169,15 +169,28 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
     })
     const [isProcessing, setIsProcessing] = useState(false)
     const [autoCompleted, setAutoCompleted] = useState(false)
-    // Seed from localStorage so the lock survives page reloads
-    const actionStorageKey = msg.id ? `action_executed_${msg.id}` : null
+    const actionMatchRef = msg.text ? msg.text.match(/<action>([\s\S]*?)<\/action>/) : null;
+    let actionHashStr = null;
+    if (actionMatchRef) {
+        let hash = 0;
+        const str = actionMatchRef[1].trim();
+        for (let i = 0; i < str.length; i++) {
+            hash = ((hash << 5) - hash) + str.charCodeAt(i);
+            hash |= 0;
+        }
+        actionHashStr = `action_lock_${hash}`;
+    }
+    
+    // Seed from localStorage so the lock survives page reloads and ID changes
+    const actionStorageKey = actionHashStr || (msg.id ? `action_lock_${msg.id}` : null)
+    
     const [isExecuted, setIsExecuted] = useState(() => {
         if (!actionStorageKey) return false
         return !!localStorage.getItem(actionStorageKey)
     })
     const [actionStatus, setActionStatus] = useState(() => {
         if (!actionStorageKey) return null
-        return localStorage.getItem(`action_status_${msg.id}`) || null
+        return localStorage.getItem(`${actionStorageKey}_status`) || null
     })
     const [lightboxSrc, setLightboxSrc] = useState(null)
     const [copied, setCopied] = useState(false)
@@ -211,7 +224,7 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
         // Persist so the card stays locked after page reload
         if (actionStorageKey) {
             localStorage.setItem(actionStorageKey, '1')
-            localStorage.setItem(`action_status_${msg.id}`, status)
+            localStorage.setItem(`${actionStorageKey}_status`, status)
         }
     }
 

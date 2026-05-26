@@ -5,20 +5,32 @@ const http = require('http')
 function pushStatus(ready, qr) {
     try {
         const data = JSON.stringify({ ready, qr });
-        const req = http.request({
-            hostname: '127.0.0.1',
-            port: process.env.PORT || 8080,
-            path: '/mcp/whatsapp/webhook',
+        
+        // Use BACKEND_URL from environment if available (e.g. https://digitaltwin-production-5683.up.railway.app)
+        const targetUrl = process.env.BACKEND_URL 
+            ? `${process.env.BACKEND_URL.replace(/\/$/, '')}/mcp/whatsapp/webhook`
+            : `http://127.0.0.1:${process.env.PORT || 8080}/mcp/whatsapp/webhook`;
+            
+        const parsedUrl = new URL(targetUrl);
+        const requestModule = parsedUrl.protocol === 'https:' ? require('https') : require('http');
+        
+        const req = requestModule.request({
+            hostname: parsedUrl.hostname,
+            port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+            path: parsedUrl.pathname,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Content-Length': Buffer.byteLength(data)
             }
         });
-        req.on('error', () => {}); // Ignore connection errors silently
+        
+        req.on('error', (e) => { console.error('[WA Bridge] Webhook push failed:', e.message); }); 
         req.write(data);
         req.end();
-    } catch (e) {}
+    } catch (e) {
+        console.error('[WA Bridge] Webhook URL error:', e.message);
+    }
 }
 
 const app = express()

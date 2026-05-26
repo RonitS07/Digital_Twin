@@ -388,6 +388,18 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                         except Exception:
                             pass
 
+                        # 6b. Telegram Notification for important/necessary emails
+                        if user and user.telegram_enabled:
+                            if category not in ["promotional", "newsletter", "marketing", "system", "error"]:
+                                telegram_msg = (
+                                    f"📥 *New Email: {category.title()}*\n\n"
+                                    f"*From:* {info['from']}\n"
+                                    f"*Subject:* {info['subject']}\n\n"
+                                    f"_{email.get('snippet', info['body'][:150])}..._"
+                                )
+                                from tools.telegram_tool import send_telegram_message
+                                send_telegram_message(user.telegram_chat_id, telegram_msg)
+
                         if needs_reply and category in EMAIL_CATEGORIES_REQUIRING_REPLY:
                             # FIX: Bypass the full LangGraph to avoid re-classification
                             # and planner overwriting the known to/subject fields.
@@ -2504,7 +2516,7 @@ def slack_oauth_start(current_user: User = Depends(get_current_user), db: Sessio
     db.add(OAuthState(state=state, user_id=current_user.id, code_verifier="none")) # code_verifier not used for Slack standard OAuth but model requires it
     db.commit()
     
-    scopes = "channels:history,channels:read,chat:write,groups:read,im:read,mpim:read"
+    scopes = "channels:history,channels:read,chat:write,chat:write.public,groups:read,im:read,mpim:read"
     auth_url = f"https://slack.com/oauth/v2/authorize?client_id={SLACK_CLIENT_ID}&scope={scopes}&user_scope=&redirect_uri={SLACK_REDIRECT_URI}&state={state}"
     return {"auth_url": auth_url}
 
@@ -2572,9 +2584,22 @@ def send_msg(req: dict, current_user: User = Depends(get_current_user), db: Sess
         res = read_slack_messages(db, current_user.id, channel_id, limit=10)
         return {"status": "success", "details": res, "messages": res}
         
-    text = req.get("text")
+    text = req.get("text") or req.get("message")
+    channel_name = req.get("channel_name")
+    
+    if (channel_id and channel_id.startswith("#")) or (not channel_id and channel_name):
+        # Resolve name to ID
+        target = (channel_id if channel_id and channel_id.startswith("#") else channel_name).lstrip("#")
+        from tools.slack_tool import list_slack_channels
+        channels = list_slack_channels(db, current_user.id)
+        for c in channels:
+            if c["name"] == target:
+                channel_id = c["id"]
+                break
+
     if not channel_id or not text:
         raise HTTPException(status_code=400, detail="Missing channel_id or text")
+        
     # 🟢 Convert standard Markdown to Slack's mrkdwn (e.g. **bold** -> *bold*)
     formatted_text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
     formatted_text = re.sub(r'### (.*)', r'*\1*', formatted_text) # Headers to bold
