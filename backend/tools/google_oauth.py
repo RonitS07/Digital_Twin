@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_CREDENTIALS_FILE = settings.GOOGLE_CREDENTIALS_FILE or "credentials.json"
 
-# Dynamic Redirect URI: Prioritize BACKEND_URL for production, fallback to localhost
+# Dynamic Redirect URI: Prioritize explicit setting, then BACKEND_URL, fallback to localhost
 _base_url = settings.BACKEND_URL.rstrip("/") if settings.BACKEND_URL else "http://127.0.0.1:8000"
-GOOGLE_REDIRECT_URI = f"{_base_url}/oauth/google/callback"
+GOOGLE_REDIRECT_URI = settings.GOOGLE_OAUTH_REDIRECT_URI or f"{_base_url}/oauth/google/callback"
 
 
 GMAIL_SCOPES = [
