@@ -5,7 +5,7 @@ import requests
 import base64
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from .state import State
 from db.database import get_db
 from db.models import A2AMessageLog, User, AgentRegistry
@@ -362,8 +362,7 @@ async def memory_node(state: State) -> State:
         
     needs_calendar = any(k in state["input"].lower() for k in ["today", "schedule", "meeting", "briefing", "calendar", "event"])
     if needs_calendar:
-        import datetime
-        today = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0).isoformat() + "Z"
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0).isoformat()
         cal_coro = mcp_executor.execute(
             intent="calendar",
             args={"user_id": user_id, "max_results": 10, "timeMin": today},
@@ -1600,7 +1599,7 @@ Action Block Format:
                     content = "\n".join(lines[1:]).strip()
 
             meta = {
-                "Generated": datetime.utcnow().strftime("%B %d, %Y %H:%M UTC"),
+                "Generated": datetime.now(timezone.utc).strftime("%B %d, %Y %H:%M UTC"),
                 "Author": user_name,
                 "AI Twin": "Aether Obsidian Intelligence"
             }

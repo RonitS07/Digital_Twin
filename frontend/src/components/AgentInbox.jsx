@@ -419,7 +419,7 @@ const AgentInbox = () => {
 
     const proto = API_BASE.startsWith('https') ? 'wss' : (window.location.protocol === 'https:' ? 'wss' : 'ws');
     const host = API_BASE ? API_BASE.replace(/^https?:\/\//, '') : window.location.host;
-    const ws = new WebSocket(`${proto}://${host}/agent/ws/${userId}?token=${accessToken}`)
+    const ws = new WebSocket(`${proto}://${host}/agent/ws/${userId}`)
     wsRef.current = ws
 
     let retryDelay = 5000;
@@ -428,6 +428,8 @@ const AgentInbox = () => {
       setWsStatus('connected')
       retryDelay = 5000; // reset on success
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
+      // C5 FIX: Send authentication token as the first frame
+      ws.send(JSON.stringify({ event: 'auth', token: accessToken }))
     }
 
     ws.onmessage = (e) => {

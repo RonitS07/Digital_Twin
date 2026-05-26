@@ -86,7 +86,7 @@ def get_admin_stats(
     current_admin: User = Depends(get_current_admin),
 ):
     now_utc = datetime.now(timezone.utc)
-    now_naive_utc = datetime.utcnow()
+    now_naive_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     day_start_ist = datetime.now(IST).replace(hour=0, minute=0, second=0, microsecond=0)
     day_start_utc = day_start_ist.astimezone(timezone.utc).replace(tzinfo=None)
 

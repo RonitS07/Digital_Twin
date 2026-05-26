@@ -18,7 +18,7 @@ Endpoints:
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request
@@ -55,19 +55,9 @@ def get_current_user_router(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
     db: Session = Depends(get_db),
 ) -> User:
-    """Auth dependency for agent broker — mirrors main.py get_current_user."""
-    from db.auth import decode_token
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-    payload = decode_token(credentials.credentials)
-    if payload and payload.get("error") == "ExpiredIdTokenError":
-        raise HTTPException(status_code=401, detail={"code": "REFRESH_REQUIRED", "message": "Token expired"})
-    if not payload or "sub" not in payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    user = db.query(User).filter(User.id == payload["sub"]).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
+    """Auth dependency for agent broker — mirrors central security.auth.get_current_user."""
+    from security.auth import get_current_user
+    return get_current_user(credentials, db)
 
 
 def set_auth_dependency(dep):
@@ -106,7 +96,7 @@ def _persist_message(db: Session, msg: A2AMessage, status: str = "pending") -> A
         trace_json=json.dumps(msg.trace) if msg.trace else None,
         status=status,
         requires_hitl=msg.requires_hitl,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     db.add(log)
     db.commit()
@@ -126,6 +116,7 @@ def _send_scheduling_email(db: Session, sender: User, receiver: User, topic: str
     
     try:
         # Sender's twin sends the email to receiver's email
+        from tools.gmail_tool import send_styled_invite
         send_styled_invite(db, sender.id, receiver.email, subject, html)
         logger.info(f"[Broker] Scheduling email sent from {sender.id} to {receiver.email}")
     except Exception as e:
@@ -335,7 +326,7 @@ async def approve_message(
         payload = {}
 
     msg_log.status = "approved"
-    msg_log.updated_at = datetime.utcnow()
+    msg_log.updated_at = datetime.now(timezone.utc)
     db.commit()
 
     # ── scheduling_proposal → send scheduling_confirm back to sender ──────────
@@ -448,7 +439,7 @@ async def reject_message(
         raise HTTPException(status_code=409, detail=f"Message already {msg_log.status}")
 
     msg_log.status = "rejected"
-    msg_log.updated_at = datetime.utcnow()
+    msg_log.updated_at = datetime.now(timezone.utc)
     db.commit()
 
     # Notify the original sender
@@ -584,28 +575,82 @@ async def initiate_scheduling(
 # WebSocket — real-time inbox push
 # ─────────────────────────────────────────────────────────────────────────────
 
+MAX_PAYLOAD_BYTES = 65_536
+
+async def receive_safe(websocket: WebSocket) -> dict:
+    raw = await websocket.receive()
+    text = raw.get("text") or ""
+    data_bytes = raw.get("bytes") or b""
+    payload_len = len(text.encode("utf-8")) if text else len(data_bytes)
+    if payload_len > MAX_PAYLOAD_BYTES:
+        logger.warning(f"[WS] Payload too large: {payload_len} bytes — closing 4008")
+        await websocket.close(code=4008, reason="Payload too large")
+        raise WebSocketDisconnect(code=4008)
+    try:
+        import json
+        return json.loads(text or data_bytes.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.warning(f"[WS] Invalid JSON payload: {exc}")
+        raise WebSocketDisconnect(code=4000)
+
+
 @router.websocket("/ws/{user_id}")
 async def inbox_websocket(websocket: WebSocket, user_id: str, db: Session = Depends(get_db)):
     """Real-time WebSocket endpoint — pushes incoming A2A messages to the frontend.
-    Handshake now requires authentication via 'token' query parameter.
+    C5/M6 FIX: First-frame authentication + payload size enforcement.
     """
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001, reason="Missing authentication token")
+    await websocket.accept()
+
+    # 1. First-frame authentication (5-second timeout)
+    try:
+        auth_frame = await asyncio.wait_for(receive_safe(websocket), timeout=5.0)
+    except asyncio.TimeoutError:
+        try:
+            await websocket.send_json({"event": "error", "code": "AUTH_TIMEOUT", "message": "Auth frame not received within 5 seconds."})
+            await websocket.close(code=4008)
+        except Exception:
+            pass
+        return
+    except WebSocketDisconnect:
         return
 
+    if auth_frame.get("event") != "auth" or not auth_frame.get("token"):
+        try:
+            await websocket.send_json({"event": "error", "code": "AUTH_REQUIRED", "message": "First frame must be {event: 'auth', token: '...'}."})
+            await websocket.close(code=4001)
+        except Exception:
+            pass
+        return
+
+    token = auth_frame["token"]
+
+    # 2. Token validation
     from db.auth import decode_token
     payload = decode_token(token)
-    if not payload or payload.get("sub") != user_id:
-        await websocket.close(code=4002, reason="Invalid or unauthorized token")
+    if not payload:
+        try:
+            await websocket.send_json({"event": "error", "code": "UNAUTHORIZED", "message": "Invalid token."})
+            await websocket.close(code=4002)
+        except Exception:
+            pass
         return
 
-    # Special check for expired token
     if payload.get("error") == "ExpiredIdTokenError":
-        await websocket.close(code=4003, reason="Token expired")
+        try:
+            await websocket.send_json({"event": "error", "code": "TOKEN_EXPIRED", "message": "Token expired."})
+            await websocket.close(code=4003)
+        except Exception:
+            pass
         return
 
-    await websocket.accept()
+    if payload.get("sub") != user_id:
+        try:
+            await websocket.send_json({"event": "error", "code": "UNAUTHORIZED", "message": "Unauthorized user ID."})
+            await websocket.close(code=4002)
+        except Exception:
+            pass
+        return
+
     logger.info(f"[WS] Agent inbox WebSocket authenticated and connected: {user_id}")
 
     q = get_inbox_queue(user_id)

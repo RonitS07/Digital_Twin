@@ -46,37 +46,36 @@ const Toggle = ({ value, onChange }) => (
 );
 
 const Settings = () => {
-    const { auth: storeAuth, theme, setTheme, preferences, setPreferences, logout, whatsappReady } = useStore();
+    const { auth: storeAuth, theme, setTheme, preferences, setPreferences, setPreference, logout, whatsappReady, integrations } = useStore();
     const user = storeAuth.user || {};
     const [saved, setSaved] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [gmailConnected, setGmailConnected] = useState(false);
-    const [calendarConnected, setCalendarConnected] = useState(false);
-    const [whatsappConnected, setWhatsappConnected] = useState(() => whatsappReady === true);
-    const [autonomous, setAutonomous] = useState(() => {
-        const val = localStorage.getItem(`autonomous_mode_${user.uid}`);
-        return val === 'true';
-    });
+    // Integration connection status: read from cached store first, then verify on mount
+    const [gmailConnected, setGmailConnected] = useState(() => !!integrations?.gmail);
+    const [calendarConnected, setCalendarConnected] = useState(() => !!integrations?.calendar);
+    const [whatsappConnected, setWhatsappConnected] = useState(() => whatsappReady === true || !!integrations?.whatsapp);
+    const [slackConnected, setSlackConnected] = useState(() => !!integrations?.slack);
     const [teleConfig, setTeleConfig] = useState({ chat_id: '', enabled: false });
-    const [slackConnected, setSlackConnected] = useState(false);
-    const [draftPreferences, setDraftPreferences] = useState(preferences);
+    // draftPreferences mirrors the store — this is the source of truth after hydration
+    const [draftPreferences, setDraftPreferences] = useState(() => ({ ...preferences }));
     const [toast, setToast] = useState(null);
+    const [resetConfirm, setResetConfirm] = useState(false);
 
-    // Sync draft preferences when store re-hydrates (e.g. from backend on refresh)
+    const [editName, setEditName] = useState(user.name || '');
+    const [editEmail, setEditEmail] = useState(user.email || '');
+    const [editPhoto, setEditPhoto] = useState(user.photoURL || '');
+    const [editRole, setEditRole] = useState(user.role || 'Executive');
+
+    // Keep draftPreferences in sync if store updates externally
     useEffect(() => {
-        setDraftPreferences(preferences);
-    }, [preferences]);
+        setDraftPreferences(prev => ({ ...preferences, ...prev }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Sync WhatsApp status from global store (driven by WebSocket push)
     useEffect(() => {
         if (whatsappReady !== null) setWhatsappConnected(whatsappReady);
     }, [whatsappReady]);
-    const [resetConfirm, setResetConfirm] = useState(false);
-    
-    const [editName, setEditName] = useState(user.name || '');
-    const [editEmail, setEditEmail] = useState(user.email || '');
-    const [editPhoto, setEditPhoto] = useState(user.photoURL || '');
-    const [editRole, setEditRole] = useState(user.role || 'Executive');
 
     const themeOptions = [
         { key: 'light', icon: Sun, label: 'Light' },
@@ -84,58 +83,40 @@ const Settings = () => {
         { key: 'system', icon: Monitor, label: 'System' }
     ];
 
+    // Fetch Telegram config and verify integration connections on mount.
+    // We do NOT overwrite gmail/calendar/slack from API — we use the cached store
+    // (populated by Workspace.jsx) to avoid a flash of stale state.
     useEffect(() => {
         if (!user.uid) return;
         let isMounted = true;
 
-        const checkGoogleStatus = () => {
-            apiFetch(`/integrations/google/status`)
-                .then(data => {
-                    if (isMounted) {
-                        setGmailConnected(!!data?.gmail_connected);
-                        setCalendarConnected(!!data?.calendar_connected);
-                    }
-                })
-                .catch(() => {
-                    if (isMounted) {
-                        setGmailConnected(false);
-                        setCalendarConnected(false);
-                    }
-                });
-        };
-        checkGoogleStatus();
-
+        // Only fetch telegram config (not persisted in store)
         apiFetch(`/settings/telegram`)
             .then(data => { if (isMounted) setTeleConfig(data); })
             .catch(err => console.error(err));
-        
-        apiFetch(`/integrations/slack/status`)
-            .then(data => { if (isMounted) setSlackConnected(data.connected); })
-            .catch(() => { if (isMounted) setSlackConnected(false); });
 
-        const checkWhatsapp = () => {
-            apiFetch(`/mcp/whatsapp/qr`)
-                .then(data => { if (isMounted) setWhatsappConnected(!!data.ready); })
-                .catch(() => { if (isMounted) setWhatsappConnected(false); });
-        };
-        // Initial fetch only — do NOT set a recurring interval.
-        // Ongoing status is pushed via WebSocket → Zustand store → whatsappReady effect above.
-        checkWhatsapp();
+        // Verify WhatsApp live status (not cached via integration store)
+        apiFetch(`/mcp/whatsapp/qr`)
+            .then(data => { if (isMounted) setWhatsappConnected(!!data.ready); })
+            .catch(() => { if (isMounted && whatsappReady === null) setWhatsappConnected(false); });
 
         const handleMessage = (event) => {
             if (event.data === 'google_oauth_success') {
                 setToast({ msg: 'Google connected successfully!', type: 'success' });
                 setTimeout(() => setToast(null), 4000);
-                checkGoogleStatus();
+                // Force a fresh fetch next time Workspace is visited
+                useStore.getState().invalidateIntegrationCache();
+                setGmailConnected(true);
+                setCalendarConnected(true);
             }
         };
         window.addEventListener('message', handleMessage);
 
-        return () => { 
-            isMounted = false; 
+        return () => {
+            isMounted = false;
             window.removeEventListener('message', handleMessage);
         };
-    }, [user.uid]); // uid is a stable string — only re-runs if the user actually changes
+    }, [user.uid]);
 
     const showToast = (msg, type = 'success') => {
         setToast({ msg, type });
@@ -154,34 +135,38 @@ const Settings = () => {
 
     const handleSave = async () => {
         setIsSaving(true);
-        localStorage.setItem(`autonomous_mode_${user.uid}`, autonomous);
-        
+
+        // Merge autonomousMode into draftPreferences for unified save
+        const prefsToSave = { ...draftPreferences };
+
         try {
             await apiFetch(`/settings/telegram`, {
                 method: 'POST',
                 body: JSON.stringify(teleConfig)
             });
 
-            setPreferences(draftPreferences);
+            // Update store (persisted to localStorage) immediately
+            setPreferences(prefsToSave);
 
-            await apiFetch(`/settings/preferences`, {
+            // Sync to backend in background
+            apiFetch(`/settings/preferences`, {
                 method: 'PUT',
-                body: JSON.stringify(draftPreferences)
-            });
+                body: JSON.stringify(prefsToSave)
+            }).catch(err => console.warn('Preference backend sync failed:', err));
 
-            useStore.getState().updateUser({ 
-                name: editName, 
-                email: editEmail, 
-                photoURL: editPhoto, 
-                role: editRole 
+            useStore.getState().updateUser({
+                name: editName,
+                email: editEmail,
+                photoURL: editPhoto,
+                role: editRole
             });
 
             if (auth.currentUser) {
-                updateProfile(auth.currentUser, { 
+                updateProfile(auth.currentUser, {
                     displayName: editName,
-                    photoURL: editPhoto 
+                    photoURL: editPhoto
                 }).catch(console.error);
-                
+
                 const userRef = doc(db, 'users', auth.currentUser.uid);
                 setDoc(userRef, {
                     name: editName,
@@ -323,7 +308,7 @@ const Settings = () => {
 
             <Section icon={Brain} title="AI Behaviour">
                 <Row label="Autonomous Mode" description="Allow Twin to execute emails/events without your approval">
-                    <Toggle value={autonomous} onChange={setAutonomous} />
+                    <Toggle value={draftPreferences.autonomousMode ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, autonomousMode: val }))} />
                 </Row>
                 <Row label="Proactive Notifications" description="Receive AI-generated reminders and briefings">
                     <Toggle value={draftPreferences.notifications ?? false} onChange={(val) => setDraftPreferences(p => ({ ...p, notifications: val }))} />

@@ -5,8 +5,10 @@ import { Mail, Calendar, MessageSquare, ExternalLink, Unlink, MessageCircle, QrC
 import { API_BASE } from '../config'
 import { apiFetch } from '../utils/apiClient'
 
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
 const Workspace = () => {
-    const { preferences, togglePreference, setPreference, auth: storeAuth, whatsappReady, setWhatsappReady } = useStore();
+    const { preferences, togglePreference, setPreference, auth: storeAuth, whatsappReady, setWhatsappReady, setAllIntegrations, setIntegration, invalidateIntegrationCache } = useStore();
     const [connecting, setConnecting] = useState(false);
 
     const [gmailConnected, setGmailConnected] = useState(false);
@@ -72,45 +74,81 @@ const Workspace = () => {
         else if (whatsappReady === false) setWhatsappStatus('offline');
     }, [whatsappReady]);
 
+    // ── Cache-aware integration status fetch ──────────────────────────────────
     useEffect(() => {
         if (!storeAuth.user?.uid) return;
 
-        apiFetch(`/integrations/google/status`)
-            .then((data) => {
-                setGmailConnected(!!data?.gmail_connected);
-                setCalendarConnected(!!data?.calendar_connected);
-            })
-            .catch(console.error)
-            .finally(() => setConnecting(false))
+        const fetchStatus = async () => {
+            const { integrations } = useStore.getState();
+            const cacheAge = integrations.lastFetched
+                ? Date.now() - integrations.lastFetched
+                : Infinity;
 
-        apiFetch(`/integrations/slack/status`)
-            .then((data) => setSlackConnected(!!data?.connected))
-            .catch(console.error)
+            if (cacheAge < CACHE_TTL) {
+                // Cache is fresh — restore from store, skip all network calls
+                setGmailConnected(!!integrations.gmail);
+                setCalendarConnected(!!integrations.calendar);
+                setSlackConnected(!!integrations.slack);
+                if (integrations.whatsapp) setWhatsappStatus('ok');
+                setConnecting(false);
+            } else {
+                // Cache stale or empty — fetch fresh from all APIs in parallel
+                setConnecting(true);
+                try {
+                    const [googleRes, slackRes, mcpRes] = await Promise.allSettled([
+                        apiFetch('/integrations/google/status'),
+                        apiFetch('/integrations/slack/status'),
+                        apiFetch('/mcp/status'),
+                    ]);
 
+                    const newState = {};
+
+                    if (googleRes.status === 'fulfilled') {
+                        newState.gmail = !!googleRes.value?.gmail_connected;
+                        newState.calendar = !!googleRes.value?.calendar_connected;
+                        setGmailConnected(newState.gmail);
+                        setCalendarConnected(newState.calendar);
+                    }
+                    if (slackRes.status === 'fulfilled') {
+                        newState.slack = !!slackRes.value?.connected;
+                        setSlackConnected(newState.slack);
+                    }
+                    if (mcpRes.status === 'fulfilled') {
+                        const wa = mcpRes.value?.servers?.find(s => s.name === 'whatsapp');
+                        newState.whatsapp = wa?.status === 'ok';
+                        if (newState.whatsapp) setWhatsappStatus('ok');
+                    }
+
+                    // Persist to store (saved to localStorage)
+                    setAllIntegrations(newState);
+                } catch (err) {
+                    console.error('Integration status fetch failed:', err);
+                } finally {
+                    setConnecting(false);
+                }
+            }
+        };
+
+        fetchStatus();
         loadMcpStatus();
 
         const pollInterval = setInterval(() => {
             loadMcpStatus();
-
-            // Use ref instead of closure over showQrModal state to avoid
-            // making showQrModal a dep (which would restart the interval each open/close)
             if (showQrModalRef.current) {
                 apiFetch(`/mcp/whatsapp/qr`)
                     .then(data => {
                         setQrCode(data?.qr || null);
                         if (data?.ready) {
-                            // Confirm ready for 2s before auto-closing to avoid
-                            // a brief ready=false flash kicking the QR back open
                             if (!waReadyConfirmRef.current) {
                                 waReadyConfirmRef.current = setTimeout(() => {
                                     setShowQrModal(false);
                                     showQrModalRef.current = false;
                                     setWhatsappStatus('ok');
+                                    setIntegration('whatsapp', true);
                                     waReadyConfirmRef.current = null;
                                 }, 2000);
                             }
                         } else {
-                            // Not ready — cancel any pending auto-close confirmation
                             if (waReadyConfirmRef.current) {
                                 clearTimeout(waReadyConfirmRef.current);
                                 waReadyConfirmRef.current = null;
@@ -125,7 +163,7 @@ const Workspace = () => {
             clearInterval(pollInterval);
             if (waReadyConfirmRef.current) clearTimeout(waReadyConfirmRef.current);
         };
-    }, [storeAuth.user?.uid, loadMcpStatus]) // intentionally excludes showQrModal — use ref instead
+    }, [storeAuth.user?.uid, loadMcpStatus])
 
     const handleMcpToggle = async () => {
         const newEnabled = !mcpData.mcp_enabled;
@@ -153,6 +191,8 @@ const Workspace = () => {
                         setWhatsappStatus('offline');
                         setWhatsappReady(false);
                         setPreference('whatsappSync', false);
+                        // Update cache immediately
+                        setIntegration('whatsapp', false);
                     } else {
                         const provider = (tool.name === 'Gmail' || tool.name === 'Calendar') ? 'google' : 'slack';
                         await apiFetch(`/integrations/${provider}/disconnect`, { method: 'POST' });
@@ -162,9 +202,12 @@ const Workspace = () => {
                             setCalendarConnected(false);
                             setPreference('gmailSync', false);
                             setPreference('calendarSync', false);
+                            // Update cache immediately
+                            setAllIntegrations({ gmail: false, calendar: false });
                         } else if (provider === 'slack') {
                             setSlackConnected(false);
                             setPreference('slackSync', false);
+                            setIntegration('slack', false);
                         }
                     }
                 } catch (e) {

@@ -292,6 +292,18 @@ export const Login = ({ onSignup, onForgotPassword }) => {
 
     /** Shared post-auth handler: sync backend, update store, navigate */
     const finishAuth = async (firebaseUser) => {
+        let onboardingCompleted = false;
+        try {
+            const { doc, getDoc } = await import('firebase/firestore');
+            const { db } = await import('../firebase');
+            const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+            if (userSnap.exists()) {
+                onboardingCompleted = !!userSnap.data()?.onboardingCompleted;
+            }
+        } catch (e) {
+            console.warn("Failed to check onboarding status on login", e);
+        }
+
         // Optimistic login with Firebase profile
         login({
             uid:         firebaseUser.uid,
@@ -302,7 +314,7 @@ export const Login = ({ onSignup, onForgotPassword }) => {
             is_admin:    false,
         })
         // Navigate immediately — don't block on backend
-        setCurrentScreen('main')
+        setCurrentScreen(onboardingCompleted ? 'main' : 'welcome')
         // Background backend sync — updates accessToken with real JWT
         syncWithBackend(firebaseUser, updateUser)
     }
@@ -453,7 +465,7 @@ export const Signup = ({ onBack }) => {
             accessToken: await firebaseUser.getIdToken(),
             is_admin:    false,
         })
-        setCurrentScreen('main')
+        setCurrentScreen('welcome')
         syncWithBackend(firebaseUser, updateUser)
     }
 

@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from googleapiclient.errors import HttpError
 
-from db.database import get_db, engine
+from db.database import get_db, engine, SessionLocal
 from db.models import Base, User, TaskLog, ProcessedEmail, OAuthState, IntegrationToken, StructuredMemory, FileAsset, ArchiveMemory
 from db.auth import hash_password, verify_password, create_access_token, decode_token
 from tools.gmail_tool import read_recent_emails, draft_email, send_email, reply_to_email, get_email_details, send_styled_invite, download_attachment
@@ -389,7 +389,10 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                             pass
 
                         if needs_reply and category in EMAIL_CATEGORIES_REQUIRING_REPLY:
-                            # Auto-draft a reply for the user to review
+                            # FIX: Bypass the full LangGraph to avoid re-classification
+                            # and planner overwriting the known to/subject fields.
+                            # Call generate_severity_aware_email directly (same function
+                            # planner_node uses), then save the draft immediately.
                             try:
                                 schedule_context = "Schedule is fully clear/free."
                                 try:
@@ -399,33 +402,47 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                                         schedule_context = "CURRENTLY SCHEDULED (BUSY) TIMES:\n" + "\n".join([f"- {e['title']} from {e['start']} to {e['end']}" for e in events]) + "\n\nAll other times are FREE and AVAILABLE."
                                     else:
                                         schedule_context = "Schedule is fully clear/free today. You are available at all times."
-                                except Exception as e:
-                                    logger.warning(f"Failed to fetch schedule for draft context: {e}")
+                                except Exception as sched_e:
+                                    logger.warning(f"Failed to fetch schedule for draft context: {sched_e}")
 
-                                initial_state = {
-                                    "user_id": uid,
-                                    "user_name": user.name if user else "User",
-                                    "input": "Draft a professional, direct reply to this email. IMPORTANT: Use the SCHEDULE CONTEXT provided below. The context lists your BUSY times. If the sender's requested time is FREE, confidently accept the meeting. If it conflicts, propose a different time based on when you are free. DO NOT say you need to check your schedule.",
-                                    "intent": "email",
-                                    "task_plan": [],
-                                    "output": "",
-                                    "chat_history": [],
-                                    "approval_required": True,
-                                    "context": f"EMAIL DETAILS:\nFrom: {info['from']}\nSubject: {info['subject']}\nBody: {info['body'][:1000]}\n\nSCHEDULE CONTEXT:\n{schedule_context}"
-                                }
-                                res = await twin_graph.ainvoke(initial_state)
-                                clean_reply = extract_reply(res["output"])
-                                if clean_reply.strip():
-                                    draft_email(db=db, user_id=uid, to=info["from"], subject=f"Re: {info['subject']}", body=clean_reply)
+                                from graph.nodes import generate_severity_aware_email
+                                user_name = user.name if user else "User"
+                                context_block = (
+                                    f"EMAIL DETAILS:\nFrom: {info['from']}\n"
+                                    f"Subject: {info['subject']}\n"
+                                    f"Body: {info['body'][:1000]}\n\n"
+                                    f"SCHEDULE CONTEXT:\n{schedule_context}"
+                                )
+                                input_text = (
+                                    "Draft a professional, direct reply to this email. "
+                                    "Use the schedule context. "
+                                    "If the sender's requested time is FREE, confidently accept. "
+                                    "If it conflicts, propose an alternate free slot. "
+                                    "Do NOT say you need to check your schedule."
+                                )
+                                refined_subject, refined_body = generate_severity_aware_email(
+                                    user_name=user_name,
+                                    to_addr=info["from"],
+                                    subject=f"Re: {info['subject']}",
+                                    input_text=input_text,
+                                    context_block=context_block,
+                                    history_prompt=""
+                                )
+                                clean_reply = refined_body.strip()
+                                if clean_reply:
+                                    draft_email(db=db, user_id=uid, to=info["from"], subject=refined_subject, body=clean_reply)
                                     entry.action_taken = "drafted"
                                     logger.info(f"[EmailMonitor] Auto-drafted reply for: {info['subject'][:50]}")
-                                    
-                                    # Send Telegram notification for the new draft
+
+                                    # Telegram notification for the new draft
                                     if user and user.telegram_enabled:
                                         send_telegram_message(
-                                            user.telegram_chat_id, 
-                                            f"📝 *Draft Created*\n\nI have drafted a reply to: *{info['subject']}* from {info['from']}.\n\nPlease check your Gmail Drafts folder to review and send it."
+                                            user.telegram_chat_id,
+                                            f"📝 *Draft Created*\n\nI've drafted a reply to: *{info['subject']}* from {info['from']}.\n\nCheck your Gmail Drafts to review and send."
                                         )
+                                else:
+                                    entry.action_taken = "indexed"
+                                    logger.warning(f"[EmailMonitor] Auto-draft produced empty body for: {info['subject'][:50]}")
                             except Exception as draft_e:
                                 logger.error(f"Auto-draft failed: {draft_e}")
                                 entry.action_taken = "indexed"
@@ -803,36 +820,42 @@ async def monitor_calendar():
         logger.info("[Monitor] Calendar monitor stopping...")
         raise
 
+# IST = UTC+5:30
+_IST_OFFSET = timedelta(hours=5, minutes=30)
+_BRIEFING_HOUR_IST = 10
+_BRIEFING_MINUTE_IST = 30
+
+def _seconds_until_next_briefing() -> float:
+    """Return seconds until the next 10:30 AM IST occurrence."""
+    now_ist = datetime.now(timezone.utc) + _IST_OFFSET
+    target = now_ist.replace(hour=_BRIEFING_HOUR_IST, minute=_BRIEFING_MINUTE_IST, second=0, microsecond=0)
+    if now_ist >= target:
+        # Already past 10:30 today — schedule for tomorrow
+        target += timedelta(days=1)
+    return (target - now_ist).total_seconds()
+
+
 def process_daily_briefing():
-    """Logic for daily briefing checks."""
+    """Send daily briefing to every Telegram-enabled connected user."""
     try:
-        now = datetime.now(timezone.utc)  # M1 FIX: use tz-aware datetime.
-        # For simplicity, if it's been > 20 hours since last briefing, send a new one
+        now = datetime.now(timezone.utc)
         # H1 FIX: Use SessionLocal() directly.
         db = SessionLocal()
         try:
             users = db.query(User).filter(User.telegram_enabled == True, User.telegram_chat_id.isnot(None)).all()
             for user in users:
-                # 🟢 Skip users without any active Google connection
+                # Skip users without any active Google connection
                 if not is_connected(db=db, user_id=user.id):
                     continue
 
-                should_send = False
-                if not user.last_briefing_at:
-                    should_send = True
-                elif now - user.last_briefing_at > timedelta(hours=20):
-                    should_send = True
-                
-                if should_send:
-                    logger.info(f"Generating scheduled briefing for {user.id}")
-                    briefing = generate_daily_briefing(db, user.id, user.name)
-                    # This will push a text message via Telegram
-                    send_telegram_message(user.telegram_chat_id, briefing)
-                    user.last_briefing_at = now
-                    db.commit()
-                    
-                    # Small sleep between users to avoid Groq rate limits (Synchronous in thread)
-                    time.sleep(2)
+                logger.info(f"[Briefing] Sending scheduled 10:30 AM IST briefing for {user.id}")
+                briefing = generate_daily_briefing(db, user.id, user.name)
+                send_telegram_message(user.telegram_chat_id, briefing)
+                user.last_briefing_at = now
+                db.commit()
+
+                # Small delay between users to avoid Groq rate limits
+                time.sleep(2)
         except Exception:
             db.rollback()
             raise
@@ -841,12 +864,19 @@ def process_daily_briefing():
     except Exception as e:
         logger.error(f"Daily Briefing Task Error: {e}")
 
+
 async def daily_briefing_task():
-    """Checks every hour if a briefing needs to be sent."""
+    """Fires once every day at exactly 10:30 AM IST."""
     try:
         while True:
+            wait_secs = _seconds_until_next_briefing()
+            now_ist = datetime.now(timezone.utc) + _IST_OFFSET
+            logger.info(
+                f"[Briefing] Next briefing in {wait_secs/3600:.2f}h "
+                f"(~{(now_ist + timedelta(seconds=wait_secs)).strftime('%Y-%m-%d %H:%M IST')})"
+            )
+            await asyncio.sleep(wait_secs)
             await asyncio.to_thread(process_daily_briefing)
-            await asyncio.sleep(3600) # Check every hour
     except asyncio.CancelledError:
         logger.info("[Monitor] Briefing task stopping...")
         raise
@@ -1119,6 +1149,10 @@ async def startup_event():
     if os.getenv("ENABLE_MEMORY_LIFECYCLE", "true") == "true":
         logger.info("🧠 Starting Memory Lifecycle...")
         background_tasks.add(asyncio.create_task(run_memory_lifecycle()))
+
+    if os.getenv("ENABLE_BRIEFING_TASK", "true") == "true":
+        logger.info("📋 Starting Daily Briefing Task (fires at 10:30 AM IST)...")
+        background_tasks.add(asyncio.create_task(daily_briefing_task()))
 
     # 2. Inject auth dependency into agent broker (avoids circular import)
     set_auth_dependency(get_current_user)
@@ -2415,6 +2449,8 @@ def firebase_auth(request: Request, req: FirebaseAuthRequest, background_tasks: 
 
     background_tasks.add_task(index_calendar_to_memory, user.id)
 
+    from security.auth import _apply_hardlock
+    user = _apply_hardlock(user)
     access_token = create_access_token({"sub": str(user.id)})
     user_payload = {
         "id": str(user.id),
@@ -2739,6 +2775,19 @@ def update_preferences(req: dict, current_user: User = Depends(get_current_user)
     current_user.preferences_json = json.dumps(req, ensure_ascii=False)
     db.commit()
     return {"status": "success"}
+
+@app.patch("/user/preferences")
+def patch_preferences(req: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Partial preference update — merges the supplied keys into existing preferences JSON."""
+    import json
+    try:
+        existing = json.loads(current_user.preferences_json or "{}")
+    except Exception:
+        existing = {}
+    existing.update(req)
+    current_user.preferences_json = json.dumps(existing, ensure_ascii=False)
+    db.commit()
+    return {"status": "saved", "preferences": existing}
 
 @app.get("/settings/preferences")
 def get_preferences(current_user: User = Depends(get_current_user)):

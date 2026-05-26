@@ -7,25 +7,25 @@ export const useStore = create(
             // Auth State
             auth: {
                 isLoggedIn: false,
-                user: null, // Holds basic user profile
+                user: null,
             },
             authInitialized: false,
             setAuthInitialized: (val) => set({ authInitialized: !!val }),
             isAdmin: false,
             setIsAdmin: (val) => set({ isAdmin: !!val }),
-            login: (user, preferences = null) => set((state) => ({ 
+            login: (user, preferences = null) => set((state) => ({
                 auth: { isLoggedIn: true, user },
                 isAdmin: !!(user?.is_admin ?? user?.isAdmin ?? false),
                 preferences: preferences || state.preferences
             })),
-            updateUser: (updates) => set((state) => ({ 
+            updateUser: (updates) => set((state) => ({
                 auth: { ...state.auth, user: { ...state.auth.user, ...updates } },
                 isAdmin: updates?.is_admin !== undefined ? !!updates.is_admin : state.isAdmin,
             })),
-            logout: () => set({ 
-                auth: { isLoggedIn: false, user: null }, 
-                isAdmin: false, 
-                currentScreen: 'login', 
+            logout: () => set({
+                auth: { isLoggedIn: false, user: null },
+                isAdmin: false,
+                currentScreen: 'login',
                 view: 'home',
                 preferences: {
                     autonomousMode: false,
@@ -34,22 +34,34 @@ export const useStore = create(
                     telegramSync: false,
                     slackSync: false,
                     whatsappSync: false,
+                    notifications: false,
+                    memoryRetention: true,
+                    emailSummary: false,
+                    actionAlerts: true,
+                },
+                integrations: {
+                    gmail: false,
+                    calendar: false,
+                    slack: false,
+                    telegram: false,
+                    whatsapp: false,
+                    lastFetched: null,
                 },
                 tasks: []
             }),
 
             // Navigation State
-            currentScreen: 'login', // Tracks onboarding / main app
+            currentScreen: 'login',
             setCurrentScreen: (screen) => set({ currentScreen: screen }),
-            
-            view: 'home', // Tracks dashboard tabs (home, chat, integrations, activity, settings)
+
+            view: 'home',
             setView: (view) => set({ view }),
 
             // Theme State ('light', 'dark', 'system')
             theme: 'system',
             setTheme: (theme) => set({ theme }),
 
-            // Preferences
+            // Preferences — ALL persisted, source of truth for Settings page
             preferences: {
                 autonomousMode: false,
                 gmailSync: false,
@@ -57,6 +69,10 @@ export const useStore = create(
                 telegramSync: false,
                 slackSync: false,
                 whatsappSync: false,
+                notifications: false,
+                memoryRetention: true,
+                emailSummary: false,
+                actionAlerts: true,
             },
             setPreferences: (newPrefs) => set({ preferences: newPrefs }),
             setPreference: (key, value) => set((state) => ({
@@ -69,9 +85,37 @@ export const useStore = create(
                 }
             })),
 
+            // Integration status cache — persisted with TTL
+            integrations: {
+                gmail: false,
+                calendar: false,
+                slack: false,
+                telegram: false,
+                whatsapp: false,
+                lastFetched: null,
+            },
+            setIntegration: (key, value) => set((state) => ({
+                integrations: {
+                    ...state.integrations,
+                    [key]: value,
+                    lastFetched: Date.now(),
+                }
+            })),
+            setAllIntegrations: (data) => set((state) => ({
+                integrations: {
+                    ...state.integrations,
+                    ...data,
+                    // Preserve lastFetched unless explicitly overridden (e.g. null to invalidate)
+                    lastFetched: 'lastFetched' in data ? data.lastFetched : Date.now(),
+                }
+            })),
+            invalidateIntegrationCache: () => set((state) => ({
+                integrations: { ...state.integrations, lastFetched: null }
+            })),
+
             // Tasks
             tasks: [],
-            addTask: (task) => set((state) => ({ tasks: [{id: Date.now().toString(), createdAt: new Date().toISOString(), ...task}, ...state.tasks] })),
+            addTask: (task) => set((state) => ({ tasks: [{ id: Date.now().toString(), createdAt: new Date().toISOString(), ...task }, ...state.tasks] })),
             removeTask: (id) => set((state) => ({ tasks: state.tasks.filter(t => t.id !== id) })),
 
             // Detailed Navigation / Spotlight
@@ -88,22 +132,22 @@ export const useStore = create(
                 if (state.unreadTwinChats.some(m => m.id === msg.id)) return state;
                 return { unreadTwinChats: [...state.unreadTwinChats, msg] };
             }),
-            removeUnreadTwinChat: (sessionId) => set(state => ({ 
-                unreadTwinChats: state.unreadTwinChats.filter(m => m.session_id !== sessionId) 
+            removeUnreadTwinChat: (sessionId) => set(state => ({
+                unreadTwinChats: state.unreadTwinChats.filter(m => m.session_id !== sessionId)
             })),
 
             // WhatsApp live status (driven by WebSocket push from backend)
-            // null = unknown (not yet fetched), true = connected, false = disconnected
             whatsappReady: null,
             setWhatsappReady: (ready) => set({ whatsappReady: !!ready }),
         }),
         {
-            name: 'ai-twin-storage', // key in localStorage
-            partialize: (state) => ({ 
-                auth: state.auth, 
+            name: 'ai-twin-storage',
+            partialize: (state) => ({
+                auth: state.auth,
                 isAdmin: state.isAdmin,
-                theme: state.theme, 
+                theme: state.theme,
                 preferences: state.preferences,
+                integrations: state.integrations,
                 currentScreen: state.currentScreen,
                 view: state.view,
                 tasks: state.tasks,

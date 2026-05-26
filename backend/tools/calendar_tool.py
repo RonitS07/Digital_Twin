@@ -299,9 +299,9 @@ def get_calendar_range(db: Session, user_id: str, days_past: int = 90, days_futu
     from datetime import timedelta
     service = get_calendar_service(db=db, user_id=user_id)
     
-    now = datetime.utcnow()
-    timeMin = (now - timedelta(days=days_past)).isoformat() + "Z"
-    timeMax = (now + timedelta(days=days_future)).isoformat() + "Z"
+    now = datetime.now(timezone.utc)
+    timeMin = (now - timedelta(days=days_past)).isoformat()
+    timeMax = (now + timedelta(days=days_future)).isoformat()
     
     try:
         calendar_list = service.calendarList().list().execute().get('items', [])

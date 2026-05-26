@@ -47,6 +47,7 @@ from services.twin_chat_service import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/twin-chat", tags=["twin-chat"])
+background_tasks = set()
 
 # ────────────────────────────────────────────────────────────────────
 # M6 FIX: Payload size enforcement
@@ -449,6 +450,14 @@ async def send_message(
     if not effective_input and body.files:
         effective_input = "Please analyze and describe the attached file(s)."
 
+    # Fast Classifier bypass for conversational messages
+    CONVERSATIONAL_PATTERNS = ["hello", "hi", "hey", "how are you", "what's up", "good morning", "good evening", "ok", "okay", "thanks", "thank you", "yes", "no", "sure", "got it", "cool", "bye", "awesome", "perfect"]
+    ACTION_KEYWORDS = ["schedule", "meeting", "email", "draft", "send", "post", "slack", "telegram", "whatsapp", "summarize", "analyze", "create", "generate", "image", "file", "remind", "book"]
+
+    effective_input_lower = effective_input.lower()
+    is_conversational = any(effective_input_lower == p or effective_input_lower.startswith(p + " ") or effective_input_lower.startswith(p + "!") or effective_input_lower.startswith(p + ",") for p in CONVERSATIONAL_PATTERNS)
+    has_action = any(k in effective_input_lower for k in ACTION_KEYWORDS)
+
     if body.files:
         text_file_context = []
         for f in body.files:
@@ -485,7 +494,7 @@ async def send_message(
     
     try:
         # Bypass AI processing if it's a normal message with no files
-        if body.intent_hint == "general" and not body.files:
+        if (body.intent_hint == "general" and not body.files) or (is_conversational and not has_action and not body.files):
             final_state = {"intent": "general", "output": body.content}
         else:
             final_state = await twin_graph.ainvoke(initial_state)
@@ -523,25 +532,47 @@ async def send_message(
     has_visual = bool(final_state.get("image_url") or final_state.get("chart_data") or final_state.get("viz_config") or final_state.get("generated_file"))
     
     if (has_action or is_task or has_visual) and ai_output and ai_output.strip() != body.content.strip():
-        # Execute tasks if necessary (e.g. email) before saving
         final_ai_content = ai_output
         action_match = re.search(r"<action>(.*?)</action>", final_ai_content, re.DOTALL)
         if action_match:
             try:
                 action_data = json.loads(action_match.group(1))
-                if action_data.get("intent") == "email":
-                    from tools.gmail_tool import send_email
-                    to = action_data.get("to")
-                    subject = action_data.get("subject")
-                    body_html = action_data.get("body")
-                    try:
-                        send_email(db, current_user.id, to, subject, body_html)
-                        final_ai_content = re.sub(r"<action>.*?</action>", "", final_ai_content, flags=re.DOTALL)
-                        final_ai_content += f"\n\n*I have sent you an email regarding the subject: {subject}*"
-                    except Exception as e:
-                        final_ai_content += f"\n\n*(Failed to send email: {str(e)})*"
-            except Exception:
-                pass
+                action_intent = action_data.get("intent")
+                
+                if action_intent in ["email", "telegram", "slack", "telegram_send", "slack_send", "whatsapp_send"]:
+                    # Cross-twin intent: Target the partner's account if it's a direct message to them
+                    target_user_id = partner_id
+                    
+                    to = action_data.get("to", partner.email if partner else "")
+                    subject = action_data.get("subject", f"Message from {current_user.name}")
+                    body_html = action_data.get("body", action_data.get("message", body.content))
+                    
+                    from db.models import TaskLog
+                    new_task = TaskLog(
+                        user_id=current_user.id, # We still want the sender to approve the task
+                        session_id=session_id,
+                        kind="approval",
+                        input=body.content,
+                        intent=action_intent,
+                        output=ai_output,
+                        approved=False,
+                        response_type="text",
+                        metadata_json=json.dumps({
+                            "approval_required": True,
+                            "task_plan": [{"tool": action_intent, "args": {"to": to, "subject": subject, "body": body_html, "message": body_html, "target_user_id": target_user_id}}],
+                            "recipient": to,
+                            "subject": subject,
+                            "target_user_id": target_user_id
+                        })
+                    )
+                    db.add(new_task)
+                    db.commit()
+                    
+                    # Sanitize output content so plaintext XML doesn't leak
+                    final_ai_content = re.sub(r"<action>.*?</action>", "", final_ai_content, flags=re.DOTALL)
+                    final_ai_content += f"\n\n*(Pending approval: Execute {action_intent} for {to}. Please approve this action.)*"
+            except Exception as e:
+                logger.error(f"[TwinChat] Action parsing failed: {e}")
 
         ai_metadata = {
             "intent": intent,
@@ -574,7 +605,7 @@ async def send_message(
         db.refresh(ai_msg)
 
     # Update session last_message_at
-    session.last_message_at = datetime.utcnow()
+    session.last_message_at = datetime.now(timezone.utc)
     db.commit()
 
     # Index human message in memory
@@ -590,8 +621,16 @@ async def send_message(
 
     # Broadcast BOTH messages
     human_serialized = _serialize_message(human_msg)
-    await manager.broadcast_to_session(session, {
+    
+    # Broadcast to sender (new_message)
+    await manager.send_to_user(current_user.id, {
         "event": "new_message",
+        "message": human_serialized,
+    })
+    
+    # Broadcast to partner (twin_message / new_message)
+    await manager.send_to_user(partner_id, {
+        "event": "twin_message", # Real-time sync for receiver
         "message": human_serialized,
     })
 
@@ -605,8 +644,6 @@ async def send_message(
     # Generate Twin enrichment for the partner asynchronously for faster UX.
     is_task = intent not in ["general", "other"]
     if not is_task and session.twin_mode:
-        # H4 FIX: Store task reference to prevent silent GC before completion.
-        # Attach a done-callback to log any exception so errors are observable.
         _task = asyncio.create_task(
             _generate_partner_suggestion_async(
                 session_id=session_id,
@@ -615,6 +652,8 @@ async def send_message(
                 incoming_message=body.content,
             )
         )
+        background_tasks.add(_task)
+        _task.add_done_callback(background_tasks.discard)
         def _log_task_error(t: asyncio.Task):
             if not t.cancelled() and t.exception():
                 logger.error(f"[TwinChat] partner suggestion task failed: {t.exception()}")

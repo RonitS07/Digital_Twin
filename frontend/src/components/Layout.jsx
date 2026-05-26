@@ -389,11 +389,12 @@ const Layout = ({ children, currentView, setView }) => {
         const connect = () => {
             const proto = (API_BASE ? API_BASE.startsWith('https') : window.location.protocol === 'https:') ? 'wss' : 'ws';
             const host = API_BASE ? API_BASE.replace(/^https?:\/\//, '') : window.location.host;
-            const url = `${proto}://${host}/twin-chat/ws?token=${encodeURIComponent(user.accessToken)}`;
+            const url = `${proto}://${host}/twin-chat/ws`;
             const ws = new WebSocket(url);
             wsRef.current = ws;
 
             ws.onopen = () => {
+                ws.send(JSON.stringify({ event: 'auth', token: user.accessToken }));
                 retryDelay = 1200; // reset backoff on successful connect
             };
 

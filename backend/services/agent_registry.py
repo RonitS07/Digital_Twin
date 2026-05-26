@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -96,10 +96,16 @@ def register_agent(db: Session, user: User) -> AgentRegistry:
     agent_endpoint = f"/agent/{user.id}/receive"
 
     if existing:
-        # Update last_seen, display_name, and handle (to match email request)
+        # Update last_seen, display_name
         existing.display_name = user.name or existing.display_name
-        existing.handle = user.email or existing.handle
-        existing.last_seen = datetime.utcnow()
+        
+        # M4 FIX: Do not overwrite the handle with the full email address.
+        # If the handle is missing or is still an email address, derive a secure alphanumeric handle from the prefix.
+        if not existing.handle or "@" in existing.handle:
+            base_handle = _derive_handle(user.name or "", user.email or "")
+            existing.handle = _unique_handle(db, base_handle, user.id)
+            
+        existing.last_seen = datetime.now(timezone.utc)
         existing.agent_endpoint = agent_endpoint
         db.commit()
         db.refresh(existing)
@@ -153,7 +159,7 @@ def update_agent_status(db: Session, user_id: str, status: str) -> bool:
     if not agent:
         return False
     agent.status = status
-    agent.last_seen = datetime.utcnow()
+    agent.last_seen = datetime.now(timezone.utc)
     db.commit()
     return True
 

@@ -68,6 +68,18 @@ function App() {
 
                         const backendData = backendRes?.ok ? await backendRes.json() : {}
 
+                        let onboardingCompleted = false;
+                        try {
+                            const { doc, getDoc } = await import('firebase/firestore');
+                            const { db } = await import('./firebase');
+                            const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+                            if (userSnap.exists()) {
+                                onboardingCompleted = !!userSnap.data()?.onboardingCompleted;
+                            }
+                        } catch (e) {
+                            console.warn("Failed to check onboarding status on load", e);
+                        }
+
                         login({
                             uid:         firebaseUser.uid,
                             email:       firebaseUser.email || '',
@@ -77,7 +89,7 @@ function App() {
                             is_admin:    !!(backendData?.user?.is_admin ?? backendData?.is_admin),
                         }, backendData.preferences)
                         setIsAdmin(!!(backendData?.user?.is_admin ?? backendData?.is_admin))
-                        setCurrentScreen('main')
+                        setCurrentScreen(onboardingCompleted ? 'main' : 'welcome')
                     }
                 } catch (err) {
                     console.warn('onAuthStateChanged rehydration error:', err)

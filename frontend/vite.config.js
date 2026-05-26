@@ -25,10 +25,16 @@ export default defineConfig({
       '/sessions': 'http://localhost:8000',
       '/history': 'http://localhost:8000',
       '/analytics': 'http://localhost:8000',
+      '/activity': 'http://localhost:8000',
       '/agent': 'http://localhost:8000',
       '/mcp': 'http://localhost:8000',
       '/intelligence': 'http://localhost:8000',
-      '/test-telegram': 'http://localhost:8000'
+      '/test-telegram': 'http://localhost:8000',
+      '/settings': 'http://localhost:8000',
+      '/integrations': 'http://localhost:8000',
+      '/oauth': 'http://localhost:8000',
+      '/memory': 'http://localhost:8000',
+      '/admin': 'http://localhost:8000'
     }
   },
 })

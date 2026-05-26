@@ -20,6 +20,9 @@ import {
   Loader2, 
   Sparkles, 
   File as FileIcon, 
+  FileText,
+  ImagePlus,
+  MessageCircle,
   ExternalLink,
   Wand2
 } from 'lucide-react'
@@ -396,11 +399,88 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
   const [attachedFiles, setAttachedFiles] = useState([])
   const [selectedIntent, setSelectedIntent] = useState('general')
   const [isListening, setIsListening] = useState(false)
+  const [plusOpen, setPlusOpen] = useState(false)
   const recognitionRef = useRef(null)
   const fileInputRef = useRef(null)
+  const plusRef = useRef(null)
 
   const messagesEndRef = useRef(null)
   const typingTimeoutRef = useRef(null)
+
+  // Close + menu on outside click
+  useEffect(() => {
+      const handler = (e) => {
+          if (plusRef.current && !plusRef.current.contains(e.target)) {
+              setPlusOpen(false)
+          }
+      }
+      document.addEventListener('mousedown', handler)
+      return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  // Ctrl+U / Cmd+U opens file picker
+  useEffect(() => {
+      const handler = (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+              e.preventDefault()
+              fileInputRef.current?.click()
+          }
+      }
+      window.addEventListener('keydown', handler)
+      return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  const menuItems = [
+      {
+          icon: Paperclip,
+          label: 'Add photos & files',
+          hint: null,
+          shortcut: 'Ctrl+U',
+          action: () => fileInputRef.current?.click()
+      },
+      {
+          icon: ImagePlus,
+          label: 'Create image',
+          hint: null,
+          shortcut: null,
+          action: () => { setInput('Generate an image of '); setSelectedIntent('visual'); }
+      },
+      {
+          icon: Calendar,
+          label: 'Schedule meeting',
+          hint: null,
+          shortcut: null,
+          action: () => { setInput('Schedule a meeting with '); setSelectedIntent('calendar'); }
+      },
+      {
+          icon: Mail,
+          label: 'Draft email',
+          hint: null,
+          shortcut: null,
+          action: () => { setInput('Draft an email to '); setSelectedIntent('email'); }
+      },
+      {
+          icon: FileText,
+          label: 'Analyze file',
+          hint: null,
+          shortcut: null,
+          action: () => { fileInputRef.current?.click(); setSelectedIntent('file_read'); }
+      },
+      {
+          icon: MessageCircle,
+          label: 'Post to Slack',
+          hint: null,
+          shortcut: null,
+          action: () => { setInput('Post to #'); setSelectedIntent('slack'); }
+      },
+      {
+          icon: MessageSquare,
+          label: 'Send Telegram',
+          hint: null,
+          shortcut: null,
+          action: () => { setInput('Send via Telegram: '); setSelectedIntent('telegram'); }
+      },
+  ]
 
   const partnerName = session?.partner?.name || 'Contact'
 
@@ -412,7 +492,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
     if (wsEvent.message?.session_id && wsEvent.message.session_id !== session.id) return
     if (wsEvent.session_id && wsEvent.session_id !== session.id) return
 
-    if (wsEvent.event === 'new_message') {
+    if (wsEvent.event === 'new_message' || wsEvent.event === 'twin_message') {
       setMessages(prev => {
         if (prev.some(m => m.id === wsEvent.message.id)) return prev
         return [...prev, wsEvent.message]
@@ -749,17 +829,65 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
               ))}
             </div>
           )}
-          <div className="flex flex-wrap gap-2 px-4 pt-3 pb-2">
-            {TWIN_INTENT_OPTIONS.map(option => (
-              <button key={option.key}
-                type="button"
-                onClick={() => setSelectedIntent(option.key)}
-                className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-all ${selectedIntent === option.key ? 'bg-primary text-white' : 'bg-surface-container text-on-surface hover:bg-primary/10'}`}>
-                {option.label}
-              </button>
-            ))}
-          </div>
           <div className="flex items-end gap-2 pl-4 pr-2 py-2">
+            {/* + menu anchor */}
+            <div className="relative flex-shrink-0 self-end pb-1" ref={plusRef}>
+                <button
+                    type="button"
+                    onClick={() => setPlusOpen(prev => !prev)}
+                    className="flex items-center justify-center w-8 h-8 rounded-full bg-white/[0.08] hover:bg-white/[0.15] border border-white/10 transition-all duration-150 text-white/60 hover:text-white/90 text-lg font-light"
+                    title="Add"
+                >
+                    +
+                </button>
+
+                {plusOpen && (
+                    <div
+                        className="absolute bottom-11 left-0 w-64 rounded-2xl border border-white/10 shadow-2xl shadow-black/60 py-2 z-50"
+                        style={{
+                            background: '#1C1C1E',
+                            animation: 'popIn 0.15s ease-out'
+                        }}
+                    >
+                        <button
+                            type="button"
+                            onClick={() => { menuItems[0].action(); setPlusOpen(false) }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.06] transition-colors duration-100 text-left group"
+                        >
+                            <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.08] group-hover:bg-white/[0.12] transition-colors flex-shrink-0">
+                                <Paperclip size={16} className="text-white/70" />
+                            </span>
+                            <span className="flex-1">
+                                <span className="block text-sm text-white/85 font-medium">Add photos &amp; files</span>
+                            </span>
+                            <span className="text-xs text-white/30 font-mono bg-white/[0.06] px-1.5 py-0.5 rounded">Ctrl+U</span>
+                        </button>
+
+                        <div className="mx-4 my-1 border-t border-white/[0.06]" />
+
+                        {menuItems.slice(1).map((item, i) => (
+                            <button
+                                key={i}
+                                type="button"
+                                onClick={() => { item.action(); setPlusOpen(false) }}
+                                className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.06] transition-colors duration-100 text-left group"
+                            >
+                                <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.08] group-hover:bg-white/[0.12] transition-colors flex-shrink-0">
+                                    <item.icon size={16} className="text-white/70" />
+                                </span>
+                                <span className="flex-1">
+                                    <span className="block text-sm text-white/85 font-medium">{item.label}</span>
+                                    {item.hint && <span className="block text-xs text-white/35 mt-0.5">{item.hint}</span>}
+                                </span>
+                                {item.shortcut && (
+                                    <span className="text-xs text-white/30 font-mono bg-white/[0.06] px-1.5 py-0.5 rounded">{item.shortcut}</span>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+            
             <div className="flex-1 relative">
               <textarea
                 value={input}
@@ -785,10 +913,6 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
             </div>
             
             <div className="flex items-center gap-1 pb-1">
-              <button type="button" onClick={() => fileInputRef.current?.click()}
-                title="Attach file" className="p-2 text-neutral/60 hover:text-primary transition-colors rounded-lg hover:bg-primary/5">
-                <Paperclip size={17} />
-              </button>
               <button
                 type="button"
                 title={isListening ? 'Stop voice input' : 'Voice input'}
