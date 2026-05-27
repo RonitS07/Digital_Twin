@@ -69,7 +69,19 @@ function App() {
                 // Here we just ensure the store token is always fresh on tab/reload.
                 try {
                     const existingUser = useStore.getState().auth.user
-                    // Only re-hydrate if the store is empty (e.g. hard refresh with Firebase session persisted)
+                    
+                    let onboardingCompleted = !!existingUser?.onboardingCompleted;
+                    try {
+                        const { doc, getDoc } = await import('firebase/firestore');
+                        const { db } = await import('./firebase');
+                        const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+                        if (userSnap.exists()) {
+                            onboardingCompleted = !!userSnap.data()?.onboardingCompleted;
+                        }
+                    } catch (e) {
+                        console.warn("Failed to check onboarding status on load", e);
+                    }
+
                     if (!existingUser || existingUser.uid !== firebaseUser.uid) {
                         const idToken = await firebaseUser.getIdToken()
                         // Try to get a backend JWT, sending idToken for optional server-side verification
@@ -88,18 +100,6 @@ function App() {
 
                         const backendData = backendRes?.ok ? await backendRes.json() : {}
 
-                        let onboardingCompleted = false;
-                        try {
-                            const { doc, getDoc } = await import('firebase/firestore');
-                            const { db } = await import('./firebase');
-                            const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
-                            if (userSnap.exists()) {
-                                onboardingCompleted = !!userSnap.data()?.onboardingCompleted;
-                            }
-                        } catch (e) {
-                            console.warn("Failed to check onboarding status on load", e);
-                        }
-
                         login({
                             uid:         firebaseUser.uid,
                             email:       firebaseUser.email || '',
@@ -107,9 +107,23 @@ function App() {
                             photoURL:    firebaseUser.photoURL || '',
                             accessToken: backendData.access_token || idToken,
                             is_admin:    !!(backendData?.user?.is_admin ?? backendData?.is_admin),
+                            onboardingCompleted,
                         }, backendData.preferences)
                         setIsAdmin(!!(backendData?.user?.is_admin ?? backendData?.is_admin))
-                        setCurrentScreen(onboardingCompleted ? 'main' : 'welcome')
+                    }
+                    
+                    // Always route authenticated users correctly on page load/refresh
+                    const currentSavedScreen = useStore.getState().currentScreen
+                    const onboardingScreens = ['welcome', 'role', 'tools', 'protocol', 'preferences', 'privacy', 'initializing']
+
+                    if (onboardingCompleted) {
+                        setCurrentScreen('main')
+                    } else {
+                        if (onboardingScreens.includes(currentSavedScreen)) {
+                            setCurrentScreen(currentSavedScreen)
+                        } else {
+                            setCurrentScreen('welcome')
+                        }
                     }
                 } catch (err) {
                     console.warn('onAuthStateChanged rehydration error:', err)

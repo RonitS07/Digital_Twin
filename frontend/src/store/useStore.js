@@ -157,6 +157,8 @@ export const useStore = create(
                 preferences: state.preferences,
                 integrations: state.integrations,
                 tasks: state.tasks,
+                currentScreen: state.currentScreen,
+                view: state.view,
                 // Persist unread notifications (capped above at 50)
                 unreadTwinChats: state.unreadTwinChats,
                 twinChatActiveSessionId: state.twinChatActiveSessionId,

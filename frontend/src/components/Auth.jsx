@@ -19,33 +19,33 @@ import { API_BASE } from '../config'
 
 const firebaseErrorMessage = (code) => {
     const map = {
-        'auth/user-not-found':          'No account found with this email.',
-        'auth/wrong-password':           'Incorrect password. Try again.',
-        'auth/invalid-credential':       'Invalid email or password.',
-        'auth/email-already-in-use':     'An account with this email already exists.',
-        'auth/weak-password':            'Password must be at least 6 characters.',
-        'auth/invalid-email':            'Please enter a valid email address.',
-        'auth/popup-closed-by-user':     'Google sign-in was cancelled.',
-        'auth/popup-blocked':            'Pop-up blocked. Please allow pop-ups and try again.',
-        'auth/cancelled-popup-request':  'Another sign-in is already in progress.',
-        'auth/network-request-failed':   'Network error. Check your connection.',
-        'auth/too-many-requests':        'Too many attempts. Please wait a moment.',
-        'auth/user-disabled':            'This account has been disabled.',
+        'auth/user-not-found': 'No account found with this email.',
+        'auth/wrong-password': 'Incorrect password. Try again.',
+        'auth/invalid-credential': 'Invalid email or password.',
+        'auth/email-already-in-use': 'An account with this email already exists.',
+        'auth/weak-password': 'Password must be at least 6 characters.',
+        'auth/invalid-email': 'Please enter a valid email address.',
+        'auth/popup-closed-by-user': 'Google sign-in was cancelled.',
+        'auth/popup-blocked': 'Pop-up blocked. Please allow pop-ups and try again.',
+        'auth/cancelled-popup-request': 'Another sign-in is already in progress.',
+        'auth/network-request-failed': 'Network error. Check your connection.',
+        'auth/too-many-requests': 'Too many attempts. Please wait a moment.',
+        'auth/user-disabled': 'This account has been disabled.',
         // ngrok / custom domain specific
-        'auth/unauthorized-domain':      'This domain is not authorized for Google sign-in. Ask the admin to add it in Firebase Console → Authentication → Authorized domains.',
-        'auth/invalid-action-code':      'This sign-in link is invalid or expired. Please try again.',
+        'auth/unauthorized-domain': 'This domain is not authorized for Google sign-in. Ask the admin to add it in Firebase Console → Authentication → Authorized domains.',
+        'auth/invalid-action-code': 'This sign-in link is invalid or expired. Please try again.',
     }
     return map[code] || 'Something went wrong. Please try again.'
 }
 
 const passwordStrength = (pw) => {
     if (!pw) return null
-    if (pw.length < 6)  return { level: 'weak',   label: 'Too short', color: 'bg-red-500',   width: '25%' }
+    if (pw.length < 6) return { level: 'weak', label: 'Too short', color: 'bg-red-500', width: '25%' }
     if (pw.length < 8 || !/[A-Z]/.test(pw) || !/\d/.test(pw))
-                        return { level: 'fair',   label: 'Fair',      color: 'bg-amber-400', width: '50%' }
+        return { level: 'fair', label: 'Fair', color: 'bg-amber-400', width: '50%' }
     if (!/[^A-Za-z0-9]/.test(pw))
-                        return { level: 'good',   label: 'Good',      color: 'bg-blue-400',  width: '75%' }
-    return              { level: 'strong', label: 'Strong',    color: 'bg-emerald-500',width: '100%' }
+        return { level: 'good', label: 'Good', color: 'bg-blue-400', width: '75%' }
+    return { level: 'strong', label: 'Strong', color: 'bg-emerald-500', width: '100%' }
 }
 
 /**
@@ -57,26 +57,26 @@ const syncWithBackend = async (firebaseUser, updateUser) => {
         const idToken = await firebaseUser.getIdToken(true)
         const res = await fetch(`${API_BASE}/auth/firebase`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'X-Firebase-Token': idToken,
             },
             body: JSON.stringify({
-                uid:   firebaseUser.uid,
-                email: firebaseUser.email   || '',
-                name:  firebaseUser.displayName || '',
+                uid: firebaseUser.uid,
+                email: firebaseUser.email || '',
+                name: firebaseUser.displayName || '',
             }),
         })
         if (!res.ok) throw new Error('Backend sync failed')
         const data = await res.json()
         // Store both Firebase idToken AND backend JWT
         updateUser({
-            uid:         data.user_id || firebaseUser.uid,
-            email:       data.email   || firebaseUser.email,
-            name:        data.name    || firebaseUser.displayName,
+            uid: data.user_id || firebaseUser.uid,
+            email: data.email || firebaseUser.email,
+            name: data.name || firebaseUser.displayName,
             accessToken: data.access_token,   // ← backend JWT used for all API calls
-            photoURL:    firebaseUser.photoURL || '',
-            is_admin:    !!(data?.user?.is_admin ?? data?.is_admin),
+            photoURL: firebaseUser.photoURL || '',
+            is_admin: !!(data?.user?.is_admin ?? data?.is_admin),
         })
         return data.access_token
     } catch (err) {
@@ -261,7 +261,7 @@ const AuthShell = ({ children, title, subtitle, branding }) => (
                 </div>
                 {children}
                 <p className="text-center text-[11px] text-neutral/50 font-medium">
-                    © 2025 AI Twin · <a href="#" className="hover:text-primary transition-colors">Privacy</a> · <a href="#" className="hover:text-primary transition-colors">Terms</a>
+                    © 2026 AI Twin · <a href="#" className="hover:text-primary transition-colors">Privacy</a> · <a href="#" className="hover:text-primary transition-colors">Terms</a>
                 </p>
             </div>
         </div>
@@ -272,13 +272,13 @@ const AuthShell = ({ children, title, subtitle, branding }) => (
 
 export const Login = ({ onSignup, onForgotPassword }) => {
     const { login, updateUser, setCurrentScreen } = useStore()
-    const [email, setEmail]         = useState('')
-    const [password, setPassword]   = useState('')
-    const [showPw, setShowPw]       = useState(false)
+    const [email, setEmail] = useState('')
+    const [password, setPassword] = useState('')
+    const [showPw, setShowPw] = useState(false)
     const [rememberMe, setRememberMe] = useState(false)
-    const [errors, setErrors]       = useState({})
+    const [errors, setErrors] = useState({})
     const [globalError, setGlobalError] = useState('')
-    const [loading, setLoading]     = useState(false)
+    const [loading, setLoading] = useState(false)
     const [googleLoading, setGoogleLoading] = useState(false)
 
     const validate = () => {
@@ -306,12 +306,12 @@ export const Login = ({ onSignup, onForgotPassword }) => {
 
         // Optimistic login with Firebase profile
         login({
-            uid:         firebaseUser.uid,
-            email:       firebaseUser.email || '',
-            name:        firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-            photoURL:    firebaseUser.photoURL || '',
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+            photoURL: firebaseUser.photoURL || '',
             accessToken: await firebaseUser.getIdToken(),
-            is_admin:    false,
+            is_admin: false,
         })
         // Navigate immediately — don't block on backend
         setCurrentScreen(onboardingCompleted ? 'main' : 'welcome')
@@ -427,30 +427,30 @@ export const Login = ({ onSignup, onForgotPassword }) => {
 
 export const Signup = ({ onBack }) => {
     const { login, updateUser, setCurrentScreen } = useStore()
-    const [name, setName]           = useState('')
-    const [email, setEmail]         = useState('')
-    const [password, setPassword]   = useState('')
+    const [name, setName] = useState('')
+    const [email, setEmail] = useState('')
+    const [password, setPassword] = useState('')
     const [confirmPw, setConfirmPw] = useState('')
-    const [showPw, setShowPw]       = useState(false)
+    const [showPw, setShowPw] = useState(false)
     const [showConfirm, setShowConfirm] = useState(false)
-    const [agreed, setAgreed]       = useState(false)
-    const [errors, setErrors]       = useState({})
+    const [agreed, setAgreed] = useState(false)
+    const [errors, setErrors] = useState({})
     const [globalError, setGlobalError] = useState('')
-    const [loading, setLoading]     = useState(false)
+    const [loading, setLoading] = useState(false)
     const [googleLoading, setGoogleLoading] = useState(false)
 
     const strength = passwordStrength(password)
 
     const validate = () => {
         const e = {}
-        if (!name.trim())  e.name      = 'Full name is required'
-        if (!email)        e.email     = 'Email is required'
+        if (!name.trim()) e.name = 'Full name is required'
+        if (!email) e.email = 'Email is required'
         else if (!/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email'
-        if (!password)     e.password  = 'Password is required'
-        else if (password.length < 6)  e.password = 'Minimum 6 characters'
-        if (!confirmPw)    e.confirmPw = 'Please confirm your password'
+        if (!password) e.password = 'Password is required'
+        else if (password.length < 6) e.password = 'Minimum 6 characters'
+        if (!confirmPw) e.confirmPw = 'Please confirm your password'
         else if (password !== confirmPw) e.confirmPw = 'Passwords do not match'
-        if (!agreed)       e.terms     = 'You must agree to the terms to continue'
+        if (!agreed) e.terms = 'You must agree to the terms to continue'
         setErrors(e)
         return Object.keys(e).length === 0
     }
@@ -458,12 +458,12 @@ export const Signup = ({ onBack }) => {
     /** Shared post-auth handler */
     const finishAuth = async (firebaseUser) => {
         login({
-            uid:         firebaseUser.uid,
-            email:       firebaseUser.email || '',
-            name:        firebaseUser.displayName || name.trim() || firebaseUser.email?.split('@')[0] || 'User',
-            photoURL:    firebaseUser.photoURL || '',
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            name: firebaseUser.displayName || name.trim() || firebaseUser.email?.split('@')[0] || 'User',
+            photoURL: firebaseUser.photoURL || '',
             accessToken: await firebaseUser.getIdToken(),
-            is_admin:    false,
+            is_admin: false,
         })
         setCurrentScreen('welcome')
         syncWithBackend(firebaseUser, updateUser)
@@ -562,11 +562,10 @@ export const Signup = ({ onBack }) => {
                                     className={`h-full ${strength.color} rounded-full transition-all duration-500`}
                                 />
                             </div>
-                            <p className={`text-[11px] font-semibold ${
-                                strength.level === 'strong' ? 'text-emerald-400' :
-                                strength.level === 'good'   ? 'text-blue-400'    :
-                                strength.level === 'fair'   ? 'text-amber-400'   : 'text-red-400'
-                            }`}>{strength.label}</p>
+                            <p className={`text-[11px] font-semibold ${strength.level === 'strong' ? 'text-emerald-400' :
+                                    strength.level === 'good' ? 'text-blue-400' :
+                                        strength.level === 'fair' ? 'text-amber-400' : 'text-red-400'
+                                }`}>{strength.label}</p>
                         </div>
                     )}
                 </div>
@@ -633,18 +632,18 @@ export const Signup = ({ onBack }) => {
 // ─── FORGOT PASSWORD ──────────────────────────────────────────────────────────
 
 export const ForgotPassword = ({ onBack }) => {
-    const [email, setEmail]             = useState('')
-    const [emailError, setEmailError]   = useState('')
+    const [email, setEmail] = useState('')
+    const [emailError, setEmailError] = useState('')
     const [globalError, setGlobalError] = useState('')
-    const [loading, setLoading]         = useState(false)
-    const [sent, setSent]               = useState(false)
+    const [loading, setLoading] = useState(false)
+    const [sent, setSent] = useState(false)
 
     const handleSubmit = async (ev) => {
         ev.preventDefault()
         setGlobalError('')
         setEmailError('')
-        if (!email)                          { setEmailError('Email is required'); return }
-        if (!/\S+@\S+\.\S+/.test(email))    { setEmailError('Enter a valid email'); return }
+        if (!email) { setEmailError('Email is required'); return }
+        if (!/\S+@\S+\.\S+/.test(email)) { setEmailError('Enter a valid email'); return }
 
         setLoading(true)
         try {
