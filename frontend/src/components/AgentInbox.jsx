@@ -23,6 +23,7 @@ import {
 import { apiFetch } from '../utils/apiClient'
 import { useStore } from '../store/useStore'
 import { API_BASE } from '../config'
+import { playNotificationSound } from '../utils/audio'
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -382,6 +383,13 @@ const AgentInbox = () => {
   const [unreadCount, setUnreadCount] = useState(0)
   const wsRef = useRef(null)
   const reconnectRef = useRef(null)
+  const retryDelayRef = useRef(5000)
+  const [toast, setToast] = useState(null)
+
+  const showToast = useCallback((msg, type = 'success') => {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 4000)
+  }, [])
 
   // ── Fetch inbox ────────────────────────────────────────────────────────────
   const fetchInbox = useCallback(async () => {
@@ -422,13 +430,10 @@ const AgentInbox = () => {
     const ws = new WebSocket(`${proto}://${host}/agent/ws/${userId}`)
     wsRef.current = ws
 
-    let retryDelay = 5000;
-
     ws.onopen = () => {
       setWsStatus('connected')
-      retryDelay = 5000; // reset on success
+      retryDelayRef.current = 5000 // reset on success
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
-      // C5 FIX: Send authentication token as the first frame
       ws.send(JSON.stringify({ event: 'auth', token: accessToken }))
     }
 
@@ -436,19 +441,18 @@ const AgentInbox = () => {
       try {
         const msg = JSON.parse(e.data)
         if (msg.type === 'ping') return
-        // New message arrived — refresh inbox
+        playNotificationSound()
         fetchInbox()
       } catch {}
     }
 
     ws.onclose = (ev) => {
       setWsStatus('disconnected')
-      // 4001/4003 = auth errors — do NOT retry
       if (ev.code === 4001 || ev.code === 4003) return;
       reconnectRef.current = setTimeout(() => {
-        retryDelay = Math.min(retryDelay * 1.5, 30000);
+        retryDelayRef.current = Math.min(retryDelayRef.current * 1.5, 30000);
         connectWS();
-      }, retryDelay)
+      }, retryDelayRef.current)
     }
 
     ws.onerror = () => {
@@ -467,16 +471,18 @@ const AgentInbox = () => {
   }, [fetchInbox, fetchRegistry, connectWS])
 
   // ── HITL approve ──────────────────────────────────────────────────────────
-  const handleApprove = async (msgId) => {
+  const handleApprove = async (msgId, slotIndex = 0) => {
     setActionLoading(msgId)
     try {
-      const res = await apiFetch(`/agent/inbox/${msgId}/approve`, { method: 'POST' })
+      const res = await apiFetch(`/agent/inbox/${msgId}/approve?slot_index=${slotIndex}`, { method: 'POST' })
       await fetchInbox()
       if (res.action === 'meeting_booked') {
-        alert('✅ Meeting booked on both calendars!')
+        showToast('✅ Meeting booked on both calendars!')
+      } else {
+        showToast('Approved successfully')
       }
     } catch (err) {
-      alert(`Approval failed: ${err.message}`)
+      showToast(`Approval failed: ${err.message}`, 'error')
     } finally {
       setActionLoading(null)
     }
@@ -488,8 +494,9 @@ const AgentInbox = () => {
     try {
       await apiFetch(`/agent/inbox/${msgId}/reject`, { method: 'POST' })
       await fetchInbox()
+      showToast('Declined successfully')
     } catch (err) {
-      alert(`Rejection failed: ${err.message}`)
+      showToast(`Rejection failed: ${err.message}`, 'error')
     } finally {
       setActionLoading(null)
     }
@@ -524,7 +531,24 @@ const AgentInbox = () => {
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-full overflow-y-auto bg-surface-base p-6 pb-36 space-y-6">
+    <div className="h-full overflow-y-auto bg-surface-base p-6 pb-36 space-y-6 relative">
+      {/* Toast Notification */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: -16, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8 }}
+            className={`fixed top-4 right-4 z-[200] px-5 py-3 rounded-2xl shadow-2xl text-sm font-bold flex items-center gap-3 ${
+              toast.type === 'error'
+                ? 'bg-red-500/90 text-white border border-red-400/30'
+                : 'bg-primary/90 text-white border border-primary/30'
+            }`}
+          >
+            {toast.type === 'error' ? '❌' : '✅'} {toast.msg}
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>

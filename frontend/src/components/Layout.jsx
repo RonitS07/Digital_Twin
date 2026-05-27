@@ -24,16 +24,31 @@ import {
     Cpu,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
+import { playNotificationSound } from '../utils/audio'
 
 const WhatsAppModal = ({ onClose }) => {
+    const { whatsappReady, setIntegration } = useStore();
     const [qr, setQr] = useState(null);
-    const [ready, setReady] = useState(false);
-    const [loading, setLoading] = useState(true);
+    const [ready, setReady] = useState(whatsappReady === true);
+    const [loading, setLoading] = useState(whatsappReady === null);
 
+    // Sync from store state reactively (WebSocket updates)
     useEffect(() => {
-        let intervalId = null;
-        let stopped = false;
+        if (whatsappReady === true) {
+            setReady(true);
+            setQr(null);
+            setLoading(false);
+            setIntegration('whatsapp', true);
+        } else if (whatsappReady === false) {
+            setReady(false);
+        }
+    }, [whatsappReady, setIntegration]);
 
+    // Fast-polling for QR code specifically (only when not ready)
+    useEffect(() => {
+        if (whatsappReady === true) return;
+
+        let stopped = false;
         const checkStatus = async () => {
             try {
                 const data = await apiFetch('/mcp/whatsapp/qr');
@@ -41,14 +56,10 @@ const WhatsAppModal = ({ onClose }) => {
                 setLoading(false);
 
                 if (data.ready) {
-                    // Already connected — stop polling immediately so we don't
-                    // accidentally flip back to QR on a momentary hiccup
                     setReady(true);
                     setQr(null);
-                    if (intervalId) {
-                        clearInterval(intervalId);
-                        intervalId = null;
-                    }
+                    useStore.getState().setWhatsappReady(true);
+                    useStore.getState().setIntegration('whatsapp', true);
                 } else {
                     setReady(false);
                     setQr(data.qr || null);
@@ -62,12 +73,12 @@ const WhatsAppModal = ({ onClose }) => {
         };
 
         checkStatus();
-        intervalId = setInterval(checkStatus, 5000);
+        const intervalId = setInterval(checkStatus, 5000);
         return () => {
             stopped = true;
-            if (intervalId) clearInterval(intervalId);
+            clearInterval(intervalId);
         };
-    }, []);
+    }, [whatsappReady]);
 
     return (
         <div className="fixed inset-0 bg-surface-base/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -377,10 +388,28 @@ const Layout = ({ children, currentView, setView }) => {
     const [isNotificationsOpen, setNotificationsOpen] = useState(false);
     const [popupNotification, setPopupNotification] = useState(null);
     const wsRef = useRef(null);
+    const notifRef = useRef(null);
+    // Track currentView in a ref so the WS handler can read it without being in deps
+    const currentViewRef = useRef(currentView);
 
     // Global Twin Chat WebSocket
     // Gate on authInitialized to prevent connecting with a stale/partial token
     // during Firebase's async init, which causes the "closed before established" error.
+    useEffect(() => {
+        currentViewRef.current = currentView;
+    }, [currentView]);
+
+    // Close notifications panel on outside click
+    useEffect(() => {
+        const handler = (e) => {
+            if (notifRef.current && !notifRef.current.contains(e.target)) {
+                setNotificationsOpen(false);
+            }
+        };
+        if (isNotificationsOpen) document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [isNotificationsOpen]);
+
     useEffect(() => {
         if (!authInitialized || !user?.accessToken) return;
         let alive = true;
@@ -402,12 +431,15 @@ const Layout = ({ children, currentView, setView }) => {
                 try {
                     const data = JSON.parse(e.data);
                     if (data.event === 'new_message' && data.message.sender_id !== user.uid) {
-                        const isViewingChat = window.location.pathname.includes('twin-chat') || currentView === 'twin-chat';
+                        // Use currentViewRef instead of currentView to avoid WS reconnects on nav
+                        const isViewingChat = currentViewRef.current === 'twin-chat';
                         const isActiveSession = useStore.getState().twinChatActiveSessionId === data.message.session_id;
                         if (!(isViewingChat && isActiveSession)) {
                             addUnreadTwinChat(data.message);
+                            playNotificationSound();
                             setPopupNotification({
                                 id: data.message.id,
+                                sessionId: data.message.session_id,
                                 senderName: data.message.sender_name || 'New message',
                                 content: data.message.content || '',
                             });
@@ -435,7 +467,9 @@ const Layout = ({ children, currentView, setView }) => {
         };
         connect();
         return () => { alive = false; wsRef.current?.close(); };
-    }, [authInitialized, user?.accessToken, user?.uid, currentView, addUnreadTwinChat]);
+    // NOTE: currentView intentionally omitted — we read it via currentViewRef to avoid reconnects on navigation
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [authInitialized, user?.accessToken, user?.uid, addUnreadTwinChat]);
 
     // Poll for unread agent inbox messages every 30s
     React.useEffect(() => {
@@ -453,7 +487,7 @@ const Layout = ({ children, currentView, setView }) => {
             }
         };
         checkInbox();
-        const id = setInterval(checkInbox, 10000);
+        const id = setInterval(checkInbox, 30000); // 30s — was 10s (too aggressive)
         return () => clearInterval(id);
     }, [auth.user?.accessToken]);
 
@@ -492,7 +526,12 @@ const Layout = ({ children, currentView, setView }) => {
                         exit={{ opacity: 0, y: 8, scale: 0.98 }}
                         onClick={() => {
                             setPopupNotification(null);
-                            setNotificationsOpen(true);
+                            if (popupNotification.sessionId) {
+                                useStore.getState().setTwinChatActiveSessionId(popupNotification.sessionId);
+                                setView('twin-chat');
+                            } else {
+                                setNotificationsOpen(true);
+                            }
                         }}
                         className="fixed top-4 right-4 z-[120] w-[320px] text-left bg-surface-container/95 backdrop-blur-xl border border-neutral/15 rounded-2xl shadow-2xl p-3"
                     >
@@ -593,7 +632,7 @@ const Layout = ({ children, currentView, setView }) => {
                                 Optimal
                             </span>
                         </div>
-                        <div className="relative">
+                        <div className="relative" ref={notifRef}>
                             <button
                                 onClick={() => setNotificationsOpen(!isNotificationsOpen)}
                                 className={`text-neutral hover:text-on-surface transition-colors p-2 rounded-xl relative ${isNotificationsOpen ? 'bg-surface-container' : ''}`}

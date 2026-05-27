@@ -16,16 +16,36 @@ import {
     ConnectProtocol,
     Initializing
 } from './components/Onboarding'
-import Layout from './components/Layout'
-import Dashboard from './components/Dashboard'
-import Chat from './components/Chat'
-import Activity from './components/Activity'
-import Workspace from './components/Workspace'
-import Settings from './components/Settings'
-import AgentInbox from './components/AgentInbox'
-import Files from './components/Files'
-import TwinChat from './components/TwinChat'
-import AdminDashboard from './components/AdminDashboard'
+const Layout = React.lazy(() => import('./components/Layout'))
+const Dashboard = React.lazy(() => import('./components/Dashboard'))
+const Chat = React.lazy(() => import('./components/Chat'))
+const Activity = React.lazy(() => import('./components/Activity'))
+const Workspace = React.lazy(() => import('./components/Workspace'))
+const Settings = React.lazy(() => import('./components/Settings'))
+const AgentInbox = React.lazy(() => import('./components/AgentInbox'))
+const Files = React.lazy(() => import('./components/Files'))
+const TwinChat = React.lazy(() => import('./components/TwinChat'))
+const AdminDashboard = React.lazy(() => import('./components/AdminDashboard'))
+
+const LoadingFallback = () => (
+    <div className="bg-[#13121b] min-h-screen flex flex-col items-center justify-center text-on-surface antialiased select-none w-full h-full">
+        <div className="relative w-24 h-24 mb-4 flex items-center justify-center">
+            <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
+                className="absolute inset-0 rounded-full border-2 border-dashed border-primary/40"
+            />
+            <motion.div
+                animate={{ scale: [1, 1.08, 1] }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                className="w-12 h-12 rounded-full bg-gradient-to-tr from-primary to-primary/60 flex items-center justify-center shadow-[0_0_30px_rgba(103,96,253,0.35)] z-10 border border-white/10"
+            >
+                <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
+            </motion.div>
+        </div>
+        <p className="text-[9px] font-black uppercase tracking-[0.4em] text-primary animate-pulse italic">Loading Workspace Module...</p>
+    </div>
+);
 
 
 export { useStore } from './store/useStore'
@@ -287,35 +307,37 @@ function App() {
                 {/* Unified Dashboard */}
                 {currentScreen === 'main' && (
                     <motion.div key="main" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-screen w-full overflow-hidden">
-                        <Layout currentView={view} setView={setView}>
-                            <>
-                                {/* Keep Dashboard always mounted but hide visually so it persists data and polls seamlessly */}
-                                <div className={`h-full ${view === 'home' ? 'block' : 'hidden'}`}>
-                                    <Dashboard />
-                                </div>
-                                <AnimatePresence mode="wait">
-                                    {view !== 'home' && (
-                                        <motion.div
-                                            key={view}
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            exit={{ opacity: 0, y: -10 }}
-                                            transition={{ duration: 0.3 }}
-                                            className="h-full"
-                                        >
-                                            {view === 'chat' && <Chat />}
-                                            {view === 'files' && <Files />}
-                                            {view === 'integrations' && <Workspace />}
-                                            {view === 'activity' && <Activity />}
-                                            {view === 'settings' && <Settings />}
-                                            {view === 'agents' && <AgentInbox />}
-                                            {view === 'twin-chat' && <TwinChat />}
-                                            {view === 'admin' && (isAdmin ? <AdminDashboard /> : <Dashboard />)}
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </>
-                        </Layout>
+                        <React.Suspense fallback={<LoadingFallback />}>
+                            <Layout currentView={view} setView={setView}>
+                                <>
+                                    {/* Keep Dashboard always mounted but hide visually so it persists data and polls seamlessly */}
+                                    <div className={`h-full ${view === 'home' ? 'block' : 'hidden'}`}>
+                                        <Dashboard />
+                                    </div>
+                                    <AnimatePresence mode="wait">
+                                        {view !== 'home' && (
+                                            <motion.div
+                                                key={view}
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -10 }}
+                                                transition={{ duration: 0.3 }}
+                                                className="h-full"
+                                            >
+                                                {view === 'chat' && <Chat />}
+                                                {view === 'files' && <Files />}
+                                                {view === 'integrations' && <Workspace />}
+                                                {view === 'activity' && <Activity />}
+                                                {view === 'settings' && <Settings />}
+                                                {view === 'agents' && <AgentInbox />}
+                                                {view === 'twin-chat' && <TwinChat />}
+                                                {view === 'admin' && (isAdmin ? <AdminDashboard /> : <Dashboard />)}
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </>
+                            </Layout>
+                        </React.Suspense>
                     </motion.div>
                 )}
             </AnimatePresence>

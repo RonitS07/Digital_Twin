@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE } from '../config'
 import { apiFetch } from '../utils/apiClient'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -266,10 +266,17 @@ const Dashboard = () => {
     const briefingCacheRef = React.useRef({ data: null, ts: 0 });
     const BRIEFING_CACHE_MS = 20 * 60 * 1000; // 20 minutes
 
-    const showToast = (msg) => {
+    const toastTimerRef = useRef(null);
+    const showToast = useCallback((msg) => {
         setToast(msg);
-        setTimeout(() => setToast(null), 5000);
-    };
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = setTimeout(() => setToast(null), 5000);
+    }, []);
+
+    // Stable ref to showToast so poll callbacks always get the latest version
+    const showToastRef = useRef(showToast);
+    useEffect(() => { showToastRef.current = showToast }, [showToast]);
+    const prevIdsRef = useRef({ gmail: [], calendar: [] });
 
     const fetchBriefing = async (forceRefresh = false) => {
         const cache = briefingCacheRef.current;
@@ -309,48 +316,50 @@ const Dashboard = () => {
         }
     };
 
-    const pollGmail = async () => {
+    const pollGmail = useCallback(async () => {
         if (!user?.uid) return;
         try {
             const data = await apiFetch(`/gmail/inbox?max_results=5`);
             if (data.emails) {
                 const newIds = data.emails.map(e => e.id);
-                if (prevIds.gmail.length > 0 && newIds[0] !== prevIds.gmail[0]) {
-                    showToast("📩 New Email Received");
+                if (prevIdsRef.current.gmail.length > 0 && newIds[0] !== prevIdsRef.current.gmail[0]) {
+                    showToastRef.current("📩 New Email Received");
                 }
                 setEmails(data.emails);
+                prevIdsRef.current = { ...prevIdsRef.current, gmail: newIds };
                 setPrevIds(p => ({ ...p, gmail: newIds }));
             }
             setLoadingEmails(false);
         } catch (err) { console.error(err); }
-    };
+    }, [user?.uid]);
 
-    const pollCalendar = async () => {
+    const pollCalendar = useCallback(async () => {
         if (!user?.uid) return;
         try {
             const data = await apiFetch(`/calendar/events?max_results=20`);
             if (data.events) {
                 const newIds = data.events.map(e => e.id);
-                if (prevIds.calendar.length > 0 && newIds.length > prevIds.calendar.length) {
-                    showToast("📅 New Event Scheduled");
+                if (prevIdsRef.current.calendar.length > 0 && newIds.length > prevIdsRef.current.calendar.length) {
+                    showToastRef.current("📅 New Event Scheduled");
                 }
                 setEvents(data.events);
+                prevIdsRef.current = { ...prevIdsRef.current, calendar: newIds };
                 setPrevIds(p => ({ ...p, calendar: newIds }));
             }
             setLoadingEvents(false);
         } catch (err) { console.error(err); }
-    };
+    }, [user?.uid]);
 
-    const pollHistory = async () => {
+    const pollHistory = useCallback(async () => {
         if (!user?.uid) return;
         try {
             const data = await apiFetch(`/activity/recent?limit=5`);
             if (data.activity) setHistory(data.activity.slice(0, 5));
             setLoadingHistory(false);
         } catch (err) { console.error(err); }
-    };
+    }, [user?.uid]);
 
-    const pollAnalytics = async () => {
+    const pollAnalytics = useCallback(async () => {
         if (!user?.uid) return;
         try {
             const data = await apiFetch(`/analytics?gmail_sync=${preferences.gmailSync !== false}&calendar_sync=${preferences.calendarSync !== false}`);
@@ -363,7 +372,7 @@ const Dashboard = () => {
                 console.error("Analytics poll error:", err); 
             }
         }
-    };
+    }, [user?.uid, preferences.gmailSync, preferences.calendarSync]);
 
     useEffect(() => {
         const hour = new Date().getHours();
@@ -395,7 +404,7 @@ const Dashboard = () => {
             clearInterval(histInt);
             clearInterval(analyticsInt);
         };
-    }, [authInitialized, user.uid, accessToken, preferences]);
+    }, [authInitialized, user.uid, accessToken, preferences.gmailSync, preferences.calendarSync, preferences.notifications, pollGmail, pollCalendar, pollHistory, pollAnalytics]);
 
     const sendToTelegram = async () => {
         setSendingTelegram(true);

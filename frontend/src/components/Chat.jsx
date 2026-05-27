@@ -210,7 +210,9 @@ const ChatMessage = ({ msg, onAction, autoApprove, user }) => {
 
                 if (autoApprove && !autoCompleted && isSafe) {
                     setAutoCompleted(true)
-                    setTimeout(() => handleActionClick('approve', parsed), 2500);
+                    // Use a ref-captured version to avoid stale closure
+                    const timer = setTimeout(() => handleActionClick('approve', parsed), 2500);
+                    return () => clearTimeout(timer);
                 }
             } catch (e) {
                 console.error("Action parse failed", e)
@@ -530,10 +532,15 @@ const Chat = () => {
     const [sessionSearch, setSessionSearch] = useState('')
     const [isListening, setIsListening] = useState(false)
     const recognitionRef = useRef(null)
+    const activeSessionIdRef = useRef(sessionId)
+    const [sessionToDelete, setSessionToDelete] = useState(null)
 
     const [autoMode, setAutoMode] = useState(false)
     const [fetchingSessions, setFetchingSessions] = useState(false)
     const [fetchingMessages, setFetchingMessages] = useState(false)
+    // Keep a ref to the current sessionId so fetchSessions can read it without being in its own deps
+    const sessionIdRef = useRef(sessionId)
+    useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
 
     // Close + menu on outside click
     useEffect(() => {
@@ -544,6 +551,13 @@ const Chat = () => {
         }
         document.addEventListener('mousedown', handler)
         return () => document.removeEventListener('mousedown', handler)
+    }, [])
+
+    // Stop speech recognition on unmount to prevent zombie mic sessions
+    useEffect(() => {
+        return () => {
+            recognitionRef.current?.stop()
+        }
     }, [])
 
     // Ctrl+U / Cmd+U opens file picker
@@ -631,9 +645,10 @@ const Chat = () => {
             const data = await apiFetch('/sessions');
             if (data.sessions) {
                 setSessions(data.sessions.sort((a, b) => b.updatedAt - a.updatedAt));
-                if (!sessionId && data.sessions.length > 0) {
+                // Read sessionId via ref to avoid fetchSessions being recreated when sessionId changes
+                if (!sessionIdRef.current && data.sessions.length > 0) {
                     setSessionId(data.sessions[0].id);
-                } else if (!sessionId) {
+                } else if (!sessionIdRef.current) {
                     handleNewChat();
                 }
             }
@@ -642,7 +657,7 @@ const Chat = () => {
         } finally {
             setFetchingSessions(false);
         }
-    }, [user.uid, sessionId]);
+    }, [user.uid]);
 
     const loadMessages = useCallback(async (sid) => {
         if (!user.uid || !sid) return;
@@ -650,6 +665,10 @@ const Chat = () => {
         try {
             // /history now returns a flat array of {role, content, ...} pairs
             const data = await apiFetch(`/history?session_id=${sid}`);
+            
+            // Stale check: if the user switched chats while this request was pending, discard it!
+            if (activeSessionIdRef.current !== sid) return;
+
             // Support both new flat array and legacy {history:[]} envelope
             const rawList = Array.isArray(data) ? data : (data.history || []);
 
@@ -682,7 +701,9 @@ const Chat = () => {
         } catch (err) {
             console.error("Failed to fetch history", err);
         } finally {
-            setFetchingMessages(false);
+            if (activeSessionIdRef.current === sid) {
+                setFetchingMessages(false);
+            }
         }
     }, [user.uid, user.name]);
 
@@ -693,6 +714,7 @@ const Chat = () => {
     }, [user.uid]);
 
     useEffect(() => {
+        activeSessionIdRef.current = sessionId;
         if (sessionId) {
             loadMessages(sessionId);
         }
@@ -724,21 +746,37 @@ const Chat = () => {
         if (window.innerWidth < 1024) setIsSidebarOpen(false);
     }
 
-    const handleDeleteSession = async (e, id) => {
+    const handleDeleteSession = (e, id) => {
         e.stopPropagation()
-        setSessions(prev => prev.filter(s => s.id !== id))
+        setSessionToDelete(id)
+    }
+
+    const confirmDeleteSession = async () => {
+        if (!sessionToDelete) return
+        const id = sessionToDelete
+        setSessionToDelete(null)
+
+        // Optimistically update sessions list and gracefully shift active sessionId in a transaction
+        setSessions(prev => {
+            const filtered = prev.filter(s => s.id !== id)
+            if (sessionId === id) {
+                if (filtered.length > 0) {
+                    // Safe switch: change active tab to the next available chat session
+                    setSessionId(filtered[0].id)
+                } else {
+                    // Safe fallback: open a brand new clean chat session
+                    setTimeout(() => handleNewChat(), 0)
+                }
+            }
+            return filtered
+        })
+
         localStorage.removeItem(`chat_history_${user.uid}_${id}`)
-        
+
         try {
             await apiFetch(`/sessions/${id}`, { method: 'DELETE' })
         } catch (err) {
             console.error("Failed to delete session from backend", err)
-        }
-
-        if (sessionId === id) {
-            const rem = sessions.filter(s => s.id !== id)
-            if (rem.length > 0) setSessionId(rem[0].id)
-            else handleNewChat()
         }
     }
 
@@ -1458,6 +1496,51 @@ const Chat = () => {
                     </form>
                 </div>
             </div>
+
+            {/* Elegant confirmation modal for session deletion */}
+            <AnimatePresence>
+                {sessionToDelete && (
+                    <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+                        {/* Backdrop */}
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setSessionToDelete(null)}
+                            className="absolute inset-0 bg-black/65 backdrop-blur-md"
+                        />
+                        {/* Card container */}
+                        <motion.div
+                            initial={{ scale: 0.95, y: 15, opacity: 0 }}
+                            animate={{ scale: 1, y: 0, opacity: 1 }}
+                            exit={{ scale: 0.95, y: 10, opacity: 0 }}
+                            transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                            className="w-full max-w-sm bg-surface-container/95 border border-white/5 shadow-2xl rounded-2xl p-6 relative z-10 text-center glass-panel"
+                        >
+                            <div className="w-12 h-12 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Trash2 size={24} />
+                            </div>
+                            <h3 className="text-lg font-bold text-on-surface font-manrope mb-2">Delete Chat Session?</h3>
+                            <p className="text-sm text-neutral mb-6">This will permanently delete this conversation and all associated AI memory. This action cannot be undone.</p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setSessionToDelete(null)}
+                                    className="flex-1 px-4 py-2.5 rounded-xl border border-white/10 text-neutral text-sm font-semibold hover:bg-white/5 active:scale-95 transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmDeleteSession}
+                                    className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 active:scale-95 transition-all shadow-lg shadow-red-500/20"
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
         </div>
     )
 }

@@ -299,6 +299,7 @@ def get_inbox(
 @router.post("/inbox/{msg_id}/approve")
 async def approve_message(
     msg_id: str,
+    slot_index: int = 0,
     current_user: User = Depends(get_current_user_router),
     db: Session = Depends(get_db),
 ):
@@ -335,8 +336,8 @@ async def approve_message(
         if not proposed_slots:
             return {"status": "approved", "action": "no_slots_to_confirm"}
 
-        # Pick the first proposed slot (user can be given UI to pick; default = first)
-        chosen_slot = proposed_slots[0]
+        # Pick the user's selected slot or default to first
+        chosen_slot = proposed_slots[slot_index] if slot_index < len(proposed_slots) else proposed_slots[0]
         topic = payload.get("topic", "Meeting")
 
         confirm_msg = A2AMessage(

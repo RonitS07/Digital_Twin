@@ -494,8 +494,13 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
 
     if (wsEvent.event === 'new_message' || wsEvent.event === 'twin_message') {
       setMessages(prev => {
-        if (prev.some(m => m.id === wsEvent.message.id)) return prev
-        return [...prev, wsEvent.message]
+        const list = [...prev]
+        const idx = list.findIndex(m => m.id === wsEvent.message.id)
+        if (idx !== -1) {
+          list[idx] = wsEvent.message
+          return list
+        }
+        return [...list, wsEvent.message]
       })
     } else if (wsEvent.event === 'twin_suggestion') {
       setPendingSuggestion({ 
@@ -585,6 +590,13 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
       if (data.message) {
         setMessages(prev => {
           const withoutOptimistic = prev.filter(m => m.id !== optimisticId)
+          if (withoutOptimistic.some(m => m.id === data.message.id)) {
+            let next = withoutOptimistic.map(m => m.id === data.message.id ? data.message : m)
+            if (data.ai_response && data.ai_response.status !== 'pending' && !next.some(m => m.id === data.ai_response.id)) {
+              next = [...next, data.ai_response]
+            }
+            return next
+          }
           let next = [...withoutOptimistic, data.message]
           if (data.ai_response && data.ai_response.status !== 'pending') {
             next = [...next, data.ai_response]
@@ -731,11 +743,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
             <Sparkles size={10} /> Active
           </span>
           <button 
-            onClick={() => {
-              if (window.confirm('Are you sure you want to permanently delete this Twin Chat conversation?')) {
-                onDeleteSession(session.id)
-              }
-            }}
+            onClick={() => onDeleteSession(session.id)}
             className="p-1.5 text-red-400 hover:bg-red-400/10 rounded-lg transition-colors ml-1"
             title="Delete Chat"
           >
@@ -1012,12 +1020,17 @@ function SessionSidebar({ sessions, activeId, loading, onSelect, onNew }) {
 }
 
 function TwinChat() {
-  const { auth } = useStore()
+  const { auth, twinChatActiveSessionId, setTwinChatActiveSessionId } = useStore()
   const user = auth.user
   const [sessions, setSessions] = useState([])
-  const [activeId, setActiveId] = useState(null)
+  const [activeId, setActiveId] = useState(twinChatActiveSessionId || null)
   const [loading, setLoading] = useState(true)
   const [wsEvent, setWsEvent] = useState(null)
+  const [newChatEmail, setNewChatEmail] = useState('')
+  const [showNewChatModal, setShowNewChatModal] = useState(false)
+  const [newChatLoading, setNewChatLoading] = useState(false)
+  const [newChatError, setNewChatError] = useState('')
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   
   const handlers = useRef(null)
   handlers.current = (data) => setWsEvent(data)
@@ -1033,6 +1046,19 @@ function TwinChat() {
 
   useEffect(() => { if (user) fetchSessions() }, [user, fetchSessions])
 
+  // Sync activeId from the store (set by inbox/notification click-throughs)
+  useEffect(() => {
+    if (twinChatActiveSessionId && twinChatActiveSessionId !== activeId) {
+      setActiveId(twinChatActiveSessionId);
+    }
+  }, [twinChatActiveSessionId])
+
+  // Keep store in sync with local activeId
+  const handleSetActiveId = useCallback((id) => {
+    setActiveId(id);
+    setTwinChatActiveSessionId(id);
+  }, [setTwinChatActiveSessionId]);
+
   useEffect(() => {
     if (wsEvent?.event === 'new_message' || wsEvent?.event === 'new_session') {
       fetchSessions()
@@ -1040,19 +1066,27 @@ function TwinChat() {
   }, [wsEvent, fetchSessions])
 
   const handleNewSession = async () => {
-    const email = prompt("Enter the email of the person you want to chat with:")
-    if (!email) return
+    if (!newChatEmail.trim()) return
+    setNewChatLoading(true)
+    setNewChatError('')
     try {
-      const data = await apiFetch('/twin-chat/sessions', { method: 'POST', body: JSON.stringify({ partner_email: email }) })
+      const data = await apiFetch('/twin-chat/sessions', { method: 'POST', body: JSON.stringify({ partner_email: newChatEmail.trim() }) })
       await fetchSessions()
-      setActiveId(data.session.id)
-    } catch (e) { alert("Failed to create session. Make sure the user exists.") }
+      handleSetActiveId(data.session.id)
+      setShowNewChatModal(false)
+      setNewChatEmail('')
+    } catch (e) {
+      setNewChatError('User not found or failed to create session.')
+    } finally {
+      setNewChatLoading(false)
+    }
   }
 
   const handleDeleteSession = async (id) => {
+    setDeleteConfirmId(null)
     try {
       await apiFetch(`/twin-chat/sessions/${id}`, { method: 'DELETE' })
-      if (activeId === id) setActiveId(null)
+      if (activeId === id) handleSetActiveId(null)
       fetchSessions()
     } catch (e) { console.error(e) }
   }
@@ -1062,17 +1096,99 @@ function TwinChat() {
   return (
     <div className="flex h-screen bg-surface-base text-on-surface font-inter overflow-hidden">
       <div className={`fixed inset-0 z-40 lg:relative lg:z-0 lg:flex ${activeId ? 'hidden' : 'flex'} w-full lg:w-80 shrink-0`}>
-        <SessionSidebar sessions={sessions} activeId={activeId} loading={loading} onSelect={setActiveId} onNew={handleNewSession} />
+        <SessionSidebar sessions={sessions} activeId={activeId} loading={loading} onSelect={handleSetActiveId} onNew={() => setShowNewChatModal(true)} />
       </div>
       <div className={`flex-1 flex flex-col min-w-0 ${!activeId ? 'hidden lg:flex' : 'flex'}`}>
         <ChatPanel 
           session={activeSession} 
-          onBack={() => setActiveId(null)} 
+          onBack={() => handleSetActiveId(null)} 
           wsSend={wsSend} 
           wsEvent={wsEvent}
-          onDeleteSession={handleDeleteSession}
+          onDeleteSession={(id) => setDeleteConfirmId(id)}
         />
       </div>
+
+      {/* New Chat Modal */}
+      <AnimatePresence>
+        {showNewChatModal && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => { setShowNewChatModal(false); setNewChatError(''); }}
+              className="absolute inset-0 bg-black/65 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+              className="w-full max-w-sm bg-surface-container/95 border border-white/5 shadow-2xl rounded-2xl p-6 relative z-10"
+            >
+              <h3 className="text-lg font-bold text-on-surface font-manrope mb-1">New Twin Chat</h3>
+              <p className="text-sm text-neutral mb-5">Enter the email address of the person you want to start a conversation with.</p>
+              <input
+                autoFocus
+                type="email"
+                value={newChatEmail}
+                onChange={e => { setNewChatEmail(e.target.value); setNewChatError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') handleNewSession(); if (e.key === 'Escape') setShowNewChatModal(false); }}
+                placeholder="email@example.com"
+                className="w-full bg-surface-base border border-neutral/20 rounded-xl px-4 py-3 text-sm text-on-surface outline-none focus:border-primary/50 mb-3"
+              />
+              {newChatError && <p className="text-xs text-red-400 mb-3">{newChatError}</p>}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setShowNewChatModal(false); setNewChatError(''); }}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-white/10 text-neutral text-sm font-semibold hover:bg-white/5 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleNewSession}
+                  disabled={!newChatEmail.trim() || newChatLoading}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:brightness-110 transition-all shadow-lg shadow-primary/20 disabled:opacity-50"
+                >
+                  {newChatLoading ? <Loader2 size={16} className="animate-spin mx-auto" /> : 'Start Chat'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Session Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmId && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteConfirmId(null)}
+              className="absolute inset-0 bg-black/65 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.95, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+              className="w-full max-w-sm bg-surface-container/95 border border-white/5 shadow-2xl rounded-2xl p-6 relative z-10 text-center"
+            >
+              <div className="w-12 h-12 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Trash2 size={24} />
+              </div>
+              <h3 className="text-lg font-bold text-on-surface mb-2">Delete Conversation?</h3>
+              <p className="text-sm text-neutral mb-6">This will permanently delete this Twin Chat conversation and all its messages.</p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteConfirmId(null)} className="flex-1 px-4 py-2.5 rounded-xl border border-white/10 text-neutral text-sm font-semibold hover:bg-white/5 transition-all">Cancel</button>
+                <button onClick={() => handleDeleteSession(deleteConfirmId)} className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 transition-all shadow-lg shadow-red-500/20">Delete</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
+import { getAnalytics, isSupported } from "firebase/analytics";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { 
     initializeFirestore, 
@@ -18,7 +18,22 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
+
+let analytics = null;
+if (typeof window !== "undefined" && !window.location.hostname.includes("localhost")) {
+    isSupported().then((supported) => {
+        if (supported) {
+            try {
+                analytics = getAnalytics(app);
+            } catch (err) {
+                console.warn("Firebase Analytics failed to initialize:", err);
+            }
+        }
+    }).catch((err) => {
+        console.warn("Firebase Analytics isSupported check failed:", err);
+    });
+}
+
 const auth = getAuth(app);
 
 const googleProvider = new GoogleAuthProvider();

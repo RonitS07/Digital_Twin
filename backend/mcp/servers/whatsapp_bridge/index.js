@@ -1,6 +1,21 @@
 const { Client, LocalAuth } = require('whatsapp-web.js')
 const express = require('express')
 const http = require('http')
+const fs = require('fs')
+const path = require('path')
+
+function cleanSingletonLock() {
+    try {
+        const lockPath = path.join(__dirname, '.wwebjs_auth', 'session', 'SingletonLock');
+        if (fs.existsSync(lockPath)) {
+            fs.unlinkSync(lockPath);
+            console.log('[WA Bridge] Cleaned stale Chrome SingletonLock file');
+        }
+    } catch (err) {
+        console.warn('[WA Bridge] Failed to clean SingletonLock file:', err.message);
+    }
+}
+
 
 function pushStatus(ready, qr) {
     try {
@@ -90,13 +105,27 @@ client.on('auth_failure', (msg) => {
     isReady = false
     qrCode = null
     console.error('[WA Bridge] Authentication failure:', msg)
-    // Auth failure always needs a fresh init
+    // Auth failure always needs a fresh clean init
     if (!isInitializing) {
         isInitializing = true
-        setTimeout(() => {
-            console.log('[WA Bridge] Re-initializing after auth failure...')
+        setTimeout(async () => {
+            console.log('[WA Bridge] Cleaning up corrupted session files on auth failure...')
+            try {
+                await client.destroy().catch(() => {});
+            } catch (_) {}
+
+            try {
+                fs.rmSync(path.join(__dirname, '.wwebjs_auth'), { recursive: true, force: true });
+                console.log('[WA Bridge] Successfully deleted corrupted .wwebjs_auth directory.');
+            } catch (fsErr) {
+                console.error('[WA Bridge] Error removing session directory:', fsErr.message);
+            }
+
+            cleanSingletonLock();
+
+            console.log('[WA Bridge] Re-initializing fresh WhatsApp client...');
             client.initialize().catch(e => {
-                console.error('[WA Bridge] Re-init error:', e)
+                console.error('[WA Bridge] Fresh re-init error:', e)
                 isInitializing = false
             })
         }, 3000)
@@ -128,6 +157,18 @@ client.on('disconnected', async (reason) => {
         await client.destroy()
     } catch (e) {
         console.error('[WA Bridge] Error destroying client on disconnect:', e)
+    }
+
+    cleanSingletonLock();
+
+    // If explicit LOGOUT, we should also delete .wwebjs_auth to clear credentials!
+    if (reason === 'LOGOUT') {
+        try {
+            fs.rmSync(path.join(__dirname, '.wwebjs_auth'), { recursive: true, force: true });
+            console.log('[WA Bridge] Cleared session files on explicit user logout.');
+        } catch (rmErr) {
+            console.warn('[WA Bridge] Could not clear auth folder:', rmErr.message);
+        }
     }
 
     // Small cooldown before re-init to let WhatsApp servers settle
@@ -194,6 +235,7 @@ app.post('/send', async (req, res) => {
                 } catch (destroyErr) {
                     console.warn('[WA Bridge] Error destroying client during recovery:', destroyErr.message)
                 }
+                cleanSingletonLock();
                 setTimeout(() => {
                     console.log('[WA Bridge] Re-initializing WhatsApp client after clean reset...')
                     client.initialize().catch(err => console.error('[WA Bridge] Re-init error:', err))

@@ -47,7 +47,11 @@ export const useStore = create(
                     whatsapp: false,
                     lastFetched: null,
                 },
-                tasks: []
+                tasks: [],
+                whatsappReady: null,
+                // Clear session-specific state on logout
+                unreadTwinChats: [],
+                twinChatActiveSessionId: null,
             }),
 
             // Navigation State
@@ -113,9 +117,11 @@ export const useStore = create(
                 integrations: { ...state.integrations, lastFetched: null }
             })),
 
-            // Tasks
+            // Tasks — capped at 200 to prevent localStorage bloat
             tasks: [],
-            addTask: (task) => set((state) => ({ tasks: [{ id: Date.now().toString(), createdAt: new Date().toISOString(), ...task }, ...state.tasks] })),
+            addTask: (task) => set((state) => ({
+                tasks: [{ id: Date.now().toString(), createdAt: new Date().toISOString(), ...task }, ...state.tasks].slice(0, 200)
+            })),
             removeTask: (id) => set((state) => ({ tasks: state.tasks.filter(t => t.id !== id) })),
 
             // Detailed Navigation / Spotlight
@@ -130,7 +136,9 @@ export const useStore = create(
             unreadTwinChats: [],
             addUnreadTwinChat: (msg) => set(state => {
                 if (state.unreadTwinChats.some(m => m.id === msg.id)) return state;
-                return { unreadTwinChats: [...state.unreadTwinChats, msg] };
+                // Cap at 50 to prevent unbounded localStorage growth
+                const next = [...state.unreadTwinChats, msg];
+                return { unreadTwinChats: next.length > 50 ? next.slice(-50) : next };
             }),
             removeUnreadTwinChat: (sessionId) => set(state => ({
                 unreadTwinChats: state.unreadTwinChats.filter(m => m.session_id !== sessionId)
@@ -148,11 +156,13 @@ export const useStore = create(
                 theme: state.theme,
                 preferences: state.preferences,
                 integrations: state.integrations,
-                currentScreen: state.currentScreen,
-                view: state.view,
                 tasks: state.tasks,
+                // Persist unread notifications (capped above at 50)
                 unreadTwinChats: state.unreadTwinChats,
                 twinChatActiveSessionId: state.twinChatActiveSessionId,
+                // NOTE: whatsappReady is intentionally NOT persisted — it's a live WebSocket
+                // status value. On page reload the WS will update it within seconds anyway.
+                // Persisting it causes a stale "Connected" badge when the bridge is actually offline.
             }),
         }
     )

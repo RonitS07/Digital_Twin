@@ -70,9 +70,50 @@ const Workspace = () => {
 
     // Sync Zustand whatsappReady into local whatsappStatus immediately
     useEffect(() => {
-        if (whatsappReady === true) setWhatsappStatus('ok');
-        else if (whatsappReady === false) setWhatsappStatus('offline');
-    }, [whatsappReady]);
+        if (whatsappReady === true) {
+            setWhatsappStatus('ok');
+            setIntegration('whatsapp', true);
+            if (showQrModal) {
+                setShowQrModal(false);
+                showQrModalRef.current = false;
+            }
+        } else if (whatsappReady === false) {
+            setWhatsappStatus('offline');
+        }
+    }, [whatsappReady, showQrModal, setIntegration]);
+
+    // QR Code polling (only active when the QR Modal is displayed)
+    useEffect(() => {
+        if (!showQrModal) {
+            setQrCode(null);
+            return;
+        }
+
+        let isStopped = false;
+        const fetchQr = async () => {
+            try {
+                const data = await apiFetch(`/mcp/whatsapp/qr`);
+                if (isStopped) return;
+                setQrCode(data?.qr || null);
+                if (data?.ready) {
+                    setWhatsappStatus('ok');
+                    setWhatsappReady(true);
+                    setIntegration('whatsapp', true);
+                    setShowQrModal(false);
+                    showQrModalRef.current = false;
+                }
+            } catch (err) {
+                console.error("Error polling WhatsApp QR:", err);
+            }
+        };
+
+        fetchQr();
+        const qrInt = setInterval(fetchQr, 5000);
+        return () => {
+            isStopped = true;
+            clearInterval(qrInt);
+        };
+    }, [showQrModal, setWhatsappReady, setIntegration]);
 
     // ── Cache-aware integration status fetch ──────────────────────────────────
     useEffect(() => {
@@ -134,34 +175,10 @@ const Workspace = () => {
 
         const pollInterval = setInterval(() => {
             loadMcpStatus();
-            if (showQrModalRef.current) {
-                apiFetch(`/mcp/whatsapp/qr`)
-                    .then(data => {
-                        setQrCode(data?.qr || null);
-                        if (data?.ready) {
-                            if (!waReadyConfirmRef.current) {
-                                waReadyConfirmRef.current = setTimeout(() => {
-                                    setShowQrModal(false);
-                                    showQrModalRef.current = false;
-                                    setWhatsappStatus('ok');
-                                    setIntegration('whatsapp', true);
-                                    waReadyConfirmRef.current = null;
-                                }, 2000);
-                            }
-                        } else {
-                            if (waReadyConfirmRef.current) {
-                                clearTimeout(waReadyConfirmRef.current);
-                                waReadyConfirmRef.current = null;
-                            }
-                        }
-                    })
-                    .catch(console.error);
-            }
-        }, 5000);
+        }, 30000);
 
         return () => {
             clearInterval(pollInterval);
-            if (waReadyConfirmRef.current) clearTimeout(waReadyConfirmRef.current);
         };
     }, [storeAuth.user?.uid, loadMcpStatus])
 

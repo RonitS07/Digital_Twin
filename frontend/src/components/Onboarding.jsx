@@ -180,7 +180,7 @@ export const ChooseRole = ({ onNext }) => {
 
 // --- Step 3: Connect Tools ---
 export const ConnectTools = ({ onNext }) => {
-    const { auth: storeAuth, preferences, togglePreference, setPreference } = useStore();
+    const { auth: storeAuth, preferences, setPreference } = useStore();
     const [connecting, setConnecting] = useState(false);
 
     useEffect(() => {
@@ -193,14 +193,34 @@ export const ConnectTools = ({ onNext }) => {
                 if (data?.connected) {
                     setPreference('gmailSync', true);
                     setPreference('calendarSync', true);
+                    
+                    // Sync immediately to the backend
+                    apiFetch(`/settings/preferences`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ ...preferences, gmailSync: true, calendarSync: true })
+                    }).catch(err => console.warn('Google connection backend sync failed:', err));
                 }
             })
             .catch(err => console.error(err));
-    }, [storeAuth.user?.accessToken, setPreference]);
+    }, [storeAuth.user?.accessToken, setPreference, preferences]);
 
     const handleConnect = async (tool) => {
-        if (tool.active) { togglePreference(tool.key); return; }
-        if (tool.name === 'Telegram') { togglePreference(tool.key); return; }
+        const newActive = !tool.active;
+        if (tool.name === 'Telegram' || tool.active) {
+            // Optimistically update local store
+            setPreference(tool.key, newActive);
+            
+            // Sync to the backend preferences
+            try {
+                await apiFetch(`/settings/preferences`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ ...preferences, [tool.key]: newActive })
+                });
+            } catch (err) {
+                console.warn('Real-time preference sync to backend failed:', err);
+            }
+            return;
+        }
 
         setConnecting(true);
         try {
@@ -317,43 +337,73 @@ export const ConnectProtocol = ({ onNext }) => (
 );
 
 // --- Step 5: Control Preferences ---
-export const ControlPreferences = ({ onNext }) => (
-    <OnboardingLayout
-        step={5}
-        title="Execution Guardrails."
-        subtitle="Maintain ultimate sovereignty. Configure where your Twin has autonomous permissions vs. where it requires manual audit."
-    >
-        <div className="max-w-2xl w-full space-y-4 mb-12">
-            {[
-                { title: 'Email Triage', desc: 'Allows Twin to draft context-aware replies for your review.', icon: Mail, active: true },
-                { title: 'Calendar Intelligence', desc: 'Automatically proposes meeting times based on historical energy levels.', icon: Calendar, active: true },
-                { title: 'Proactive Alerting', desc: 'Directly pings Telegram when critical project shifts are detected.', icon: MessageSquare, active: true }
-            ].map((pref, i) => (
-                <div key={i} className="p-6 rounded-[1.5rem] bg-surface-container border border-outline-variant flex items-center justify-between group hover:border-primary/30 transition-all shadow-lg shadow-black/5">
-                    <div className="flex items-center gap-5">
-                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${pref.active ? 'bg-primary/10 text-primary' : 'bg-surface-base text-neutral'}`}>
-                            <pref.icon size={22} className={pref.active ? 'text-primary' : 'text-neutral'} />
-                        </div>
-                        <div>
-                            <h4 className="font-extrabold text-on-surface tracking-tight italic">{pref.title}</h4>
-                            <p className="text-xs text-on-surface-variant mt-0.5">{pref.desc}</p>
-                        </div>
-                    </div>
-                    <div className={`w-12 h-7 rounded-full relative flex-shrink-0 transition-all duration-500 ${pref.active ? 'bg-primary ai-glow shadow-primary/30' : 'bg-surface-container-high border border-outline-variant'}`}>
-                        <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-lg transition-all duration-300 ${pref.active ? 'right-1' : 'left-1'}`} />
-                    </div>
-                </div>
-            ))}
-        </div>
+export const ControlPreferences = ({ onNext }) => {
+    const { preferences, setPreference } = useStore();
 
-        <button
-            onClick={onNext}
-            className="bg-primary text-white px-12 py-4 rounded-full font-black text-sm uppercase tracking-widest hover:brightness-105 active:scale-95 transition-all shadow-xl shadow-primary/25"
+    const guardrails = [
+        { title: 'Email Monitoring', desc: 'Allows the Twin to monitor incoming emails and prepare draft replies.', key: 'gmailSync', icon: Mail },
+        { title: 'Calendar Sync', desc: 'Enables automatic calendar event synthesis and scheduling.', key: 'calendarSync', icon: Calendar },
+        { title: 'Autonomous Execution', desc: 'Allows the Twin to run tasks immediately without manual approval gates.', key: 'autonomousMode', icon: Zap },
+        { title: 'Proactive Alerting', desc: 'Directly sends instant alerts when priority actions are required.', key: 'actionAlerts', icon: MessageSquare }
+    ];
+
+    const handleToggle = async (key) => {
+        const newValue = !preferences[key];
+        // 1. Update local Zustand store
+        setPreference(key, newValue);
+
+        // 2. Sync immediately to backend
+        try {
+            await apiFetch(`/settings/preferences`, {
+                method: 'PUT',
+                body: JSON.stringify({ ...preferences, [key]: newValue })
+            });
+        } catch (err) {
+            console.warn('Real-time preference sync to backend failed:', err);
+        }
+    };
+
+    return (
+        <OnboardingLayout
+            step={5}
+            title="Execution Guardrails."
+            subtitle="Maintain ultimate sovereignty. Configure where your Twin has autonomous permissions vs. where it requires manual audit."
         >
-            Commit Guardrails
-        </button>
-    </OnboardingLayout>
-);
+            <div className="max-w-2xl w-full space-y-4 mb-12">
+                {guardrails.map((pref, i) => {
+                    const isActive = !!preferences[pref.key];
+                    return (
+                        <div
+                            key={i}
+                            onClick={() => handleToggle(pref.key)}
+                            className="p-6 rounded-[1.5rem] bg-surface-container border border-outline-variant flex items-center justify-between group hover:border-primary/30 transition-all shadow-lg shadow-black/5 cursor-pointer"
+                        >
+                            <div className="flex items-center gap-5">
+                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${isActive ? 'bg-primary/10 text-primary' : 'bg-surface-base text-neutral/40'}`}>
+                                    <pref.icon size={22} className={isActive ? 'text-primary' : 'text-neutral/40'} />
+                                </div>
+                                <div>
+                                    <h4 className="font-extrabold text-on-surface tracking-tight italic">{pref.title}</h4>
+                                    <p className="text-xs text-on-surface-variant mt-0.5">{pref.desc}</p>
+                                </div>
+                            </div>
+                            <div className={`w-12 h-7 rounded-full relative flex-shrink-0 transition-all duration-500 ${isActive ? 'bg-primary ai-glow shadow-primary/30' : 'bg-surface-container-high border border-outline-variant'}`}>
+                                <div className={`absolute top-1 w-5 h-5 bg-white rounded-full shadow-lg transition-all duration-300 ${isActive ? 'right-1' : 'left-1'}`} />
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            <button
+                onClick={onNext}
+                className="bg-primary text-white px-12 py-4 rounded-full font-black text-sm uppercase tracking-widest hover:brightness-105 active:scale-95 transition-all shadow-xl shadow-primary/25"
+            >
+                Commit Guardrails
+            </button>
+        </OnboardingLayout>
+    );
+};
 
 // --- Step 6: Privacy & Permissions ---
 export const PrivacyPermissions = ({ onNext }) => (
