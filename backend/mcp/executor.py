@@ -191,7 +191,7 @@ class MCPExecutor:
             "slack_channels": ("slack", "list_channels", False),
 
             # Telegram
-            "telegram_send": ("telegram", "send_message", False),
+            "telegram_send": ("telegram", "send_message", True),
             "telegram_read": ("telegram", "get_updates",  False),
 
             # Visual
@@ -206,6 +206,7 @@ class MCPExecutor:
 
             # WhatsApp
             "whatsapp_send": ("whatsapp", "send_message", True),
+            "whatsapp_read": ("whatsapp", "get_messages", False),
 
             # Agent Network
             "schedule_with_twin": ("agent_network", "schedule_with_twin", True),

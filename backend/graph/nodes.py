@@ -63,7 +63,7 @@ def classifier_node(state: State):
         "email_draft": "email_draft",
         "email_read": "email_read",
         "email_send": "email_send",
-        "email_search": "email_search",
+        "email_search": "email_read",
         "draft_email": "email_draft",
         "reply_to_email": "email_reply",
         "schedule": "calendar",
@@ -163,7 +163,7 @@ def classifier_node(state: State):
         "new offer", "sale on", "promo code", "coupon"
     ]
     if any(trigger in user_input for trigger in implicit_search_triggers):
-        return {**state, "intent": "email_search"}
+        return {**state, "intent": "email_read"}
 
 
 
