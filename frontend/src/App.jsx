@@ -5,8 +5,9 @@ import { Analytics } from "@vercel/analytics/react"
 
 
 import { Login, Signup, ForgotPassword } from './components/Auth'
-import { auth } from './firebase'
+import { auth, db } from './firebase'
 import { onAuthStateChanged } from 'firebase/auth'
+import { doc, getDoc } from 'firebase/firestore'
 import {
     Welcome,
     ChooseRole,
@@ -65,75 +66,96 @@ function App() {
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
             if (firebaseUser) {
-                // User is authenticated — Auth.jsx already handles login() + navigation.
-                // Here we just ensure the store token is always fresh on tab/reload.
                 try {
-                    const existingUser = useStore.getState().auth.user
-                    
-                    let onboardingCompleted = !!existingUser?.onboardingCompleted;
-                    try {
-                        const { doc, getDoc } = await import('firebase/firestore');
-                        const { db } = await import('./firebase');
-                        const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
-                        if (userSnap.exists()) {
-                            onboardingCompleted = !!userSnap.data()?.onboardingCompleted;
+                    const existingUser = useStore.getState().auth.user;
+                    const isSameUser = existingUser && existingUser.uid === firebaseUser.uid;
+
+                    // If returning user already hydrated, unblock UI immediately
+                    if (isSameUser) {
+                        setInitializing(false);
+                        setAuthInitialized(true);
+                    }
+
+                    const performSync = async () => {
+                        try {
+                            let onboardingCompleted = !!existingUser?.onboardingCompleted;
+
+                            // Fetch Firestore data and fresh ID Token concurrently
+                            const [userSnap, idToken] = await Promise.all([
+                                getDoc(doc(db, 'users', firebaseUser.uid)),
+                                firebaseUser.getIdToken()
+                            ]);
+
+                            if (userSnap.exists()) {
+                                onboardingCompleted = !!userSnap.data()?.onboardingCompleted;
+                            }
+
+                            // Try to get a backend JWT, sending idToken for optional server-side verification
+                            const backendRes = await fetch(`${API_BASE}/auth/firebase`, {
+                                method: 'POST',
+                                headers: { 
+                                    'Content-Type': 'application/json',
+                                    'X-Firebase-Token': idToken,
+                                },
+                                body: JSON.stringify({
+                                    uid:   firebaseUser.uid,
+                                    email: firebaseUser.email   || '',
+                                    name:  firebaseUser.displayName || '',
+                                }),
+                            }).catch(() => null);
+
+                            const backendData = backendRes?.ok ? await backendRes.json() : {};
+
+                            login({
+                                uid:         firebaseUser.uid,
+                                email:       firebaseUser.email || '',
+                                name:        firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+                                photoURL:    firebaseUser.photoURL || '',
+                                accessToken: backendData.access_token || idToken,
+                                is_admin:    !!(backendData?.user?.is_admin ?? backendData?.is_admin),
+                                onboardingCompleted,
+                            }, backendData.preferences);
+                            setIsAdmin(!!(backendData?.user?.is_admin ?? backendData?.is_admin));
+
+                            // Route correctly on page load/refresh
+                            const currentSavedScreen = useStore.getState().currentScreen;
+                            const onboardingScreens = ['welcome', 'role', 'tools', 'protocol', 'preferences', 'privacy', 'initializing'];
+
+                            if (onboardingCompleted) {
+                                setCurrentScreen('main');
+                            } else {
+                                if (onboardingScreens.includes(currentSavedScreen)) {
+                                    setCurrentScreen(currentSavedScreen);
+                                } else {
+                                    setCurrentScreen('welcome');
+                                }
+                            }
+                        } catch (err) {
+                            console.warn('onAuthStateChanged rehydration inner error:', err);
+                        } finally {
+                            setInitializing(false);
+                            setAuthInitialized(true);
                         }
-                    } catch (e) {
-                        console.warn("Failed to check onboarding status on load", e);
-                    }
+                    };
 
-                    if (!existingUser || existingUser.uid !== firebaseUser.uid) {
-                        const idToken = await firebaseUser.getIdToken()
-                        // Try to get a backend JWT, sending idToken for optional server-side verification
-                        const backendRes = await fetch(`${API_BASE}/auth/firebase`, {
-                            method: 'POST',
-                            headers: { 
-                                'Content-Type': 'application/json',
-                                'X-Firebase-Token': idToken,
-                            },
-                            body: JSON.stringify({
-                                uid:   firebaseUser.uid,
-                                email: firebaseUser.email   || '',
-                                name:  firebaseUser.displayName || '',
-                            }),
-                        }).catch(() => null)
-
-                        const backendData = backendRes?.ok ? await backendRes.json() : {}
-
-                        login({
-                            uid:         firebaseUser.uid,
-                            email:       firebaseUser.email || '',
-                            name:        firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-                            photoURL:    firebaseUser.photoURL || '',
-                            accessToken: backendData.access_token || idToken,
-                            is_admin:    !!(backendData?.user?.is_admin ?? backendData?.is_admin),
-                            onboardingCompleted,
-                        }, backendData.preferences)
-                        setIsAdmin(!!(backendData?.user?.is_admin ?? backendData?.is_admin))
-                    }
-                    
-                    // Always route authenticated users correctly on page load/refresh
-                    const currentSavedScreen = useStore.getState().currentScreen
-                    const onboardingScreens = ['welcome', 'role', 'tools', 'protocol', 'preferences', 'privacy', 'initializing']
-
-                    if (onboardingCompleted) {
-                        setCurrentScreen('main')
+                    if (isSameUser) {
+                        // Background sync: let state load instantly, update credentials/onboarding status asynchronously
+                        performSync();
                     } else {
-                        if (onboardingScreens.includes(currentSavedScreen)) {
-                            setCurrentScreen(currentSavedScreen)
-                        } else {
-                            setCurrentScreen('welcome')
-                        }
+                        // Blocking sync: wait for token and onboarding status to avoid screen flashing
+                        await performSync();
                     }
                 } catch (err) {
-                    console.warn('onAuthStateChanged rehydration error:', err)
+                    console.warn('onAuthStateChanged rehydration error:', err);
+                    setInitializing(false);
+                    setAuthInitialized(true);
                 }
             } else {
                 // User signed out — clean up store
-                logout()
+                logout();
+                setInitializing(false);
+                setAuthInitialized(true);
             }
-            setInitializing(false)
-            setAuthInitialized(true)
         })
 
         // Proactive token refresh every 45 minutes (Firebase tokens expire at 60min)

@@ -322,9 +322,9 @@ const Workspace = () => {
                         className="bg-surface-container border border-neutral/20 rounded-2xl p-8 max-w-sm w-full mx-4 flex flex-col items-center gap-4"
                         onClick={e => e.stopPropagation()}
                     >
-                        <MessageCircle size={32} className="text-green-400" />
-                        <h3 className="font-bold text-lg text-on-surface">Scan to connect WhatsApp</h3>
-                        <p className="text-sm text-on-surface-variant text-center">Open WhatsApp on your phone → Linked Devices → Link a Device</p>
+                        <MessageCircle size={32} className="text-[#2D6A4F]" />
+                        <h3 className="font-fraunces font-semibold text-xl text-[#1A1814]">Scan to connect WhatsApp</h3>
+                        <p className="font-dm text-sm text-[#7A7065] text-center">Open WhatsApp on your phone → Linked Devices → Link a Device</p>
                         {qrCode ? (
                             <div className="bg-white p-4 rounded-xl">
                                 <img
@@ -347,8 +347,9 @@ const Workspace = () => {
             )}
 
             <div>
-                <h2 className="text-3xl lg:text-4xl font-manrope font-extrabold tracking-tighter text-on-surface mb-2">Connected Integrations</h2>
-                <p className="text-on-surface-variant text-sm lg:text-base max-w-2xl">Manage the external applications and permissions your AI Twin utilizes to execute autonomous actions.</p>
+                <p className="wi-label mb-2">Integrations</p>
+                <h2 className="font-fraunces font-semibold text-3xl lg:text-4xl text-[#1A1814] mb-2">Connected Services</h2>
+                <p className="font-dm text-sm lg:text-base text-[#7A7065] max-w-2xl">Manage the external applications and permissions your AI Twin utilizes to execute autonomous actions.</p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -358,56 +359,56 @@ const Workspace = () => {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.1 }}
                         key={i}
-                        className={`p-5 lg:p-8 rounded-3xl border flex flex-col relative transition-all ${tool.active ? 'bg-primary/5 border-primary/20 shadow-xl shadow-primary/5' : 'bg-surface-container border-neutral/5'}`}
+                        className={`wi-card p-6 flex flex-col relative transition-all ${tool.active ? 'wi-card-accent' : ''}`}
                     >
                         <div className="flex items-center justify-between mb-6">
-                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${tool.active ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-surface-base text-neutral'}`}>
-                                <tool.icon size={24} fill={tool.active ? 'currentColor' : 'none'} />
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${tool.active ? 'bg-[#2D6A4F] text-white shadow-md' : 'bg-[#F7F5F2] text-[#7A7065]'}`}>
+                                <tool.icon size={22} fill={tool.active ? 'currentColor' : 'none'} />
                             </div>
-                            <span className={`text-[10px] uppercase font-bold tracking-widest px-3 py-1 rounded-full ${tool.active ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-neutral/10 text-neutral'}`}>
+                            <span className={`badge ${tool.active ? 'badge-connected' : 'badge-disconnected'}`}>
                                 {tool.statusLabel || (tool.active ? 'Connected' : 'Disconnected')}
                             </span>
                         </div>
 
-                        <h3 className="font-bold text-xl text-on-surface mb-2">{tool.name}</h3>
-                        <p className="text-sm text-on-surface-variant leading-relaxed mb-8 flex-1">{tool.desc}</p>
+                        <h3 className="font-fraunces font-semibold text-xl text-[#1A1814] mb-2">{tool.name}</h3>
+                        <p className="font-dm text-sm text-[#7A7065] leading-relaxed mb-8 flex-1">{tool.desc}</p>
 
                         <button
                             disabled={connecting}
                             onClick={() => handleConnect(tool)}
-                            className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-50 ${tool.active ? 'bg-surface-base text-on-surface hover:text-red-400 hover:bg-red-400/10' : 'bg-primary text-surface-base hover:brightness-110 active:scale-95'}`}
+                            className={`w-full py-3 rounded-lg font-dm font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-50 text-sm ${tool.active ? 'btn-secondary text-[#C0392B] hover:bg-[#FFF0EE] border-[#C0392B]/20' : 'btn-primary'}`}
                         >
                             {tool.active
                                 ? <><Unlink size={16} /> Disconnect</>
                                 : tool.name === 'WhatsApp'
-                                    ? <><QrCode size={16} /> Scan QR to Connect</>
-                                    : <><ExternalLink size={16} /> Authorize Connection</>}
+                                    ? <><QrCode size={16} /> Scan QR</>
+                                    : <><ExternalLink size={16} /> Authorize</>}
                         </button>
                     </motion.div>
                 ))}
             </div>
 
-            <div className="glass-panel p-8 rounded-3xl border border-neutral/10">
-                <h3 className="font-bold text-lg mb-4 text-on-surface">Security &amp; API Gateway</h3>
-                <p className="text-sm text-on-surface-variant mb-6 max-w-3xl">All authenticated requests transit securely utilizing OAuth 2.0. Service credentials reside exclusively encrypted atop active memory banks and flush strictly adhering to established TTL thresholds.</p>
-                <div className="bg-surface-container-highest rounded-xl p-4 font-mono text-[11px] text-primary/80 overflow-x-auto whitespace-pre">
+            <div className="wi-card border-[#E8E4DE] bg-[#F7F5F2]">
+                <h3 className="font-fraunces font-semibold text-lg mb-3 text-[#1A1814]">Security &amp; API Gateway</h3>
+                <p className="font-dm text-sm text-[#7A7065] mb-6 max-w-3xl">All authenticated requests transit securely utilizing OAuth 2.0. Service credentials reside exclusively encrypted atop active memory banks and flush strictly adhering to established TTL thresholds.</p>
+                <div className="bg-white border border-[#E8E4DE] rounded-xl p-4 font-mono-ji text-[11px] text-[#A09488] overflow-x-auto whitespace-pre">
                     {'// Backend Access Policies\nallow_origins = ["*"]\ncredential_binding = true\nttl = 3600\nmode = "zero_trust"'}
                 </div>
             </div>
 
             {/* MCP Server Status Panel */}
-            <div className="rounded-3xl border border-white/8 bg-white/[0.03] overflow-hidden">
+            <div className="wi-card p-0 overflow-hidden border-[#E8E4DE]">
                 {/* Header row — always visible */}
-                <div className="flex items-center justify-between px-6 py-4">
+                <div className="flex items-center justify-between px-6 py-4 bg-[#F7F5F2]">
                     <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${mcpData.mcp_enabled ? 'bg-primary/20 text-primary' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${mcpData.mcp_enabled ? 'bg-[#E6F4EC] text-[#2D6A4F]' : 'bg-[#FEF3C7] text-[#B45309]'}`}>
                             <Cpu size={16} />
                         </div>
                         <div>
-                            <span className="text-sm font-bold text-on-surface">MCP Tool Gateway</span>
+                            <span className="font-dm font-semibold text-sm text-[#1A1814]">MCP Tool Gateway</span>
                             <div className="flex items-center gap-2 mt-0.5">
-                                <span className={`w-1.5 h-1.5 rounded-full ${mcpData.mcp_enabled ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
-                                <span className="text-[11px] text-on-surface-variant">
+                                <span className={`w-1.5 h-1.5 rounded-full ${mcpData.mcp_enabled ? 'bg-[#2D6A4F] animate-pulse' : 'bg-[#B45309]'}`} />
+                                <span className="font-mono-ji text-[11px] text-[#7A7065]">
                                     {mcpLoading ? 'Loading...' : mcpData.mcp_enabled
                                         ? `${mcpData.servers.length} servers · ${mcpData.total_tools} tools`
                                         : 'Disabled'}
@@ -421,8 +422,8 @@ const Workspace = () => {
                         <button
                             onClick={handleMcpToggle}
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all border ${mcpData.mcp_enabled
-                                    ? 'bg-green-500/10 text-green-400 border-green-500/20 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/20'
-                                    : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20 hover:bg-green-500/10 hover:text-green-400 hover:border-green-500/20'
+                                ? 'bg-[#E6F4EC] text-[#2D6A4F] border-[#2D6A4F]/20 hover:bg-[#FFF0EE] hover:text-[#C0392B] hover:border-[#C0392B]/20'
+                                : 'bg-[#FEF3C7] text-[#B45309] border-[#B45309]/20 hover:bg-[#E6F4EC] hover:text-[#2D6A4F] hover:border-[#2D6A4F]/20'
                                 }`}
                         >
                             <Power size={11} />
@@ -432,7 +433,7 @@ const Workspace = () => {
                         {/* Expand/collapse */}
                         <button
                             onClick={() => setMcpExpanded(e => !e)}
-                            className="text-on-surface-variant hover:text-on-surface transition-colors p-1"
+                            className="text-[#A09488] hover:text-[#1A1814] transition-colors p-1"
                         >
                             {mcpExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                         </button>
@@ -445,20 +446,20 @@ const Workspace = () => {
                         {mcpData.servers.map(server => (
                             <div
                                 key={server.name}
-                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${!mcpData.mcp_enabled
-                                        ? 'bg-yellow-500/5 border-yellow-500/15 text-yellow-400/70'
-                                        : server.status === 'ok'
-                                            ? 'bg-green-500/5 border-green-500/15 text-green-400'
-                                            : 'bg-red-500/5 border-red-500/15 text-red-400'
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full font-mono-ji text-[10px] font-medium border ${!mcpData.mcp_enabled
+                                    ? 'bg-[#FEF3C7] border-[#B45309]/15 text-[#B45309]'
+                                    : server.status === 'ok'
+                                        ? 'bg-[#E6F4EC] border-[#2D6A4F]/15 text-[#2D6A4F]'
+                                        : 'bg-[#FFF0EE] border-[#C0392B]/15 text-[#C0392B]'
                                     }`}
                                 title={`${server.tool_count ?? 0} tools`}
                             >
-                                <span className={`w-1.5 h-1.5 rounded-full ${!mcpData.mcp_enabled ? 'bg-yellow-500/50'
-                                        : server.status === 'ok' ? 'bg-green-500'
-                                            : 'bg-red-500'
+                                <span className={`w-1.5 h-1.5 rounded-full ${!mcpData.mcp_enabled ? 'bg-[#B45309]'
+                                    : server.status === 'ok' ? 'bg-[#2D6A4F]'
+                                        : 'bg-[#C0392B]'
                                     }`} />
                                 {server.name}
-                                <span className="opacity-50">·{server.tool_count ?? 0}</span>
+                                <span className="opacity-60">·{server.tool_count ?? 0}</span>
                             </div>
                         ))}
                     </div>
@@ -474,34 +475,34 @@ const Workspace = () => {
                             transition={{ duration: 0.2 }}
                             className="overflow-hidden"
                         >
-                            <div className="border-t border-white/5 divide-y divide-white/5">
+                            <div className="border-t border-[#E8E4DE] divide-y divide-[#E8E4DE] bg-white">
                                 {mcpData.servers.map((server) => (
-                                    <div key={server.name} className="flex items-start gap-4 px-6 py-3 hover:bg-white/[0.02] transition-colors">
-                                        <div className={`mt-0.5 w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${serverIconColor(server)}`}>
-                                            <Zap size={11} />
+                                    <div key={server.name} className="flex items-start gap-4 px-6 py-4 hover:bg-[#F7F5F2] transition-colors">
+                                        <div className="mt-0.5 w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-[#E8E4DE] text-[#7A7065]">
+                                            <Zap size={12} />
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2">
-                                                <span className="text-sm font-medium text-on-surface capitalize">{server.name}</span>
-                                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase ${!mcpData.mcp_enabled ? 'bg-yellow-500/10 text-yellow-400'
-                                                        : server.status === 'ok' ? 'bg-green-500/10 text-green-400'
-                                                            : 'bg-red-500/10 text-red-400'
+                                                <span className="font-dm font-semibold text-sm text-[#1A1814] capitalize">{server.name}</span>
+                                                <span className={`badge ${!mcpData.mcp_enabled ? 'badge-offline'
+                                                    : server.status === 'ok' ? 'badge-connected'
+                                                        : 'badge-danger'
                                                     }`}>
                                                     {!mcpData.mcp_enabled ? 'disabled' : server.status}
                                                 </span>
-                                                <span className="text-[10px] text-on-surface-variant ml-auto">{server.tool_count ?? 0} tool{server.tool_count !== 1 ? 's' : ''}</span>
+                                                <span className="font-dm text-[11px] text-[#A09488] ml-auto">{server.tool_count ?? 0} tool{server.tool_count !== 1 ? 's' : ''}</span>
                                             </div>
                                             {server.tools?.length > 0 && (
-                                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                                <div className="flex flex-wrap gap-1.5 mt-2">
                                                     {server.tools.map(t => (
-                                                        <span key={t} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 text-on-surface-variant">
+                                                        <span key={t} className="font-mono-ji text-[10px] px-1.5 py-0.5 rounded bg-[#F7F5F2] border border-[#E8E4DE] text-[#7A7065]">
                                                             {t}
                                                         </span>
                                                     ))}
                                                 </div>
                                             )}
                                             {server.error && (
-                                                <p className="text-[10px] text-red-400/70 mt-1">{server.error}</p>
+                                                <p className="font-dm text-xs text-[#C0392B] mt-1.5">{server.error}</p>
                                             )}
                                         </div>
                                     </div>
@@ -509,11 +510,11 @@ const Workspace = () => {
                             </div>
 
                             {/* Refresh button */}
-                            <div className="px-6 py-3 border-t border-white/5 flex justify-end">
+                            <div className="px-6 py-3 border-t border-[#E8E4DE] bg-[#F7F5F2] flex justify-end">
                                 <button
                                     onClick={loadMcpStatus}
                                     disabled={mcpLoading}
-                                    className="text-[11px] text-primary/60 hover:text-primary transition-colors disabled:opacity-40"
+                                    className="font-dm text-xs font-medium text-[#7A7065] hover:text-[#2D6A4F] transition-colors disabled:opacity-40"
                                 >
                                     {mcpLoading ? 'Refreshing...' : '↻ Refresh status'}
                                 </button>

@@ -232,9 +232,9 @@ const BrandPanel = ({ quote, author }) => (
         </div>
 
         {quote && (
-            <div className="relative z-10 glass-panel rounded-2xl p-5 border border-primary/10">
-                <p className="text-sm text-on-surface-variant italic leading-relaxed">"{quote}"</p>
-                {author && <p className="text-[11px] font-bold text-primary mt-2 tracking-wide">{author}</p>}
+            <div className="relative z-10 bg-[#F7F5F2] rounded-xl p-5 border border-[#E8E4DE] shadow-sm">
+                <p className="text-sm font-dm text-[#7A7065] italic leading-relaxed">"{quote}"</p>
+                {author && <p className="font-mono-ji text-[10px] text-[#A09488] uppercase tracking-widest mt-2">{author}</p>}
             </div>
         )}
     </div>

@@ -34,10 +34,7 @@ class VisualMCPServer(MCPServer):
             try:
                 prompt = args["prompt"]
                 encoded_prompt = urllib.parse.quote(prompt)
-                url = (
-                    "https://image.pollinations.ai/prompt/"
-                    f"{encoded_prompt}?width=1024&height=768&model=flux&nologo=true"
-                )
+                url = f"/twin-chat/image-proxy?prompt={encoded_prompt}"
                 return {"url": url, "prompt": prompt}
             except Exception:
                 return {"error": "Image generation is temporarily unavailable."}

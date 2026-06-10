@@ -67,7 +67,7 @@ function useTwinChatWS(token, handlers) {
         try {
           const data = JSON.parse(e.data)
           handlers.current?.(data)
-        } catch {}
+        } catch (_) { /* ignore */ }
       }
       ws.onclose = (ev) => {
         // 4001 = bad auth, 4003 = token expired — don't reconnect
@@ -155,14 +155,22 @@ const SimpleMarkdown = ({ children }) => {
   return <>{elements}</>
 }
 
+const resolveImageSrc = (src) => {
+  if (!src) return src
+  if (src.startsWith('data:') || src.startsWith('http://') || src.startsWith('https://')) return src
+  return `${API_BASE}${src.startsWith('/') ? src : `/${src}`}`
+}
+
 // Image loader with skeleton
 const ImageLoader = ({ src }) => {
   const [status, setStatus] = useState('loading')
+  const resolvedSrc = resolveImageSrc(src)
+  useEffect(() => { setStatus('loading') }, [resolvedSrc])
   return (
     <div className="relative rounded-xl overflow-hidden w-full bg-surface-container-highest min-h-[200px]">
       {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>}
       <img 
-        src={src} 
+        src={resolvedSrc} 
         className={`w-full h-auto rounded-xl ${status === 'loaded' ? 'opacity-100' : 'opacity-0'}`} 
         onLoad={() => setStatus('loaded')} 
         onError={(e) => {
@@ -326,7 +334,8 @@ const MessageBubble = React.memo(({ msg, isOwn, onAction, user }) => {
       </div>
     </motion.div>
   )
-})
+});
+MessageBubble.displayName = 'MessageBubble';
 
 function SuggestionsPanel({ data, onApprove, onDismiss, partnerName }) {
   if (!data) return null
@@ -430,55 +439,79 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
       return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  const handleMenuItemAction = useCallback((key) => {
+      if (key === 'upload') {
+          fileInputRef.current?.click()
+      } else if (key === 'image') {
+          setInput('Generate an image of ')
+          setSelectedIntent('visual')
+      } else if (key === 'calendar') {
+          setInput('Schedule a meeting with ')
+          setSelectedIntent('calendar')
+      } else if (key === 'email') {
+          setInput('Draft an email to ')
+          setSelectedIntent('email')
+      } else if (key === 'analyze') {
+          fileInputRef.current?.click()
+          setSelectedIntent('file_read')
+      } else if (key === 'slack') {
+          setInput('Post to #')
+          setSelectedIntent('slack')
+      } else if (key === 'telegram') {
+          setInput('Send via Telegram: ')
+          setSelectedIntent('telegram')
+      }
+  }, [])
+
   const menuItems = [
       {
+          key: 'upload',
           icon: Paperclip,
           label: 'Add photos & files',
           hint: null,
           shortcut: 'Ctrl+U',
-          action: () => fileInputRef.current?.click()
       },
       {
+          key: 'image',
           icon: ImagePlus,
           label: 'Create image',
           hint: null,
           shortcut: null,
-          action: () => { setInput('Generate an image of '); setSelectedIntent('visual'); }
       },
       {
+          key: 'calendar',
           icon: Calendar,
           label: 'Schedule meeting',
           hint: null,
           shortcut: null,
-          action: () => { setInput('Schedule a meeting with '); setSelectedIntent('calendar'); }
       },
       {
+          key: 'email',
           icon: Mail,
           label: 'Draft email',
           hint: null,
           shortcut: null,
-          action: () => { setInput('Draft an email to '); setSelectedIntent('email'); }
       },
       {
+          key: 'analyze',
           icon: FileText,
           label: 'Analyze file',
           hint: null,
           shortcut: null,
-          action: () => { fileInputRef.current?.click(); setSelectedIntent('file_read'); }
       },
       {
+          key: 'slack',
           icon: MessageCircle,
           label: 'Post to Slack',
           hint: null,
           shortcut: null,
-          action: () => { setInput('Post to #'); setSelectedIntent('slack'); }
       },
       {
+          key: 'telegram',
           icon: MessageSquare,
           label: 'Send Telegram',
           hint: null,
           shortcut: null,
-          action: () => { setInput('Send via Telegram: '); setSelectedIntent('telegram'); }
       },
   ]
 
@@ -859,7 +892,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
                     >
                         <button
                             type="button"
-                            onClick={() => { menuItems[0].action(); setPlusOpen(false) }}
+                            onClick={() => { handleMenuItemAction('upload'); setPlusOpen(false) }}
                             className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.06] transition-colors duration-100 text-left group"
                         >
                             <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.08] group-hover:bg-white/[0.12] transition-colors flex-shrink-0">
@@ -877,7 +910,7 @@ function ChatPanel({ session, onBack, wsSend, wsEvent, onDeleteSession }) {
                             <button
                                 key={i}
                                 type="button"
-                                onClick={() => { item.action(); setPlusOpen(false) }}
+                                onClick={() => { handleMenuItemAction(item.key); setPlusOpen(false) }}
                                 className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/[0.06] transition-colors duration-100 text-left group"
                             >
                                 <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.08] group-hover:bg-white/[0.12] transition-colors flex-shrink-0">
@@ -1033,7 +1066,9 @@ function TwinChat() {
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   
   const handlers = useRef(null)
-  handlers.current = (data) => setWsEvent(data)
+  useEffect(() => {
+    handlers.current = (data) => setWsEvent(data)
+  })
   const { send: wsSend } = useTwinChatWS(auth.user?.accessToken, handlers)
 
   const fetchSessions = useCallback(async () => {
@@ -1071,10 +1106,11 @@ function TwinChat() {
     setNewChatError('')
     try {
       const data = await apiFetch('/twin-chat/sessions', { method: 'POST', body: JSON.stringify({ partner_email: newChatEmail.trim() }) })
-      await fetchSessions()
-      handleSetActiveId(data.session.id)
+      // Close modal immediately for perceived speed, then refresh list and activate
       setShowNewChatModal(false)
       setNewChatEmail('')
+      await fetchSessions()
+      handleSetActiveId(data.session.id)
     } catch (e) {
       setNewChatError('User not found or failed to create session.')
     } finally {
@@ -1084,11 +1120,25 @@ function TwinChat() {
 
   const handleDeleteSession = async (id) => {
     setDeleteConfirmId(null)
+    // Optimistically remove from local list and pivot active session
+    setSessions(prev => {
+      const next = prev.filter(s => s.id !== id)
+      if (activeId === id) {
+        // Pick the next session in the list, or null if none remain
+        const nextSession = next[0] ?? null
+        handleSetActiveId(nextSession?.id ?? null)
+      }
+      return next
+    })
     try {
       await apiFetch(`/twin-chat/sessions/${id}`, { method: 'DELETE' })
-      if (activeId === id) handleSetActiveId(null)
-      fetchSessions()
-    } catch (e) { console.error(e) }
+      // Re-fetch to confirm server state (handles edge cases like concurrent deletes)
+      await fetchSessions()
+    } catch (e) {
+      console.error('Delete session failed:', e)
+      // Rollback: re-fetch to restore correct state
+      await fetchSessions()
+    }
   }
 
   const activeSession = sessions.find(s => s.id === activeId)

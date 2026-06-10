@@ -69,9 +69,16 @@ _collection_cache: dict = {}
 def get_collection(user_id: str):
     name = f"user_{user_id}_memory" if USE_PER_USER_COLLECTION else SHARED_COLLECTION_NAME
     if name not in _collection_cache:
-        _collection_cache[name] = client.get_or_create_collection(
-            name=name, embedding_function=embedder
-        )
+        try:
+            _collection_cache[name] = client.get_or_create_collection(
+                name=name, embedding_function=embedder
+            )
+        except Exception as e:
+            if "Embedding function" in str(e) or "already exists" in str(e):
+                logger.warning(f"[Chroma] Embedding function conflict for {name}, falling back to persisted/default embedding function.")
+                _collection_cache[name] = client.get_collection(name=name)
+            else:
+                raise
     return _collection_cache[name]
 
 def store_memory(user_id: str, doc_id: str, content: str, type: str = "chat", metadata: dict | None = None):
@@ -117,6 +124,16 @@ def delete_documents_by_ids(user_id: str, ids: list[str]):
     col = get_collection(user_id)
     col.delete(ids=ids)
     logger.info(f"[Chroma] Evicted {len(ids)} documents for {user_id}")
+
+def delete_documents_by_session_id(user_id: str, session_id: str):
+    if not session_id:
+        return
+    name = f"user_{user_id}_memory" if USE_PER_USER_COLLECTION else SHARED_COLLECTION_NAME
+    _collection_cache.pop(name, None)
+    col = get_collection(user_id)
+    col.delete(where={"session_id": session_id})
+    logger.info(f"[Chroma] Evicted documents for session {session_id} under {user_id}")
+
 
 def retrieve_memory(user_id: str, query: str, n: int = 3, type: str | None = None) -> str:
     col = get_collection(user_id)

@@ -107,6 +107,7 @@ def send_telegram_photo(chat_id: str, photo_url: str, caption: str = None):
 
 
 async def get_telegram_updates(offset=None):
+    global TELEGRAM_BOT_TOKEN
     if not TELEGRAM_BOT_TOKEN:
         return []
 
@@ -117,8 +118,6 @@ async def get_telegram_updates(offset=None):
         async with httpx.AsyncClient() as client:
             response = await client.get(url, params=params, timeout=35.0)
 
-            # 409 = a webhook is registered or another instance is polling.
-            # Delete the webhook and wait before retrying.
             if response.status_code == 409:
                 logger.warning(
                     "[Telegram] 409 Conflict — webhook active or duplicate instance. "
@@ -126,6 +125,11 @@ async def get_telegram_updates(offset=None):
                 )
                 await asyncio.to_thread(delete_telegram_webhook)
                 await asyncio.sleep(10)
+                return []
+
+            if response.status_code == 401:
+                logger.error("[Telegram] 401 Unauthorized - Bot token is invalid! Disabling Telegram polling.")
+                TELEGRAM_BOT_TOKEN = None
                 return []
 
             response.raise_for_status()

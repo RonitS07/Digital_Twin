@@ -3,13 +3,12 @@ import uuid
 import threading
 import logging
 from datetime import datetime, timezone
-from googleapiclient.discovery import build
-
 logger = logging.getLogger(__name__)
 
 from sqlalchemy.orm import Session
 
 from tools.google_oauth import get_google_credentials, CALENDAR_SCOPES
+from tools.google_http import build_google_api_service
 from utils.email_templates import get_invite_html
 from db.models import User
 
@@ -41,9 +40,14 @@ def get_calendar_service(db: Session, user_id: str):
         raise RuntimeError("Missing Calendar permissions. Please reconnect your Google account in Settings and ensure all boxes are checked.")
 
     creds = get_google_credentials(db=db, user_id=user_id, scopes=CALENDAR_SCOPES)
-    service = build("calendar", "v3", credentials=creds, cache_discovery=False)
+    service = build_google_api_service("calendar", "v3", creds)
     _CAL_CACHE.services[user_id] = (service, creds)
     return service
+
+
+def _clear_calendar_cache(user_id: str) -> None:
+    if hasattr(_CAL_CACHE, "services"):
+        _CAL_CACHE.services.pop(user_id, None)
 
 def normalize_datetime(dt_str: str) -> str:
     """
@@ -84,18 +88,27 @@ def get_upcoming_events(db: Session, user_id: str, max_results: int = 20) -> lis
     
     # 1. Fetch all visible calendars from the user's list
     try:
-        calendar_list = service.calendarList().list().execute().get('items', [])
+        calendar_list = service.calendarList().list().execute().get("items", [])
+    except (TimeoutError, OSError) as e:
+        _clear_calendar_cache(user_id)
+        logger.warning("Calendar list timed out for user %s: %s", user_id, e)
+        return []
     except Exception as e:
-        print(f"Error fetching calendar list: {e}")
+        logger.warning("Error fetching calendar list: %s", e)
         calendar_list = [{"id": "primary", "selected": True}]
 
     all_raw_events = []
-    
+
     # 2. Loop through each selected calendar and pull events
     for cal in calendar_list:
-        if not cal.get('selected', True):
+        if not cal.get("selected", True):
             continue
-            
+
+        cal_id = cal.get("id", "")
+        # Google Classroom calendars often hang or time out — skip them
+        if "classroom" in cal_id.lower() and "@group.calendar.google.com" in cal_id:
+            continue
+
         try:
             events_result = service.events().list(
                 calendarId=cal['id'],
@@ -108,8 +121,10 @@ def get_upcoming_events(db: Session, user_id: str, max_results: int = 20) -> lis
             for e in events:
                 e['_calendar_name'] = cal.get('summaryOverride') or cal.get('summary')
             all_raw_events.extend(events)
+        except (TimeoutError, OSError) as e:
+            logger.warning("Calendar events timed out for %s: %s", cal_id, e)
         except Exception as e:
-            print(f"Error fetching events for calendar {cal['id']}: {e}")
+            logger.warning("Error fetching events for calendar %s: %s", cal_id, e)
 
     # 3. Sort by start time and format for AI
     def get_start(e):
@@ -304,28 +319,33 @@ def get_calendar_range(db: Session, user_id: str, days_past: int = 90, days_futu
     timeMax = (now + timedelta(days=days_future)).isoformat()
     
     try:
-        calendar_list = service.calendarList().list().execute().get('items', [])
+        calendar_list = service.calendarList().list().execute().get("items", [])
     except Exception as e:
-        print(f"Error fetching calendar list: {e}")
+        logger.warning("Error fetching calendar list: %s", e)
         calendar_list = [{"id": "primary", "selected": True}]
 
     all_raw_events = []
     for cal in calendar_list:
-        if not cal.get('selected', True):
+        if not cal.get("selected", True):
+            continue
+        cal_id = cal.get("id", "")
+        if "classroom" in cal_id.lower() and "@group.calendar.google.com" in cal_id:
             continue
         try:
             events_result = service.events().list(
-                calendarId=cal['id'],
+                calendarId=cal_id,
                 timeMin=timeMin,
                 timeMax=timeMax,
                 maxResults=max_results,
                 singleEvents=True,
-                orderBy="startTime"
+                orderBy="startTime",
             ).execute()
             events = events_result.get("items", [])
             all_raw_events.extend(events)
+        except (TimeoutError, OSError) as e:
+            logger.warning("Calendar range timed out for %s: %s", cal_id, e)
         except Exception as e:
-            print(f"Error fetching events for calendar {cal['id']}: {e}")
+            logger.warning("Error fetching events for calendar %s: %s", cal_id, e)
 
     result = []
     seen_ids = set()

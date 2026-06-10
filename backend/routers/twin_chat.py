@@ -30,6 +30,9 @@ from fastapi import (
     APIRouter, Depends, HTTPException, status, Query,
     WebSocket, WebSocketDisconnect
 )
+from fastapi.responses import Response
+import httpx
+import urllib.parse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, desc
@@ -293,6 +296,28 @@ def _get_history_dicts(messages: list) -> list[dict]:
         }
         for m in messages
     ]
+
+
+# ────────────────────────────────────────────────────────────────────
+# Image Proxy
+# ────────────────────────────────────────────────────────────────────
+@router.get("/image-proxy")
+async def image_proxy(prompt: str):
+    """Generate and return an image for the given prompt (HF primary, Pollinations fallback)."""
+    from services.image_service import generate_image_bytes_async
+
+    if not (prompt or "").strip():
+        raise HTTPException(status_code=400, detail="prompt is required")
+    try:
+        image_bytes, media_type = await generate_image_bytes_async(prompt.strip())
+        return Response(
+            content=image_bytes,
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    except Exception as exc:
+        logger.error("[ImageProxy] generation failed: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 # ────────────────────────────────────────────────────────────────────

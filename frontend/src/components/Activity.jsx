@@ -29,13 +29,13 @@ const INTENT_ICON = {
 const getIcon = (intent) => INTENT_ICON[intent] || Terminal;
 
 const INTENT_COLOR = {
-    email: 'primary',
-    calendar: 'tertiary',
-    slack: 'secondary',
-    telegram: 'secondary',
-    whatsapp: 'secondary',
+    email: 'terracotta',
+    calendar: 'forest',
+    slack: 'amber',
+    telegram: 'amber',
+    whatsapp: 'amber',
 };
-const getColor = (intent) => INTENT_COLOR[intent] || 'primary';
+const getColor = (intent) => INTENT_COLOR[intent] || 'terracotta';
 
 // ─── Single Timeline Card ─────────────────────────────────────────────────────
 
@@ -55,52 +55,52 @@ const TimelineItem = ({ log, isNew }) => {
             id={`activity-${log.id}`}
         >
             <div
-                className={`absolute -left-[33px] sm:-left-[51px] top-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-surface-base border-[3px] sm:border-4
-                    ${color === 'primary' ? 'border-primary' : color === 'tertiary' ? 'border-tertiary' : 'border-secondary'}
-                    ${isHighlighted ? 'scale-150 animate-pulse border-primary shadow-[0_0_15px_rgba(var(--primary-rgb),0.5)]' : ''}
-                    ${isNew ? 'animate-ping-once ring-2 ring-primary/30' : ''}`}
+                className={`absolute -left-[33px] sm:-left-[51px] top-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-[#F7F5F2] border-[3px] sm:border-4
+                    ${color === 'terracotta' ? 'border-[#2D6A4F]' : color === 'forest' ? 'border-[#2D6A4F]' : 'border-[#B45309]'}
+                    ${isHighlighted ? 'scale-150 animate-pulse border-[#2D6A4F] shadow-md' : ''}
+                    ${isNew ? 'animate-ping-once ring-2 ring-[#2D6A4F]/30' : ''}`}
             />
             <motion.div
                 initial={isNew ? { opacity: 0, y: -10 } : false}
                 animate={{ opacity: 1, y: 0 }}
-                className={`glass-panel p-4 sm:p-6 rounded-xl border transition-all duration-500
+                className={`wi-card p-4 sm:p-6 transition-all duration-500
                     ${isHighlighted
-                        ? 'border-primary/50 bg-primary/5 shadow-2xl scale-[1.02] ai-glow'
-                        : 'border-neutral/10 group hover:bg-surface-container'}`}
+                        ? 'border-[#2D6A4F]/50 bg-[#E8F5EE]/30 shadow-[0_4px_12px_rgba(0,0,0,0.08)] scale-[1.02]'
+                        : 'group hover:shadow-sm hover:border-[#2D6A4F]/30'}`}
             >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start justify-between sm:gap-4 mb-4">
                     <div className="flex items-start gap-4">
                         <div className={`p-3 rounded-xl
-                            ${color === 'primary' ? 'bg-primary/10 text-primary' :
-                              color === 'tertiary' ? 'bg-tertiary/10 text-tertiary' :
-                                                     'bg-secondary/10 text-secondary'}`}>
+                            ${color === 'terracotta' ? 'bg-[#E8F5EE] text-[#2D6A4F]' :
+                                color === 'forest' ? 'bg-[#E6F4EC] text-[#2D6A4F]' :
+                                    'bg-[#FFF4E6] text-[#B45309]'}`}>
                             <Icon size={20} />
                         </div>
                         <div>
-                            <h3 className="font-manrope font-bold text-base text-on-surface">
+                            <h3 className="font-dm font-medium text-base text-[#1A1814]">
                                 {log.intent ? log.intent.toUpperCase() : 'TASK EXECUTION'}
                             </h3>
-                            <p className="text-sm text-on-surface-variant mt-1 line-clamp-2">{log.input}</p>
+                            <p className="font-dm text-sm text-[#7A7065] mt-1 line-clamp-2">{log.input}</p>
                         </div>
                     </div>
                     <div className="flex flex-col items-end gap-2 shrink-0">
-                        <span className="text-[10px] font-bold text-neutral uppercase tracking-widest">{time}</span>
-                        <span className={`px-3 py-1 rounded-full text-[11px] font-bold tracking-tight uppercase border
+                        <span className="font-mono-ji text-[10px] text-[#A09488] uppercase tracking-widest">{time}</span>
+                        <span className={`px-3 py-1 rounded-full font-mono-ji text-[9px] tracking-widest uppercase border
                             ${status === 'Automated'
-                                ? 'bg-primary/10 text-primary border-primary/20'
-                                : 'bg-tertiary/10 text-tertiary border-tertiary/20'}`}>
+                                ? 'bg-[#E8F5EE] text-[#2D6A4F] border-[#2D6A4F]/20'
+                                : 'bg-[#E6F4EC] text-[#2D6A4F] border-[#2D6A4F]/20'}`}>
                             {status}
                         </span>
                     </div>
                 </div>
                 {log.output && (
-                    <div className={`p-3 sm:p-4 rounded-lg bg-surface-bright/50 border-l-4
-                        ${color === 'primary' ? 'border-primary/40' : color === 'tertiary' ? 'border-tertiary/40' : 'border-secondary/40'}`}>
-                        <span className={`text-[10px] font-black uppercase tracking-widest block mb-1.5
-                            ${color === 'primary' ? 'text-primary/60' : color === 'tertiary' ? 'text-tertiary/60' : 'text-secondary/60'}`}>
+                    <div className={`p-3 sm:p-4 rounded-lg bg-white border border-[#E8E4DE] border-l-4
+                        ${color === 'terracotta' ? 'border-l-[#2D6A4F]/40' : color === 'forest' ? 'border-l-[#2D6A4F]/40' : 'border-l-[#B45309]/40'}`}>
+                        <span className={`font-mono-ji text-[10px] uppercase tracking-widest block mb-1.5
+                            ${color === 'terracotta' ? 'text-[#2D6A4F]/80' : color === 'forest' ? 'text-[#2D6A4F]/80' : 'text-[#B45309]/80'}`}>
                             Output
                         </span>
-                        <p className="text-on-surface text-sm leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto no-scrollbar line-clamp-4">
+                        <p className="font-dm text-[#1A1814] text-sm leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto no-scrollbar line-clamp-4">
                             {log.output.replace(/<action>[\s\S]*?<\/action>/gi, '').trim()}
                         </p>
                     </div>
@@ -185,7 +185,7 @@ const Activity = () => {
                     if (d.event === 'new_message' || d.event === 'task_complete') {
                         fetchActivity(true);
                     }
-                } catch {}
+                } catch (_) { /* ignore */ }
             };
             ws.onclose = (ev) => {
                 setWsStatus('disconnected');
@@ -244,11 +244,11 @@ const Activity = () => {
     // ── Filtering ──────────────────────────────────────────────────────────────
     const filtered = activity.filter(log => {
         switch (activityFilter) {
-            case 'Emails':       return log.intent === 'email';
-            case 'Meetings':     return log.intent === 'calendar';
-            case 'Research':     return log.intent === 'search';
+            case 'Emails': return log.intent === 'email';
+            case 'Meetings': return log.intent === 'calendar';
+            case 'Research': return log.intent === 'search';
             case 'Needs Review': return !log.approved;
-            default:             return true;
+            default: return true;
         }
     });
 
@@ -262,7 +262,7 @@ const Activity = () => {
     }, {});
 
     return (
-        <div className="p-4 sm:p-6 lg:p-12 max-w-6xl mx-auto pb-36">
+        <div className="bg-[#F7F5F2] h-full overflow-y-auto p-4 sm:p-6 lg:p-12 max-w-6xl mx-auto pb-36">
             {/* Header */}
             <header className="flex flex-col gap-4 mb-6 sm:mb-10">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -271,16 +271,16 @@ const Activity = () => {
                             <button
                                 key={f}
                                 onClick={() => setActivityFilter(f)}
-                                className={`px-4 py-1.5 rounded-full text-sm transition-all border
+                                className={`px-4 py-1.5 rounded-lg text-sm transition-all border
                                     ${activityFilter === f
                                         ? f === 'Needs Review'
-                                            ? 'bg-tertiary text-surface-base font-semibold border-tertiary shadow-lg shadow-tertiary/20'
-                                            : 'bg-primary text-surface-base font-semibold shadow-lg shadow-primary/20 border-primary'
-                                        : 'bg-surface-container text-on-surface-variant font-medium hover:bg-neutral/20 border-neutral/5'}`}
+                                            ? 'bg-[#2D6A4F] text-white font-medium border-[#2D6A4F] shadow-sm'
+                                            : 'bg-[#2D6A4F] text-white font-medium shadow-sm border-[#2D6A4F]'
+                                        : 'bg-white text-[#7A7065] font-medium hover:bg-[#F7F5F2] border-[#E8E4DE]'}`}
                             >
                                 {f}
                                 {f === 'Needs Review' && activityFilter !== 'Needs Review' && (
-                                    <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-tertiary inline-block shadow-[0_0_8px_#ffb695]" />
+                                    <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-[#2D6A4F] inline-block shadow-sm" />
                                 )}
                             </button>
                         ))}
@@ -288,15 +288,15 @@ const Activity = () => {
 
                     <div className="flex items-center gap-3">
                         {/* Live status indicator */}
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest">
+                        <div className="flex items-center gap-1.5 font-mono-ji text-[10px] uppercase tracking-widest">
                             {wsStatus === 'connected'
-                                ? <><Wifi size={12} className="text-primary" /><span className="text-primary">Live</span></>
-                                : <><WifiOff size={12} className="text-neutral/50" /><span className="text-neutral/50">Polling</span></>
+                                ? <><Wifi size={12} className="text-[#2D6A4F]" /><span className="text-[#2D6A4F]">Live</span></>
+                                : <><WifiOff size={12} className="text-[#A09488]" /><span className="text-[#A09488]">Polling</span></>
                             }
                         </div>
 
                         {lastUpdated && (
-                            <span className="text-[10px] text-neutral/50">
+                            <span className="font-dm text-[11px] text-[#A09488]">
                                 Updated {lastUpdated.toLocaleTimeString([], { timeStyle: 'short' })}
                             </span>
                         )}
@@ -304,14 +304,14 @@ const Activity = () => {
                         <button
                             onClick={() => fetchActivity()}
                             disabled={loading}
-                            className="flex items-center gap-1.5 text-[10px] text-neutral hover:text-primary transition-colors disabled:opacity-40"
+                            className="flex items-center gap-1.5 font-dm text-[11px] text-[#7A7065] hover:text-[#2D6A4F] transition-colors disabled:opacity-40"
                         >
                             <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> Refresh
                         </button>
 
                         <button
                             onClick={handleExportCsv}
-                            className="flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-neutral/20 text-on-surface-variant text-xs font-bold hover:border-primary/40 hover:text-on-surface transition-all bg-surface-container/30"
+                            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg border border-[#E8E4DE] text-[#7A7065] text-xs font-medium hover:border-[#2D6A4F]/40 hover:text-[#1A1814] transition-all bg-white"
                         >
                             <Download size={12} /> Export CSV
                         </button>
@@ -319,7 +319,7 @@ const Activity = () => {
                 </div>
 
                 {error && (
-                    <p className="text-xs text-red-400 font-medium px-1">{error}</p>
+                    <p className="font-dm text-xs text-[#C0392B] font-medium px-1">{error}</p>
                 )}
             </header>
 
@@ -328,14 +328,14 @@ const Activity = () => {
                 {loading && activity.length === 0 ? (
                     <div className="space-y-6">
                         {[...Array(3)].map((_, i) => (
-                            <div key={i} className="animate-pulse h-32 rounded-xl bg-surface-container border border-neutral/10" />
+                            <div key={i} className="wi-skeleton h-32 rounded-xl" />
                         ))}
                     </div>
                 ) : filtered.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-20 bg-surface-container/30 rounded-3xl border border-dashed border-neutral/20">
-                        <Zap size={32} className="text-neutral opacity-20 mb-3" />
-                        <h3 className="font-manrope text-lg font-bold text-on-surface-variant/80">No activity</h3>
-                        <p className="text-on-surface-variant text-sm mt-2 opacity-60 text-center max-w-xs">
+                    <div className="flex flex-col items-center justify-center py-20 bg-white rounded-xl border border-dashed border-[#E8E4DE]">
+                        <Zap size={32} className="text-[#A09488] opacity-50 mb-3" />
+                        <h3 className="font-fraunces font-semibold text-lg text-[#1A1814]">No activity</h3>
+                        <p className="font-dm text-[#7A7065] text-sm mt-2 opacity-80 text-center max-w-xs">
                             {activityFilter === 'All Activity'
                                 ? 'Your AI Twin is standing by. Give it a task to get started.'
                                 : `No "${activityFilter}" entries found.`}
@@ -344,10 +344,10 @@ const Activity = () => {
                 ) : (
                     Object.entries(grouped).map(([date, logs]) => (
                         <div key={date} className="relative">
-                            <h4 className="text-[10px] font-black text-neutral uppercase tracking-[0.2em] mb-6 sticky top-16 bg-surface-base/90 py-3 backdrop-blur-xl z-20 w-fit rounded-full px-4 border border-neutral/10">
+                            <h4 className="font-mono-ji text-[10px] text-[#A09488] uppercase tracking-widest mb-6 sticky top-16 bg-[#F7F5F2]/90 py-3 backdrop-blur-sm z-20 w-fit rounded-full px-4 border border-[#E8E4DE]">
                                 {date}
                             </h4>
-                            <div className="relative ml-2 sm:ml-4 pl-6 sm:pl-10 border-l-2 border-neutral/10 space-y-6">
+                            <div className="relative ml-2 sm:ml-4 pl-6 sm:pl-10 border-l-2 border-[#E8E4DE] space-y-6">
                                 <AnimatePresence>
                                     {logs.map(log => (
                                         <TimelineItem

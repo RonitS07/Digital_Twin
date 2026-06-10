@@ -22,7 +22,7 @@ from .llm_utils import _llm
 def generate_hf_image(prompt: str) -> str:
     import urllib.parse
     encoded_prompt = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=768&model=flux&nologo=true"
+    url = f"/twin-chat/image-proxy?prompt={encoded_prompt}"
 
     # Return the direct URL for browser-side loading (more reliable than huge base64 strings)
     return url
@@ -469,7 +469,11 @@ def _build_args_for_intent(intent: str, state: dict) -> dict:
     base = {"user_id": user_id}
 
     if intent == "email_read":
-        return {**base, "max_results": 5}
+        return {
+            **base,
+            "max_results": 5,
+            "query": task_plan.get("query"),
+        }
 
     elif intent in ("email_draft", "email_send"):
         return {
@@ -669,6 +673,7 @@ def planner_node(state: State) -> State:
 You are a task planner and argument extractor.
 Based on the user's intent, extract the necessary arguments into a JSON object.
 
+If the intent is 'email_read', extract: "query" (a search string/keywords to query Gmail with, or null/empty if the user just wants their general inbox/recent messages. E.g. 'amazon india', 'from:accenture').
 If the intent is 'whatsapp_send', extract: "to" (phone number with country code, OR a recipient person's name if they specified a name like "Arjun" or "Ronit"), "message".
 If the intent is 'email_draft' or 'email_send', extract: "to", "subject", "body".
 If the intent is 'telegram_send', extract: "text".

@@ -13,10 +13,11 @@ class GmailMCPServer(MCPServer):
         return [
             MCPTool(
                 name="read_emails",
-                description="Read recent emails from inbox",
+                description="Read recent emails from inbox, optionally filtered by search query",
                 input_schema={
                     "user_id": "str",
                     "max_results": "int (default 5)",
+                    "query": "str (optional search query, e.g. 'from:amazon', 'subject:invoice', or search term)",
                 },
             ),
             MCPTool(
@@ -56,6 +57,7 @@ class GmailMCPServer(MCPServer):
             read_recent_emails,
             read_sent_emails,
             send_email,
+            search_emails,
         )
 
         db = next(get_db())
@@ -63,12 +65,22 @@ class GmailMCPServer(MCPServer):
 
         try:
             if tool_name == "read_emails":
-                result = await asyncio.to_thread(
-                    read_recent_emails,
-                    db,
-                    user_id,
-                    args.get("max_results", 5),
-                )
+                query = args.get("query")
+                if query:
+                    result = await asyncio.to_thread(
+                        search_emails,
+                        db,
+                        user_id,
+                        query,
+                        args.get("max_results", 5),
+                    )
+                else:
+                    result = await asyncio.to_thread(
+                        read_recent_emails,
+                        db,
+                        user_id,
+                        args.get("max_results", 5),
+                    )
                 return {"emails": result}
 
             if tool_name == "read_sent_emails":

@@ -1,12 +1,15 @@
 import base64
+import logging
 import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from googleapiclient.discovery import build
 
 from sqlalchemy.orm import Session
 
 from tools.google_oauth import get_google_credentials, GMAIL_SCOPES
+from tools.google_http import build_google_api_service
+
+logger = logging.getLogger(__name__)
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -34,41 +37,55 @@ def get_gmail_service(db: Session, user_id: str):
             _GMAIL_CACHE.services.pop(user_id)
             
     creds = get_google_credentials(db=db, user_id=user_id, scopes=GMAIL_SCOPES)
-    # cache_discovery=False fixes the 'file_cache is only supported with oauth2client<4.0.0' warning
-    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    service = build_google_api_service("gmail", "v1", creds)
     _GMAIL_CACHE.services[user_id] = (service, creds)
     return service
 
+
+def _clear_gmail_cache(user_id: str) -> None:
+    if hasattr(_GMAIL_CACHE, "services"):
+        _GMAIL_CACHE.services.pop(user_id, None)
+
+
 def read_recent_emails(db: Session, user_id: str, max_results: int = 5) -> list:
-    service = get_gmail_service(db=db, user_id=user_id)
-    result = service.users().messages().list(
-        userId="me",
-        maxResults=max_results,
-        labelIds=["INBOX"]
-    ).execute()
+    try:
+        service = get_gmail_service(db=db, user_id=user_id)
+        result = service.users().messages().list(
+            userId="me",
+            maxResults=max_results,
+            labelIds=["INBOX"],
+        ).execute()
+    except (TimeoutError, OSError) as e:
+        _clear_gmail_cache(user_id)
+        logger.warning("Gmail list timed out for user %s: %s", user_id, e)
+        return []
 
     messages = result.get("messages", [])
     emails = []
 
     for msg in messages:
-        full = service.users().messages().get(
-            userId="me",
-            id=msg["id"],
-            format="full"
-        ).execute()
+        try:
+            meta = service.users().messages().get(
+                userId="me",
+                id=msg["id"],
+                format="metadata",
+                metadataHeaders=["Subject", "From", "Date"],
+            ).execute()
+        except (TimeoutError, OSError) as e:
+            logger.warning("Gmail message fetch timed out (%s): %s", msg.get("id"), e)
+            continue
 
-        headers = full["payload"].get("headers", [])
+        headers = meta.get("payload", {}).get("headers", [])
         subject = next((h["value"] for h in headers if h["name"] == "Subject"), "No Subject")
-        sender  = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
-        date    = next((h["value"] for h in headers if h["name"] == "Date"), "")
-        snippet = full.get("snippet", "")
+        sender = next((h["value"] for h in headers if h["name"] == "From"), "Unknown")
+        date = next((h["value"] for h in headers if h["name"] == "Date"), "")
 
         emails.append({
-            "id":      msg["id"],
+            "id": msg["id"],
             "subject": subject,
-            "from":    sender,
-            "date":    date,
-            "snippet": snippet
+            "from": sender,
+            "date": date,
+            "snippet": meta.get("snippet", ""),
         })
 
     return emails

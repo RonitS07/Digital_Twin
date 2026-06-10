@@ -21,7 +21,7 @@ function pushStatus(ready, qr) {
     try {
         const data = JSON.stringify({ ready, qr });
         
-        // Use BACKEND_URL from environment if available (e.g. https://digitaltwin-production-ec44.up.railway.app)
+        // Use BACKEND_URL from environment if available (e.g. https://digitaltwin-production-8dfb.up.railway.app)
         const targetUrl = process.env.BACKEND_URL 
             ? `${process.env.BACKEND_URL.replace(/\/$/, '')}/mcp/whatsapp/webhook`
             : `http://127.0.0.1:${process.env.PORT || 8080}/mcp/whatsapp/webhook`;

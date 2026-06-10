@@ -34,3 +34,4 @@ backend/firebase-credentials.json
 .wwebjs_cache/
 **/ .wwebjs_auth/
 **/ .wwebjs_cache/
+backend/uploads/generated/

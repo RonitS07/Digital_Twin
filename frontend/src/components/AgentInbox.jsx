@@ -29,15 +29,15 @@ import { playNotificationSound } from '../utils/audio'
 
 const StatusBadge = ({ status }) => {
   const map = {
-    online: { color: 'bg-emerald-500', label: 'Online' },
-    busy: { color: 'bg-amber-400', label: 'Busy' },
-    do_not_disturb: { color: 'bg-red-500', label: 'DND' },
+    online: { color: 'bg-[#2D6A4F]', label: 'Online' },
+    busy: { color: 'bg-[#B45309]', label: 'Busy' },
+    do_not_disturb: { color: 'bg-[#C0392B]', label: 'DND' },
   }
   const { color, label } = map[status] || map.online
   return (
     <span className="flex items-center gap-1.5">
       <span className={`w-2 h-2 rounded-full ${color} animate-pulse`} />
-      <span className="text-[10px] font-bold uppercase tracking-widest text-neutral">{label}</span>
+      <span className="font-mono-ji text-[10px] text-[#7A7065] uppercase tracking-widest">{label}</span>
     </span>
   )
 }
@@ -46,17 +46,17 @@ const StatusBadge = ({ status }) => {
 
 const MsgTypeChip = ({ type }) => {
   const map = {
-    scheduling_proposal: { label: 'Meeting Proposal', color: 'bg-primary/20 text-primary' },
-    scheduling_confirm: { label: 'Meeting Confirmed', color: 'bg-emerald-500/20 text-emerald-400' },
-    scheduling_reject: { label: 'Declined', color: 'bg-red-500/20 text-red-400' },
-    scheduling_request: { label: 'Scheduling Request', color: 'bg-indigo-500/20 text-indigo-400' },
-    agent_chat: { label: 'Agent Chat', color: 'bg-purple-500/20 text-purple-400' },
-    capability_query: { label: 'Capability Query', color: 'bg-sky-500/20 text-sky-400' },
-    capability_response: { label: 'Capability Response', color: 'bg-sky-500/20 text-sky-400' },
+    scheduling_proposal: { label: 'Meeting Proposal', color: 'bg-[#E8F5EE] text-[#2D6A4F] border-[#2D6A4F]/20' },
+    scheduling_confirm: { label: 'Meeting Confirmed', color: 'bg-[#E6F4EC] text-[#2D6A4F] border-[#2D6A4F]/20' },
+    scheduling_reject: { label: 'Declined', color: 'bg-[#FFF0EE] text-[#C0392B] border-[#C0392B]/20' },
+    scheduling_request: { label: 'Scheduling Request', color: 'bg-[#F7F5F2] text-[#7A7065] border-[#E8E4DE]' },
+    agent_chat: { label: 'Agent Chat', color: 'bg-[#F7F5F2] text-[#7A7065] border-[#E8E4DE]' },
+    capability_query: { label: 'Capability Query', color: 'bg-[#F7F5F2] text-[#7A7065] border-[#E8E4DE]' },
+    capability_response: { label: 'Capability Response', color: 'bg-[#F7F5F2] text-[#7A7065] border-[#E8E4DE]' },
   }
-  const { label, color } = map[type] || { label: type, color: 'bg-neutral/20 text-neutral' }
+  const { label, color } = map[type] || { label: type, color: 'bg-[#F7F5F2] text-[#7A7065] border-[#E8E4DE]' }
   return (
-    <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${color}`}>
+    <span className={`font-mono-ji text-[9px] uppercase tracking-widest px-2 py-0.5 rounded-full border ${color}`}>
       {label}
     </span>
   )
@@ -89,11 +89,10 @@ const InboxCard = ({ msg, onApprove, onReject, loading }) => {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.96 }}
-      className={`bg-surface-container rounded-2xl border p-5 space-y-4 transition-all ${
-        isRejected ? 'border-red-500/20 opacity-60' :
-        isApproved ? 'border-emerald-500/20 opacity-70' :
-        'border-neutral/10 hover:border-primary/20'
-      }`}
+      className={`wi-card p-5 space-y-4 transition-all ${isRejected ? 'opacity-60 grayscale' :
+        isApproved ? 'border-[#2D6A4F]/30 bg-[#E6F4EC]/30' :
+          'hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)] hover:border-[#2D6A4F]/30'
+        }`}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
@@ -101,27 +100,27 @@ const InboxCard = ({ msg, onApprove, onReject, loading }) => {
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <MsgTypeChip type={msg.msg_type} />
             {isApproved && (
-              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
+              <span className="font-mono-ji text-[9px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-[#E6F4EC] text-[#2D6A4F] border border-[#2D6A4F]/20">
                 Approved
               </span>
             )}
             {isRejected && (
-              <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full bg-red-500/20 text-red-400">
+              <span className="font-mono-ji text-[9px] uppercase tracking-widest px-2 py-0.5 rounded-full bg-[#FFF0EE] text-[#C0392B] border border-[#C0392B]/20">
                 Rejected
               </span>
             )}
           </div>
-          <p className="text-sm font-bold text-on-surface truncate">
-            From <span className="text-primary">{msg.sender?.email || `@${msg.sender?.handle || msg.sender_user_id}`}</span>
+          <p className="font-dm text-sm font-medium text-[#1A1814] truncate">
+            From <span className="text-[#2D6A4F]">{msg.sender?.email || `@${msg.sender?.handle || msg.sender_user_id}`}</span>
             {msg.sender?.display_name && (
-              <span className="text-neutral font-normal text-xs ml-2 opacity-50">({msg.sender.display_name})</span>
+              <span className="text-[#7A7065] font-normal text-xs ml-2 opacity-80">({msg.sender.display_name})</span>
             )}
           </p>
           {msg.payload?.topic && (
-            <p className="text-xs text-neutral mt-0.5">Topic: <span className="text-on-surface">{msg.payload.topic}</span></p>
+            <p className="font-dm text-xs text-[#7A7065] mt-0.5">Topic: <span className="text-[#1A1814]">{msg.payload.topic}</span></p>
           )}
         </div>
-        <div className="flex items-center gap-1.5 text-[10px] text-neutral shrink-0">
+        <div className="flex items-center gap-1.5 font-mono-ji text-[10px] text-[#A09488] shrink-0">
           <Clock size={11} />
           {fmtDate(msg.created_at)}
         </div>
@@ -130,7 +129,7 @@ const InboxCard = ({ msg, onApprove, onReject, loading }) => {
       {/* Proposed slots */}
       {slots.length > 0 && !isApproved && !isRejected && (
         <div className="space-y-2">
-          <p className="text-[10px] uppercase font-bold tracking-widest text-neutral">
+          <p className="font-mono-ji text-[10px] uppercase tracking-widest text-[#7A7065]">
             {slots.length > 1 ? 'Pick a time slot' : 'Proposed slot'}
           </p>
           <div className="grid gap-2">
@@ -138,16 +137,15 @@ const InboxCard = ({ msg, onApprove, onReject, loading }) => {
               <button
                 key={i}
                 onClick={() => setSelectedSlot(i)}
-                className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
-                  selectedSlot === i
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-neutral/10 text-on-surface-variant hover:border-primary/30'
-                }`}
+                className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${selectedSlot === i
+                  ? 'border-[#2D6A4F] bg-[#E8F5EE] text-[#2D6A4F]'
+                  : 'border-[#E8E4DE] text-[#7A7065] hover:border-[#2D6A4F]/30'
+                  }`}
               >
                 <Calendar size={14} className="shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold">{fmtDate(s.start)}</p>
-                  <p className="text-[10px] text-neutral">{s.duration_minutes || 30} min</p>
+                  <p className="font-dm text-xs font-medium">{fmtDate(s.start)}</p>
+                  <p className="font-dm text-[10px] text-inherit">{s.duration_minutes || 30} min</p>
                 </div>
                 {selectedSlot === i && <Check size={14} className="shrink-0" />}
               </button>
@@ -158,18 +156,18 @@ const InboxCard = ({ msg, onApprove, onReject, loading }) => {
 
       {/* Confirmed slot (scheduling_confirm) */}
       {msg.msg_type === 'scheduling_confirm' && msg.payload?.slot && (
-        <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-          <p className="text-[10px] uppercase font-bold tracking-widest text-emerald-400 mb-1">Confirming slot</p>
-          <p className="text-sm font-bold text-on-surface flex items-center gap-2">
-            <Calendar size={14} className="text-emerald-400" />
+        <div className="p-3 rounded-xl bg-[#E6F4EC]/50 border border-[#2D6A4F]/20">
+          <p className="font-mono-ji text-[10px] uppercase tracking-widest text-[#2D6A4F] mb-1">Confirming slot</p>
+          <p className="font-dm text-sm font-medium text-[#1A1814] flex items-center gap-2">
+            <Calendar size={14} className="text-[#2D6A4F]" />
             {fmtDate(msg.payload.slot.start)}
           </p>
-          <p className="text-xs text-neutral mt-0.5">{msg.payload?.event_title || 'Meeting'}</p>
+          <p className="font-dm text-xs text-[#7A7065] mt-0.5">{msg.payload?.event_title || 'Meeting'}</p>
         </div>
       )}
 
       {/* Privacy note */}
-      <div className="flex items-center gap-1.5 text-[10px] text-neutral/60">
+      <div className="flex items-center gap-1.5 font-dm text-[11px] text-[#A09488]">
         <Lock size={10} />
         <span>Only your availability was shared — no calendar details exposed</span>
       </div>
@@ -181,7 +179,7 @@ const InboxCard = ({ msg, onApprove, onReject, loading }) => {
             whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
             disabled={loading === msg.msg_id}
             onClick={() => onApprove(msg.msg_id, selectedSlot)}
-            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-surface-base font-bold text-sm ai-glow hover:brightness-110 transition-all disabled:opacity-50"
+            className="flex-1 btn-primary py-2.5 justify-center disabled:opacity-50 text-sm"
           >
             <Check size={15} />
             {loading === msg.msg_id ? 'Processing…' : 'Approve'}
@@ -190,7 +188,7 @@ const InboxCard = ({ msg, onApprove, onReject, loading }) => {
             whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
             disabled={loading === msg.msg_id}
             onClick={() => onReject(msg.msg_id)}
-            className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl border border-red-500/30 text-red-400 font-bold text-sm hover:bg-red-500/10 transition-all disabled:opacity-50"
+            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg border border-[#C0392B]/30 text-[#C0392B] font-dm font-medium text-sm hover:bg-[#FFF0EE] transition-all disabled:opacity-50"
           >
             <X size={15} />
             Decline
@@ -259,11 +257,11 @@ const AgentCard = ({ agent, onSchedule }) => {
       layout
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-surface-container rounded-2xl border border-neutral/10 p-4 hover:border-primary/20 transition-all"
+      className="wi-card p-4 hover:border-[#2D6A4F]/30 transition-all hover:shadow-[0_4px_12px_rgba(0,0,0,0.08)]"
     >
       <div className="flex items-center gap-3 mb-3">
         {/* Avatar */}
-        <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center text-primary font-black text-sm border border-primary/20 overflow-hidden">
+        <div className="w-10 h-10 rounded-xl bg-[#E8F5EE] flex items-center justify-center text-[#2D6A4F] font-dm font-medium text-sm border border-[#2D6A4F]/20 overflow-hidden">
           {agent.photoURL ? (
             <img src={agent.photoURL} alt="" className="w-full h-full object-cover" />
           ) : (
@@ -271,16 +269,16 @@ const AgentCard = ({ agent, onSchedule }) => {
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-on-surface truncate">{agent.email || agent.display_name}</p>
-          <p className="text-[11px] text-primary font-mono">{agent.email ? agent.display_name : `@${agent.handle}`}</p>
+          <p className="font-dm text-sm font-medium text-[#1A1814] truncate">{agent.email || agent.display_name}</p>
+          <p className="font-mono-ji text-[11px] text-[#A09488]">{agent.email ? agent.display_name : `@${agent.handle}`}</p>
         </div>
         <StatusBadge status={agent.status} />
       </div>
 
       {/* Capabilities */}
-      <div className="flex flex-wrap gap-1 mb-3">
+      <div className="flex flex-wrap gap-1.5 mb-3">
         {(agent.capabilities || []).map(cap => (
-          <span key={cap} className="text-[9px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-surface-base border border-neutral/10 text-neutral">
+          <span key={cap} className="font-mono-ji text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded bg-[#F7F5F2] border border-[#E8E4DE] text-[#7A7065]">
             {cap}
           </span>
         ))}
@@ -295,39 +293,35 @@ const AgentCard = ({ agent, onSchedule }) => {
           >
             <div className="mb-2 mt-1 space-y-3">
               <div>
-                <label className="text-[9px] uppercase font-bold text-neutral mb-1 block pl-1">Topic</label>
+                <label className="font-mono-ji text-[9px] uppercase tracking-widest text-[#7A7065] mb-1 block pl-1">Topic</label>
                 <input
                   value={topic}
                   onChange={e => setTopic(e.target.value)}
                   placeholder="Meeting topic…"
-                  className="w-full bg-surface-base border border-neutral/10 rounded-xl px-3 py-2 text-sm text-on-surface outline-none focus:ring-1 focus:ring-primary"
+                  className="wi-input py-1.5 px-3 text-sm"
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] uppercase font-bold text-neutral mb-1 block pl-1">Suggested Start</label>
+                  <label className="font-mono-ji text-[9px] uppercase tracking-widest text-[#7A7065] mb-1 block pl-1">Suggested Start</label>
                   <input
                     type="datetime-local"
                     value={startDate}
                     onChange={e => setStartDate(e.target.value)}
-                    className="w-full bg-surface-base border border-neutral/10 rounded-xl px-3 py-2 text-xs text-on-surface outline-none focus:ring-1 focus:ring-primary [color-scheme:dark]"
+                    className="wi-input py-1.5 px-3 text-xs"
                   />
                 </div>
-                <div className="flex items-center gap-2 pt-5 pl-2">
-                    <input
-                        type="checkbox"
-                        checked={notifyEmail}
-                        onChange={e => setNotifyEmail(e.target.checked)}
-                        className="rounded border-neutral/20 text-primary focus:ring-primary"
-                        id={`notify-${agent.handle}`}
-                    />
-                    <label htmlFor={`notify-${agent.handle}`} className="text-[10px] font-bold text-neutral">Notify via Email</label>
+                <div className="flex items-center gap-2 pt-5 pl-2 cursor-pointer" onClick={() => setNotifyEmail(!notifyEmail)}>
+                  <button type="button" className={`wi-toggle ${notifyEmail ? 'wi-toggle-on' : 'wi-toggle-off'} shrink-0`} style={{ position: 'relative' }}>
+                    <div className={`wi-toggle-thumb ${notifyEmail ? 'left-[21px]' : 'left-[3px]'}`} />
+                  </button>
+                  <label className="font-dm text-[11px] text-[#7A7065] cursor-pointer">Notify via Email</label>
                 </div>
               </div>
               <button
                 onClick={handleSchedule}
                 disabled={sending || !topic.trim()}
-                className="w-full py-2.5 rounded-xl bg-primary text-surface-base font-bold text-sm hover:brightness-110 shadow-lg shadow-primary/20 transition-all disabled:opacity-50"
+                className="btn-primary w-full justify-center py-2 text-xs disabled:opacity-50"
               >
                 {sending ? 'Sending proposal…' : 'Propose Meeting'}
               </button>
@@ -337,7 +331,7 @@ const AgentCard = ({ agent, onSchedule }) => {
       </AnimatePresence>
 
       {sent ? (
-        <p className="text-[11px] text-emerald-400 font-bold flex items-center gap-1.5 mt-1">
+        <p className="font-dm text-[11px] text-[#2D6A4F] font-medium flex items-center gap-1.5 mt-1">
           <Check size={12} /> Proposal sent — awaiting their approval
         </p>
       ) : (
@@ -345,7 +339,7 @@ const AgentCard = ({ agent, onSchedule }) => {
           <button
             onClick={() => setShowForm(!showForm)}
             disabled={agent.status === 'do_not_disturb'}
-            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl border border-primary/20 text-primary text-xs font-bold hover:bg-primary/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex-1 btn-secondary justify-center py-1.5 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Calendar size={13} />
             {showForm ? 'Cancel' : 'Schedule'}
@@ -353,7 +347,7 @@ const AgentCard = ({ agent, onSchedule }) => {
           <button
             onClick={handleStartChat}
             disabled={sending}
-            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-primary/10 text-primary text-xs font-bold hover:bg-primary/20 transition-all disabled:opacity-40"
+            className="flex-1 flex items-center justify-center gap-2 py-1.5 rounded-lg bg-[#E8F5EE] text-[#2D6A4F] text-xs font-medium hover:bg-[#FFE3D8] transition-all disabled:opacity-40"
           >
             <MessageSquare size={13} />
             {sending ? '...' : 'Messaging'}
@@ -443,7 +437,7 @@ const AgentInbox = () => {
         if (msg.type === 'ping') return
         playNotificationSound()
         fetchInbox()
-      } catch {}
+      } catch (_) { /* ignore */ }
     }
 
     ws.onclose = (ev) => {
@@ -531,7 +525,7 @@ const AgentInbox = () => {
   // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-full overflow-y-auto bg-surface-base p-6 pb-36 space-y-6 relative">
+    <div className="h-full overflow-y-auto bg-[#F7F5F2] font-dm p-6 pb-36 space-y-6 relative text-[#1A1814]">
       {/* Toast Notification */}
       <AnimatePresence>
         {toast && (
@@ -539,34 +533,33 @@ const AgentInbox = () => {
             initial={{ opacity: 0, y: -16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8 }}
-            className={`fixed top-4 right-4 z-[200] px-5 py-3 rounded-2xl shadow-2xl text-sm font-bold flex items-center gap-3 ${
-              toast.type === 'error'
-                ? 'bg-red-500/90 text-white border border-red-400/30'
-                : 'bg-primary/90 text-white border border-primary/30'
-            }`}
+            className={`fixed top-4 right-4 z-[200] px-4 py-2.5 rounded-xl shadow-sm text-sm font-medium flex items-center gap-2 ${toast.type === 'error'
+              ? 'bg-[#FFF0EE] text-[#C0392B] border border-[#C0392B]/20'
+              : 'bg-[#E6F4EC] text-[#2D6A4F] border border-[#2D6A4F]/20'
+              }`}
           >
-            {toast.type === 'error' ? '❌' : '✅'} {toast.msg}
+            {toast.type === 'error' ? '✕' : '✓'} {toast.msg}
           </motion.div>
         )}
       </AnimatePresence>
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-manrope font-extrabold text-on-surface tracking-tight flex items-center gap-2">
-            <Users size={22} className="text-primary" />
+          <h1 className="font-fraunces font-semibold text-3xl text-[#1A1814] flex items-center gap-2">
+            <Users size={22} className="text-[#2D6A4F]" />
             Agent Network
           </h1>
-          <p className="text-xs text-neutral mt-0.5">Multi-agent inbox &amp; Twin discovery</p>
+          <p className="font-dm text-sm text-[#7A7065] mt-1">Multi-agent inbox &amp; Twin discovery</p>
         </div>
         {/* WS status + presence */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-neutral">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5 font-dm text-[11px] text-[#A09488]">
             {wsStatus === 'connected' ? (
-              <Wifi size={13} className="text-emerald-400" />
+              <Wifi size={13} className="text-[#2D6A4F]" />
             ) : (
-              <WifiOff size={13} className="text-red-400" />
+              <WifiOff size={13} className="text-[#C0392B]" />
             )}
-            <span className={wsStatus === 'connected' ? 'text-emerald-400' : 'text-red-400'}>
+            <span className={wsStatus === 'connected' ? 'text-[#2D6A4F]' : 'text-[#C0392B]'}>
               {wsStatus === 'connected' ? 'Live' : 'Reconnecting…'}
             </span>
           </div>
@@ -574,26 +567,26 @@ const AgentInbox = () => {
           <select
             value={presenceStatus}
             onChange={e => handleStatusChange(e.target.value)}
-            className="text-[10px] font-bold uppercase tracking-widest bg-surface-container border border-neutral/10 rounded-xl px-3 py-1.5 text-neutral outline-none cursor-pointer"
+            className="font-dm text-xs font-medium bg-white border border-[#E8E4DE] rounded-lg px-2 py-1.5 text-[#1A1814] outline-none cursor-pointer"
           >
             <option value="online">🟢 Online</option>
             <option value="busy">🟡 Busy</option>
-            <option value="do_not_disturb">🔴 Do Not Disturb</option>
+            <option value="do_not_disturb">🔴 DND</option>
           </select>
         </div>
       </div>
 
       {/* Privacy callout */}
-      <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-container border border-primary/10">
-        <Shield size={16} className="text-primary shrink-0" />
-        <p className="text-[11px] text-neutral leading-relaxed">
-          <span className="text-on-surface font-bold">Privacy guaranteed:</span> Your emails, calendar details, and memory are never shared.
+      <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-[#E8E4DE] shadow-sm">
+        <Shield size={16} className="text-[#A09488] shrink-0" />
+        <p className="font-dm text-[11px] text-[#7A7065] leading-relaxed">
+          <span className="text-[#1A1814] font-medium">Privacy guaranteed:</span> Your emails, calendar details, and memory are never shared.
           Only availability windows and capability flags cross agent boundaries.
         </p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-surface-container rounded-2xl border border-neutral/10">
+      <div className="flex gap-1 p-1 bg-white rounded-xl border border-[#E8E4DE]">
         {[
           { id: 'inbox', label: 'Inbox', icon: Inbox, count: unreadCount + (unreadTwinChats?.length || 0) },
           { id: 'registry', label: 'Discover Twins', icon: Globe },
@@ -601,16 +594,15 @@ const AgentInbox = () => {
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all ${
-              tab === t.id
-                ? 'bg-primary text-surface-base ai-glow'
-                : 'text-neutral hover:text-on-surface'
-            }`}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all ${tab === t.id
+              ? 'bg-[#F7F5F2] text-[#1A1814] shadow-sm border border-[#E8E4DE]'
+              : 'text-[#7A7065] hover:text-[#1A1814]'
+              }`}
           >
             <t.icon size={14} />
             {t.label}
             {t.count > 0 && (
-              <span className="bg-surface-base text-primary text-[9px] font-black rounded-full w-4 h-4 flex items-center justify-center">
+              <span className="bg-[#2D6A4F] text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
                 {t.count}
               </span>
             )}
@@ -622,12 +614,12 @@ const AgentInbox = () => {
       {tab === 'inbox' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xs font-black uppercase tracking-widest text-neutral">
+            <h2 className="font-mono-ji text-[10px] uppercase tracking-widest text-[#7A7065]">
               {pendingMsgs.length > 0 || unreadTwinChats.length > 0 ? `${pendingMsgs.length + unreadTwinChats.length} awaiting action` : 'No pending messages'}
             </h2>
             <button
               onClick={fetchInbox}
-              className="flex items-center gap-1.5 text-[10px] text-neutral hover:text-primary transition-colors"
+              className="flex items-center gap-1.5 font-dm text-[11px] text-[#A09488] hover:text-[#2D6A4F] transition-colors"
             >
               <RefreshCw size={11} />
               Refresh
@@ -637,21 +629,21 @@ const AgentInbox = () => {
           {loadingInbox ? (
             <div className="space-y-3">
               {[...Array(2)].map((_, i) => (
-                <div key={i} className="bg-surface-container rounded-2xl border border-neutral/10 p-5 animate-pulse h-48" />
+                <div key={i} className="wi-skeleton rounded-xl h-48" />
               ))}
             </div>
           ) : (inbox.length === 0 && unreadTwinChats.length === 0) ? (
-            <div className="text-center py-16 text-neutral">
-              <Inbox size={40} className="mx-auto mb-3 opacity-30" />
-              <p className="font-bold text-sm">No messages yet</p>
-              <p className="text-xs mt-1 opacity-70">Scheduling proposals and Twin chats will appear here</p>
+            <div className="text-center py-16 text-[#A09488]">
+              <Inbox size={40} className="mx-auto mb-3 opacity-50" />
+              <p className="font-dm font-medium text-sm text-[#1A1814]">No messages yet</p>
+              <p className="font-dm text-xs mt-1 text-[#7A7065]">Scheduling proposals and Twin chats will appear here</p>
             </div>
           ) : (
             <AnimatePresence>
               {/* Unread Twin Chats */}
               {unreadTwinChats.length > 0 && (
                 <div className="space-y-3 mb-6">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1.5">
+                  <p className="font-mono-ji text-[10px] uppercase tracking-widest text-[#2D6A4F] flex items-center gap-1.5">
                     <MessageSquare size={11} /> Unread Twin Chats
                   </p>
                   {unreadTwinChats.map((msg, i) => (
@@ -659,21 +651,21 @@ const AgentInbox = () => {
                       key={`tc-${msg.id}-${i}`}
                       initial={{ opacity: 0, y: 12 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="bg-surface-container rounded-2xl border border-neutral/10 hover:border-primary/20 p-5 flex items-start gap-4 transition-all cursor-pointer"
+                      className="wi-card hover:border-[#2D6A4F]/30 hover:shadow-md p-5 flex items-start gap-4 transition-all cursor-pointer"
                       onClick={() => {
                         setTwinChatActiveSessionId(msg.session_id);
                         setView('twin-chat');
                       }}
                     >
-                      <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center font-bold text-primary shrink-0 border border-primary/20">
+                      <div className="w-12 h-12 rounded-xl bg-[#E8F5EE] flex items-center justify-center font-dm font-medium text-lg text-[#2D6A4F] shrink-0 border border-[#2D6A4F]/20">
                         {msg.sender?.name?.[0] || '?'}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-sm font-bold text-on-surface truncate">{msg.sender_name || msg.sender?.name || 'Contact'}</p>
-                          <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-widest">New Message</span>
+                          <p className="font-dm font-medium text-sm text-[#1A1814] truncate">{msg.sender_name || msg.sender?.name || 'Contact'}</p>
+                          <span className="font-mono-ji text-[9px] text-[#2D6A4F] bg-[#E8F5EE] border border-[#2D6A4F]/20 px-2 py-0.5 rounded-full uppercase tracking-widest">New Message</span>
                         </div>
-                        <p className="text-sm text-on-surface-variant line-clamp-2">{msg.content}</p>
+                        <p className="font-dm text-sm text-[#7A7065] line-clamp-2">{msg.content}</p>
                       </div>
                     </motion.div>
                   ))}
@@ -683,7 +675,7 @@ const AgentInbox = () => {
               {/* Pending first */}
               {pendingMsgs.length > 0 && (
                 <div className="space-y-3">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-primary flex items-center gap-1.5">
+                  <p className="font-mono-ji text-[10px] uppercase tracking-widest text-[#B45309] flex items-center gap-1.5">
                     <Zap size={11} /> Needs your approval
                   </p>
                   {pendingMsgs.map(msg => (
@@ -700,7 +692,7 @@ const AgentInbox = () => {
               {/* History */}
               {historyMsgs.length > 0 && (
                 <div className="space-y-3 mt-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-neutral">History</p>
+                  <p className="font-mono-ji text-[10px] uppercase tracking-widest text-[#7A7065]">History</p>
                   {historyMsgs.map(msg => (
                     <InboxCard
                       key={msg.msg_id}
@@ -722,22 +714,22 @@ const AgentInbox = () => {
         <div className="space-y-4">
           {/* Search */}
           <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A09488]" />
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search by handle or name…"
-              className="w-full bg-surface-container border border-neutral/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-on-surface outline-none focus:ring-1 focus:ring-primary"
+              className="wi-input pl-9"
             />
           </div>
 
           <div className="flex items-center justify-between">
-            <h2 className="text-xs font-black uppercase tracking-widest text-neutral">
+            <h2 className="font-mono-ji text-[10px] uppercase tracking-widest text-[#7A7065]">
               {filteredAgents.length} twin{filteredAgents.length !== 1 ? 's' : ''} discoverable
             </h2>
             <button
               onClick={fetchRegistry}
-              className="flex items-center gap-1.5 text-[10px] text-neutral hover:text-primary transition-colors"
+              className="flex items-center gap-1.5 font-dm text-[11px] text-[#A09488] hover:text-[#2D6A4F] transition-colors"
             >
               <RefreshCw size={11} />
               Refresh
@@ -747,14 +739,14 @@ const AgentInbox = () => {
           {loadingAgents ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {[...Array(4)].map((_, i) => (
-                <div key={i} className="bg-surface-container rounded-2xl border border-neutral/10 p-4 animate-pulse h-36" />
+                <div key={i} className="wi-skeleton rounded-xl h-36" />
               ))}
             </div>
           ) : filteredAgents.length === 0 ? (
-            <div className="text-center py-16 text-neutral">
-              <Globe size={40} className="mx-auto mb-3 opacity-30" />
-              <p className="font-bold text-sm">No other Twins online</p>
-              <p className="text-xs mt-1 opacity-70">Invite someone to join AI Twin — they'll appear here</p>
+            <div className="text-center py-16 text-[#A09488]">
+              <Globe size={40} className="mx-auto mb-3 opacity-50" />
+              <p className="font-dm font-medium text-sm text-[#1A1814]">No other Twins online</p>
+              <p className="font-dm text-xs mt-1 text-[#7A7065]">Invite someone to join AI Twin — they'll appear here</p>
             </div>
           ) : (
             <motion.div layout className="grid grid-cols-1 md:grid-cols-2 gap-3">

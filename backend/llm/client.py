@@ -66,10 +66,41 @@ GROQ_MODELS = {
     "vision":        None,  # No vision on Groq
     "vision_alt":    None,
     "vision_doc":    None,
-    "visualization": "llama-3.3-70b-versatile",
-    "reasoning":     "llama-3.3-70b-versatile",
+    "visualization": "llama-3.1-8b-instant",
+    "reasoning":     "llama-3.1-8b-instant",
     "long_context":  "llama-3.1-8b-instant",
 }
+
+# Diverse OpenRouter models — spread load when one free tier is rate-limited
+OPENROUTER_FALLBACK_MODELS = [
+    "google/gemini-2.0-flash-exp:free",
+    "mistralai/mistral-7b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen-2.5-7b-instruct:free",
+]
+
+
+class AllProvidersFailedError(RuntimeError):
+    """Raised when every provider/model in the fallback chain fails."""
+
+    def __init__(self, message: str, *, rate_limited: bool = False):
+        super().__init__(message)
+        self.rate_limited = rate_limited
+
+
+def is_rate_limited(error: Exception) -> bool:
+    msg = str(error).lower()
+    return "429" in msg or "rate limit" in msg or "rate_limit" in msg
+
+
+def user_facing_llm_error(error: Exception) -> str:
+    if is_rate_limited(error):
+        return (
+            "I'm temporarily at capacity — the AI providers are rate-limited. "
+            "Please wait a few minutes and try again."
+        )
+    return "I'm having trouble thinking right now. Please try again in a moment."
 
 
 # ─── Core text chat function ─────────────────────────────────────────────────
@@ -80,9 +111,10 @@ def chat_complete(
     temperature: float = 0.3,
     max_tokens: int = 2048,
     force_provider: str | None = None,
+    response_format: dict | None = None,
 ) -> str:
     """
-    Send a chat completion request.
+    Send a chat completion request with automatic multi-model fallback.
 
     Args:
         messages: list of {role, content} dicts
@@ -90,46 +122,90 @@ def chat_complete(
         temperature: 0.0–1.0
         max_tokens: max response tokens
         force_provider: "openrouter" | "groq" | None (auto)
+        response_format: optional OpenAI-style response_format (e.g. json_object)
 
     Returns:
         The assistant's response text.
     """
-    providers = _build_provider_order(tier, force_provider)
+    providers = _build_fallback_chain(tier, force_provider)
 
     last_error = None
+    all_rate_limited = True
     for provider_name, client, model in providers:
         if client is None or model is None:
             continue
         try:
-            logger.info(
-                f"[LLM] {provider_name} / {model} "
-                f"(tier={tier})"
-            )
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            logger.info(f"[LLM] {provider_name} / {model} (tier={tier})")
+            kwargs: dict = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if response_format:
+                kwargs["response_format"] = response_format
+            response = client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content
             if content:
                 return content.strip()
         except Exception as e:
             last_error = e
-            logger.warning(
-                f"[LLM] {provider_name}/{model} failed: "
-                f"{e}"
-            )
-            # Rate-limit backoff
-            if "429" in str(e):
-                time.sleep(2)
+            if not is_rate_limited(e):
+                all_rate_limited = False
+            logger.warning(f"[LLM] {provider_name}/{model} failed: {e}")
             continue
 
-    # All providers failed — raise
-    raise RuntimeError(
-        f"All LLM providers failed for tier={tier}. "
-        f"Last error: {last_error}"
+    raise AllProvidersFailedError(
+        f"All LLM providers failed for tier={tier}. Last error: {last_error}",
+        rate_limited=all_rate_limited and last_error is not None,
     )
+
+
+def chat_complete_json(
+    messages: list[dict],
+    tier: str = "fast",
+    temperature: float = 0.2,
+    max_tokens: int = 2048,
+) -> str:
+    """Chat completion with JSON response format, using the resilient fallback chain."""
+    return chat_complete(
+        messages,
+        tier=tier,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+    )
+
+
+def _build_fallback_chain(tier: str, force_provider: str | None = None) -> list:
+    """Ordered list of (provider_name, client, model) — skip immediately on 429."""
+    if force_provider:
+        return _build_provider_order(tier, force_provider)
+
+    chain: list[tuple] = []
+    seen: set[tuple] = set()
+
+    def add(provider: str, client, model: str | None) -> None:
+        if not client or not model:
+            return
+        key = (provider, model)
+        if key in seen:
+            return
+        seen.add(key)
+        chain.append((provider, client, model))
+
+    primary = GROQ_MODELS.get(tier) or GROQ_MODELS["fast"]
+    if tier in ("smart", "reasoning", "visualization"):
+        add("groq", groq_client, primary)
+        if primary != GROQ_MODELS["fast"]:
+            add("groq", groq_client, GROQ_MODELS["fast"])
+    else:
+        add("groq", groq_client, GROQ_MODELS["fast"])
+
+    for or_model in OPENROUTER_FALLBACK_MODELS:
+        add("openrouter", openrouter_client, or_model)
+
+    return chain
 
 
 def _build_provider_order(tier, force_provider):

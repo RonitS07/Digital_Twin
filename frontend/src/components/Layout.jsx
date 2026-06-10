@@ -25,6 +25,8 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { playNotificationSound } from '../utils/audio'
+import { signOut } from 'firebase/auth'
+import { auth } from '../firebase'
 
 const WhatsAppModal = ({ onClose }) => {
     const { whatsappReady, setIntegration } = useStore();
@@ -32,103 +34,71 @@ const WhatsAppModal = ({ onClose }) => {
     const [ready, setReady] = useState(whatsappReady === true);
     const [loading, setLoading] = useState(whatsappReady === null);
 
-    // Sync from store state reactively (WebSocket updates)
     useEffect(() => {
-        if (whatsappReady === true) {
-            setReady(true);
-            setQr(null);
-            setLoading(false);
-            setIntegration('whatsapp', true);
-        } else if (whatsappReady === false) {
-            setReady(false);
-        }
+        if (whatsappReady === true) { setReady(true); setQr(null); setLoading(false); setIntegration('whatsapp', true); }
+        else if (whatsappReady === false) setReady(false);
     }, [whatsappReady, setIntegration]);
 
-    // Fast-polling for QR code specifically (only when not ready)
     useEffect(() => {
         if (whatsappReady === true) return;
-
         let stopped = false;
         const checkStatus = async () => {
             try {
                 const data = await apiFetch('/mcp/whatsapp/qr');
                 if (stopped) return;
                 setLoading(false);
-
-                if (data.ready) {
-                    setReady(true);
-                    setQr(null);
-                    useStore.getState().setWhatsappReady(true);
-                    useStore.getState().setIntegration('whatsapp', true);
-                } else {
-                    setReady(false);
-                    setQr(data.qr || null);
-                }
-            } catch (err) {
-                if (!stopped) {
-                    console.error("WA Bridge unreachable", err);
-                    setLoading(false);
-                }
-            }
+                if (data.ready) { setReady(true); setQr(null); useStore.getState().setWhatsappReady(true); useStore.getState().setIntegration('whatsapp', true); }
+                else { setReady(false); setQr(data.qr || null); }
+            } catch (err) { if (!stopped) { console.error("WA Bridge unreachable", err); setLoading(false); } }
         };
-
         checkStatus();
         const intervalId = setInterval(checkStatus, 5000);
-        return () => {
-            stopped = true;
-            clearInterval(intervalId);
-        };
+        return () => { stopped = true; clearInterval(intervalId); };
     }, [whatsappReady]);
 
     return (
-        <div className="fixed inset-0 bg-surface-base/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 bg-[#1A1814]/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <motion.div
                 initial={{ y: '100%', opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 exit={{ y: '100%', opacity: 0 }}
-                className="bg-surface-container w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 border border-neutral/10 shadow-2xl relative"
+                className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-6 sm:p-8 border border-[#E8E4DE] shadow-[0_8px_32px_rgba(0,0,0,0.12)] relative"
             >
-                <button onClick={onClose} className="absolute right-5 top-5 text-neutral hover:text-on-surface transition-colors p-1"><X size={20} /></button>
-                <h2 className="text-xl sm:text-2xl font-manrope font-extrabold text-on-surface mb-2">WhatsApp Connection</h2>
-                <p className="text-sm text-on-surface-variant mb-6">Link your WhatsApp to allow your Twin to send notifications and read messages.</p>
+                <button onClick={onClose} className="absolute right-5 top-5 text-[#A09488] hover:text-[#1A1814] transition-colors p-1"><X size={18} /></button>
+                <h2 className="font-fraunces font-semibold text-xl text-[#1A1814] mb-1">WhatsApp Connection</h2>
+                <p className="font-dm text-sm text-[#7A7065] mb-6">Link your WhatsApp to allow your Twin to send notifications and read messages.</p>
 
-                <div className="flex flex-col items-center justify-center py-8 bg-surface-base rounded-2xl border border-neutral/5">
+                <div className="flex flex-col items-center justify-center py-8 bg-[#F7F5F2] rounded-xl border border-[#E8E4DE]">
                     {loading ? (
                         <div className="flex flex-col items-center gap-3">
-                            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                            <p className="text-xs text-neutral">Connecting to Bridge...</p>
+                            <div className="w-6 h-6 border-2 border-[#2D6A4F] border-t-transparent rounded-full animate-spin" />
+                            <p className="font-dm text-xs text-[#7A7065]">Connecting to Bridge...</p>
                         </div>
                     ) : ready ? (
-                        <div className="flex flex-col items-center gap-3 text-emerald-500">
-                            <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center">
-                                <Zap size={32} fill="currentColor" />
+                        <div className="flex flex-col items-center gap-3">
+                            <div className="w-14 h-14 bg-[#E6F4EC] rounded-full flex items-center justify-center">
+                                <Zap size={28} className="text-[#2D6A4F]" fill="currentColor" />
                             </div>
-                            <p className="font-bold">WhatsApp Connected</p>
-                            <p className="text-xs text-emerald-500/60">Your Twin is online</p>
+                            <p className="font-dm font-semibold text-[#2D6A4F]">WhatsApp Connected</p>
                         </div>
                     ) : qr ? (
-                        <div className="flex flex-col items-center gap-6">
-                            <div className="p-4 bg-white rounded-2xl shadow-xl">
-                                <img
-                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`}
-                                    alt="WhatsApp QR Code"
-                                    className="w-[200px] h-[200px]"
-                                />
+                        <div className="flex flex-col items-center gap-5">
+                            <div className="p-3 bg-white rounded-xl border border-[#E8E4DE] shadow-sm">
+                                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`} alt="WhatsApp QR Code" className="w-[200px] h-[200px]" />
                             </div>
                             <div className="text-center">
-                                <p className="text-sm font-bold text-on-surface">Scan this QR Code</p>
-                                <p className="text-xs text-neutral mt-1">Open WhatsApp {'{>}'} Linked Devices {'>'} Link a Device</p>
+                                <p className="font-dm font-semibold text-sm text-[#1A1814]">Scan this QR Code</p>
+                                <p className="font-dm text-xs text-[#7A7065] mt-1">WhatsApp → Linked Devices → Link a Device</p>
                             </div>
                         </div>
                     ) : (
-                        <div className="flex flex-col items-center gap-3 text-red-500">
-                            <p className="text-sm font-bold">Bridge Offline</p>
-                            <p className="text-xs text-neutral text-center px-6">Make sure the WhatsApp Bridge is running in your terminal.</p>
+                        <div className="flex flex-col items-center gap-2">
+                            <p className="font-dm font-semibold text-sm text-[#C0392B]">Bridge Offline</p>
+                            <p className="font-dm text-xs text-[#7A7065] text-center px-6">Make sure the WhatsApp Bridge is running in your terminal.</p>
                         </div>
                     )}
                 </div>
-
-                <button onClick={onClose} className="w-full mt-6 py-3 bg-primary text-white font-bold rounded-xl hover:brightness-110 transition-all">Done</button>
+                <button onClick={onClose} className="w-full mt-5 py-2.5 bg-[#2D6A4F] text-white font-dm font-medium rounded-lg hover:brightness-105 transition-all text-sm">Done</button>
             </motion.div>
         </div>
     );
@@ -217,94 +187,79 @@ const TaskModal = ({ onClose }) => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!title) return;
-
         if (auto) {
             setIsDelegating(true);
             try {
-                await apiFetch(`/ai/process`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        input: `Task: ${title}\nDescription: ${desc}\nPriority: ${priority}`,
-                        user_id: storeAuth.user?.uid || 'default_user'
-                    })
-                });
-            } catch (err) {
-                console.error("AI delegation failed", err);
-            } finally {
-                setIsDelegating(false);
-            }
+                await apiFetch(`/ai/process`, { method: 'POST', body: JSON.stringify({ input: `Task: ${title}\nDescription: ${desc}\nPriority: ${priority}`, user_id: storeAuth.user?.uid || 'default_user' }) });
+            } catch (err) { console.error("AI delegation failed", err); }
+            finally { setIsDelegating(false); }
         }
-
         addTask({ title, description: desc, priority, autoDelegate: auto });
         onClose();
     }
 
     return (
-        <div className="fixed inset-0 bg-surface-base/80 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="fixed inset-0 bg-[#1A1814]/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <motion.div
                 initial={{ y: '100%', opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 exit={{ y: '100%', opacity: 0 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="bg-surface-container w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 border border-neutral/10 shadow-2xl relative"
+                className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl p-6 sm:p-8 border border-[#E8E4DE] shadow-[0_8px_32px_rgba(0,0,0,0.12)] relative"
             >
-                {/* Drag handle for mobile */}
-                <div className="w-10 h-1 bg-neutral/30 rounded-full mx-auto mb-5 sm:hidden" />
-                <button onClick={onClose} className="absolute right-5 top-5 text-neutral hover:text-on-surface transition-colors p-1"><X size={20} /></button>
-                <h2 className="text-xl sm:text-2xl font-manrope font-extrabold text-on-surface mb-5">Create New Task</h2>
+                <div className="w-8 h-1 bg-[#E8E4DE] rounded-full mx-auto mb-5 sm:hidden" />
+                <button onClick={onClose} className="absolute right-5 top-5 text-[#A09488] hover:text-[#1A1814] transition-colors p-1"><X size={18} /></button>
+                <h2 className="font-fraunces font-semibold text-xl text-[#1A1814] mb-5">Create New Task</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
-                        <label className="text-[10px] uppercase font-bold text-neutral tracking-widest pl-1 mb-1 block">Task Title</label>
-                        <input value={title} onChange={e => setTitle(e.target.value)} required className="w-full bg-surface-base border-none rounded-xl py-3 px-4 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none" type="text" placeholder="e.g. Prepare Q4 OKRs" />
+                        <label className="wi-label block mb-1.5">Task Title</label>
+                        <input value={title} onChange={e => setTitle(e.target.value)} required className="wi-input" type="text" placeholder="e.g. Prepare Q4 OKRs" />
                     </div>
                     <div>
-                        <label className="text-[10px] uppercase font-bold text-neutral tracking-widest pl-1 mb-1 block">Description</label>
-                        <textarea value={desc} onChange={e => setDesc(e.target.value)} rows="2" className="w-full bg-surface-base border-none rounded-xl py-3 px-4 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none resize-none" placeholder="Provide context for the assistant..." />
+                        <label className="wi-label block mb-1.5">Description</label>
+                        <textarea value={desc} onChange={e => setDesc(e.target.value)} rows="2" className="wi-input resize-none" placeholder="Provide context for the assistant..." />
                     </div>
                     <div>
-                        <label className="text-[10px] uppercase font-bold text-neutral tracking-widest pl-1 mb-1 block">Priority</label>
-                        <select value={priority} onChange={e => setPriority(e.target.value)} className="w-full bg-surface-base border-none rounded-xl py-3 px-4 text-sm text-on-surface outline-none">
-                            <option>Low</option>
-                            <option>Medium</option>
-                            <option>High</option>
+                        <label className="wi-label block mb-1.5">Priority</label>
+                        <select value={priority} onChange={e => setPriority(e.target.value)} className="wi-input">
+                            <option>Low</option><option>Medium</option><option>High</option>
                         </select>
                     </div>
-                    <div className="flex items-center justify-between p-4 rounded-xl border border-neutral/10 bg-surface-base/50 cursor-pointer" onClick={() => setAuto(!auto)}>
+                    <div className="flex items-center justify-between p-4 rounded-xl border border-[#E8E4DE] bg-[#F7F5F2] cursor-pointer" onClick={() => setAuto(!auto)}>
                         <div>
-                            <p className="text-sm font-bold text-on-surface">Auto-delegate to AI</p>
-                            <p className="text-xs text-neutral">Twin will attempt to complete without prompting</p>
+                            <p className="font-dm font-medium text-sm text-[#1A1814]">Auto-delegate to AI</p>
+                            <p className="font-dm text-xs text-[#7A7065]">Twin will attempt to complete without prompting</p>
                         </div>
-                        <div className={`w-10 h-5 rounded-full relative transition-colors ${auto ? 'bg-primary' : 'bg-surface-container-highest'}`}>
-                            <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] transition-all ${auto ? 'right-[3px]' : 'left-[3px]'}`} />
-                        </div>
+                        <button type="button" className={`wi-toggle ${auto ? 'wi-toggle-on' : 'wi-toggle-off'}`} style={{ position: 'relative' }}>
+                            <div className={`wi-toggle-thumb ${auto ? 'left-[21px]' : 'left-[3px]'}`} />
+                        </button>
                     </div>
-                    <button type="submit" disabled={isDelegating} className="w-full py-4 bg-primary text-surface-base font-bold rounded-xl hover:brightness-110 active:scale-95 transition-transform flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest outline-none disabled:opacity-50">
+                    <button type="submit" disabled={isDelegating} className="btn-primary w-full justify-center py-3 text-sm disabled:opacity-50">
                         {isDelegating ? 'Delegating to assistant...' : 'Save Task'}
                     </button>
                 </form>
             </motion.div>
         </div>
-    )
+    );
 }
 
 // Desktop sidebar item
 const SidebarItem = ({ icon: Icon, label, active, onClick, badge }) => (
-    <motion.div
-        whileHover={{ x: 3 }}
+    <div
         onClick={onClick}
-        className={`relative flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 cursor-pointer ${active
-            ? 'bg-primary/15 text-primary border-l-4 border-primary pl-3'
-            : 'text-on-surface-variant hover:bg-primary/8 hover:text-on-surface border-l-4 border-transparent pl-3'
+        className={`nav-item relative flex items-center gap-3 px-4 h-10 transition-all duration-150 cursor-pointer select-none ${active
+            ? 'text-white nav-item-active'
+            : 'text-[#C8C2B8] hover:text-white'
             }`}
     >
-        <Icon size={19} />
-        <span className="font-manrope font-medium text-sm">{label}</span>
+        <Icon size={16} strokeWidth={active ? 2 : 1.75} />
+        <span className="font-dm text-xs font-medium">{label}</span>
         {badge > 0 && (
-            <span className="ml-auto w-4 h-4 bg-primary rounded-full flex items-center justify-center text-[9px] font-black text-white">
+            <span className="ml-auto min-w-[18px] h-[18px] bg-[#2D6A4F] rounded-full flex items-center justify-center text-[9px] font-bold text-white px-1">
                 {badge}
             </span>
         )}
-    </motion.div>
+    </div>
 )
 
 // ── FLOATING MOBILE NAV TAB ──
@@ -387,8 +342,28 @@ const Layout = ({ children, currentView, setView }) => {
     const [isMoreOpen, setMoreOpen] = useState(false);
     const [isNotificationsOpen, setNotificationsOpen] = useState(false);
     const [popupNotification, setPopupNotification] = useState(null);
+    const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
     const wsRef = useRef(null);
     const notifRef = useRef(null);
+    const profileMenuRef = useRef(null);
+
+    useEffect(() => {
+        const handler = (e) => {
+            if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+                setProfileDropdownOpen(false);
+            }
+        };
+        if (profileDropdownOpen) document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [profileDropdownOpen]);
+
+    const handleSignOut = async () => {
+        try {
+            await signOut(auth);
+        } catch (e) {
+            console.error("Sign out error", e);
+        }
+    };
     // Track currentView in a ref so the WS handler can read it without being in deps
     const currentViewRef = useRef(currentView);
 
@@ -467,8 +442,7 @@ const Layout = ({ children, currentView, setView }) => {
         };
         connect();
         return () => { alive = false; wsRef.current?.close(); };
-    // NOTE: currentView intentionally omitted — we read it via currentViewRef to avoid reconnects on navigation
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // NOTE: currentView intentionally omitted — we read it via currentViewRef to avoid reconnects on navigation
     }, [authInitialized, user?.accessToken, user?.uid, addUnreadTwinChat]);
 
     // Poll for unread agent inbox messages every 30s
@@ -543,18 +517,16 @@ const Layout = ({ children, currentView, setView }) => {
             </AnimatePresence>
 
             {/* ── DESKTOP SIDEBAR (hidden on mobile) ── */}
-            <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-64 bg-surface-container border-r border-neutral/10 flex-col p-5 z-40">
-                <div className="flex items-center gap-3 mb-8 px-2">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center overflow-hidden ai-glow">
-                        <img src="/logo.png" alt="Assistant Logo" className="w-full h-full object-cover" />
+            <aside className="wi-sidebar hidden lg:flex fixed left-0 top-0 h-screen flex-col z-40">
+                {/* Logo */}
+                <div className="flex items-center gap-3 px-6 pt-6 pb-8">
+                    <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center bg-white/10">
+                        <img src="/logo.png" alt="Aether" className="w-6 h-6 object-contain" />
                     </div>
-                    <div>
-                        <h1 className="text-primary font-manrope font-extrabold tracking-tighter text-base leading-tight uppercase">Assistant</h1>
-                        <p className="text-[9px] text-neutral font-bold uppercase tracking-widest opacity-60">Control Center</p>
-                    </div>
+                    <span className="font-dm font-bold text-sm text-white tracking-wide">AETHER</span>
                 </div>
 
-                <nav className="space-y-1 mb-8">
+                <nav className="flex-1 px-3 space-y-0.5">
                     {navItems.map(item => (
                         <SidebarItem
                             key={item.id}
@@ -567,133 +539,111 @@ const Layout = ({ children, currentView, setView }) => {
                     ))}
                 </nav>
 
-                <div className="flex-1" />
-
-                <div className="mt-4 pt-4 border-t border-neutral/10 space-y-2">
-                    <button onClick={() => setTaskModalOpen(true)} className="w-full bg-primary text-surface-base rounded-xl py-2.5 font-bold ai-glow hover:brightness-110 active:scale-95 transition-transform flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest">
+                <div className="px-4 pb-6 space-y-2">
+                    <button
+                        onClick={() => setTaskModalOpen(true)}
+                        className="w-full bg-[#2D6A4F] text-white rounded-lg py-2.5 font-dm font-medium text-xs flex items-center justify-center gap-2 hover:brightness-105 transition-all"
+                    >
                         <Plus size={14} />
                         New Task
                     </button>
-                    <div className="grid grid-cols-2 gap-2">
-                        <button
-                            onClick={() => setWAOpen(true)}
-                            className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-surface-container hover:bg-surface-container-high transition-colors border border-neutral/5"
-                        >
-                            <MessageSquare size={16} className="text-emerald-500" />
-                            <span className="text-[9px] font-black uppercase tracking-tighter text-neutral">WhatsApp</span>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                        <button onClick={() => setWAOpen(true)} className="flex flex-col items-center gap-1.5 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
+                            <MessageSquare size={14} className="text-[#C8C2B8]" />
+                            <span className="text-[10px] font-dm text-[#C8C2B8] leading-none">WhatsApp</span>
                         </button>
-                        <button
-                            onClick={() => setHelpOpen(true)}
-                            className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl bg-surface-container hover:bg-surface-container-high transition-colors border border-neutral/5"
-                        >
-                            <HelpCircle size={16} className="text-primary" />
-                            <span className="text-[9px] font-black uppercase tracking-tighter text-neutral">Support</span>
+                        <button onClick={() => setHelpOpen(true)} className="flex flex-col items-center gap-1.5 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
+                            <HelpCircle size={14} className="text-[#C8C2B8]" />
+                            <span className="text-[10px] font-dm text-[#C8C2B8] leading-none">Support</span>
                         </button>
                     </div>
                 </div>
             </aside>
 
             {/* ── MAIN CONTENT ── */}
-            <div className="lg:ml-64 flex-1 flex flex-col min-w-0 h-full relative">
+            <div className="lg:ml-[200px] flex-1 flex flex-col min-w-0 h-full relative">
 
-                {/* ── HEADER (hidden on mobile when in Chat view — Chat has its own) ── */}
-                <header className={`h-14 lg:h-16 flex items-center justify-between px-4 lg:px-8 bg-surface-base/90 backdrop-blur-3xl sticky top-0 z-50 border-b border-neutral/5 shrink-0 ${isChatView ? 'hidden lg:flex' : ''}`}>
+                {/* ── HEADER ── */}
+                <header className={`h-14 flex items-center justify-between px-6 lg:px-8 bg-[#F7F5F2] sticky top-0 z-50 shrink-0 border-b border-[#E8E4DE] ${isChatView ? 'hidden lg:flex' : ''}`}>
                     {/* Mobile: logo + view title */}
                     <div className="flex items-center gap-3 lg:hidden">
-                        <div className="w-8 h-8 rounded-xl flex items-center justify-center overflow-hidden ai-glow">
-                            <img src="/logo.png" alt="Assistant Logo" className="w-full h-full object-cover" />
+                        <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center bg-[#1A1814]/5">
+                            <img src="/logo.png" alt="Aether" className="w-5 h-5 object-contain" />
                         </div>
-                        <h1 className="text-on-surface font-manrope font-bold">{viewLabel}</h1>
+                        <h1 className="font-dm font-semibold text-sm text-[#1A1814]">{viewLabel}</h1>
                     </div>
 
-                    {/* Desktop: welcome text */}
-                    <div className="hidden lg:flex flex-col">
-                        {currentView !== 'home' ? (
-                            <>
-                                <h2 className="text-sm font-manrope font-bold text-on-surface">Welcome back, {user.name?.split(' ')[0] || 'User'}</h2>
-                                <p className="text-[10px] text-neutral font-medium">Your digital twin is ready to assist you.</p>
-                            </>
+                    {/* Desktop: page context */}
+                    <div className="hidden lg:flex items-center gap-2">
+                        {currentView === 'home' ? (
+                            <span className="flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#2D6A4F]" />
+                                <span className="font-dm text-xs font-medium text-[#7A7065] uppercase tracking-widest">All systems nominal</span>
+                            </span>
                         ) : (
-                            <div className="flex items-center gap-2">
-                                <div className="w-8 h-8 overflow-hidden animate-pulse">
-                                    <img src="/logo.png" alt="AI" className="w-full h-full object-cover" />
-                                </div>
-                                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-neutral/70">System Oversight Active</span>
-                            </div>
+                            <span className="font-dm text-sm font-medium text-[#7A7065]">{viewLabel}</span>
                         )}
                     </div>
 
-                    {/* Right side controls */}
-                    <div className="flex items-center gap-3 lg:gap-6">
-                        <div className="hidden lg:flex flex-col items-end">
-                            <span className="text-[10px] uppercase tracking-widest text-neutral font-bold">System Status</span>
-                            <span className="text-xs text-primary font-medium flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-                                Optimal
-                            </span>
+                    {/* Right controls */}
+                    <div className="flex items-center gap-3">
+                        {/* System status pill */}
+                        <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#E6F4EC] border border-[#2D6A4F]/20">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#2D6A4F]" />
+                            <span className="font-dm text-[11px] font-medium text-[#2D6A4F]">Optimal</span>
                         </div>
+
+                        {/* Notifications */}
                         <div className="relative" ref={notifRef}>
                             <button
                                 onClick={() => setNotificationsOpen(!isNotificationsOpen)}
-                                className={`text-neutral hover:text-on-surface transition-colors p-2 rounded-xl relative ${isNotificationsOpen ? 'bg-surface-container' : ''}`}
+                                className={`relative p-2 rounded-lg transition-colors ${isNotificationsOpen ? 'bg-[#E8E4DE]' : 'hover:bg-[#E8E4DE]'}`}
                             >
-                                <Bell size={20} />
+                                <Bell size={18} className="text-[#7A7065]" />
                                 {unreadTwinChats.length > 0 && (
-                                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
+                                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#2D6A4F] rounded-full" />
                                 )}
                             </button>
 
                             <AnimatePresence>
                                 {isNotificationsOpen && (
                                     <motion.div
-                                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                        className="absolute right-0 top-full mt-2 w-80 lg:w-96 bg-surface-container/95 backdrop-blur-3xl border border-neutral/10 rounded-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] overflow-hidden z-[100]"
+                                        initial={{ opacity: 0, y: 8 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: 8 }}
+                                        transition={{ duration: 0.15 }}
+                                        className="absolute right-0 top-full mt-2 w-80 bg-white border border-[#E8E4DE] rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] overflow-hidden z-[100]"
                                     >
-                                        <div className="p-4 border-b border-neutral/10 flex justify-between items-center bg-surface-base/50">
-                                            <h3 className="text-sm font-bold text-on-surface">Notifications</h3>
+                                        <div className="px-4 py-3 border-b border-[#E8E4DE] flex justify-between items-center">
+                                            <h3 className="font-dm font-semibold text-sm text-[#1A1814]">Notifications</h3>
                                             {unreadTwinChats.length > 0 && (
-                                                <div className="flex items-center gap-3">
-                                                    <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded-full font-bold">{unreadTwinChats.length} new</span>
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); useStore.setState({ unreadTwinChats: [] }); }} 
-                                                        className="text-[10px] font-bold uppercase tracking-widest text-neutral hover:text-on-surface transition-colors"
-                                                    >
-                                                        Clear All
-                                                    </button>
-                                                </div>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); useStore.setState({ unreadTwinChats: [] }); }}
+                                                    className="wi-label hover:text-[#1A1814] transition-colors"
+                                                >
+                                                    Clear all
+                                                </button>
                                             )}
                                         </div>
-                                        <div className="max-h-96 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                                        <div className="max-h-80 overflow-y-auto custom-scrollbar">
                                             {unreadTwinChats.length === 0 ? (
-                                                <div className="p-4 text-center text-neutral text-xs py-10 flex flex-col items-center justify-center">
-                                                    <div className="w-12 h-12 rounded-full bg-neutral/5 flex items-center justify-center mb-3">
-                                                        <Bell size={20} className="opacity-40" />
-                                                    </div>
-                                                    <span className="font-medium">No new notifications</span>
+                                                <div className="py-10 flex flex-col items-center text-center">
+                                                    <Bell size={20} className="text-[#A09488] mb-3" />
+                                                    <span className="font-dm text-sm text-[#7A7065]">No new notifications</span>
                                                 </div>
                                             ) : (
                                                 unreadTwinChats.map((msg, i) => (
                                                     <button
                                                         key={`${msg.id}-${i}`}
-                                                        onClick={() => {
-                                                            setNotificationsOpen(false);
-                                                            useStore.getState().setTwinChatActiveSessionId(msg.session_id);
-                                                            setView('twin-chat');
-                                                        }}
-                                                        className="w-full text-left p-3 hover:bg-white/5 active:bg-white/10 rounded-xl transition-all flex items-start gap-3 group border border-transparent hover:border-white/5"
+                                                        onClick={() => { setNotificationsOpen(false); useStore.getState().setTwinChatActiveSessionId(msg.session_id); setView('twin-chat'); }}
+                                                        className="w-full text-left px-4 py-3 hover:bg-[#F7F5F2] transition-colors flex items-start gap-3 border-b border-[#E8E4DE] last:border-b-0"
                                                     >
-                                                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0 font-bold text-primary group-hover:bg-primary group-hover:text-white group-hover:scale-105 transition-all shadow-inner">
-                                                            {(msg.sender_name || msg.sender?.name || '?')[0]}
+                                                        <div className="w-8 h-8 rounded-full bg-[#E8F5EE] flex items-center justify-center shrink-0 font-dm font-semibold text-xs text-[#2D6A4F]">
+                                                            {(msg.sender_name || '?')[0]}
                                                         </div>
-                                                        <div className="flex-1 min-w-0 pt-0.5">
-                                                            <p className="text-[10px] font-black uppercase tracking-widest text-primary mb-1 flex justify-between items-center">
-                                                                Twin Message
-                                                                <span className="text-[9px] font-medium text-neutral normal-case opacity-60">Just now</span>
-                                                            </p>
-                                                            <p className="text-sm font-bold text-on-surface truncate mb-0.5">{msg.sender_name || msg.sender?.name || 'Contact'}</p>
-                                                            <p className="text-xs text-on-surface-variant line-clamp-2 leading-relaxed opacity-80">{msg.content}</p>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="font-dm font-medium text-sm text-[#1A1814] truncate">{msg.sender_name || 'Contact'}</p>
+                                                            <p className="font-dm text-xs text-[#7A7065] line-clamp-2 mt-0.5">{msg.content}</p>
                                                         </div>
                                                     </button>
                                                 ))
@@ -703,21 +653,74 @@ const Layout = ({ children, currentView, setView }) => {
                                 )}
                             </AnimatePresence>
                         </div>
-                        <div className="h-8 w-8 rounded-full overflow-hidden border border-primary/20 bg-primary/10 flex items-center justify-center">
-                            {user.photoURL ? (
-                                <img
-                                    src={user.photoURL}
-                                    alt="Avatar"
-                                    className="h-full w-full object-cover"
-                                    onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
-                                />
-                            ) : null}
-                            <span
-                                className="text-primary text-[11px] font-bold"
-                                style={{ display: user.photoURL ? 'none' : 'flex' }}
+
+                        {/* Avatar container */}
+                        <div className="relative animate-none" ref={profileMenuRef}>
+                            <button
+                                onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+                                className="h-8 w-8 rounded-lg overflow-hidden bg-[#E8F5EE] flex items-center justify-center cursor-pointer border border-[#E8E4DE]"
                             >
-                                {user.name?.split(' ').map(n => n[0]).join('').toUpperCase() || user.email?.slice(0, 2).toUpperCase() || 'U'}
-                            </span>
+                                {user.photoURL ? (
+                                    <img src={user.photoURL} alt="Avatar" className="h-full w-full object-cover" onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }} />
+                                ) : null}
+                                <span className="font-dm text-[11px] font-semibold text-[#2D6A4F]" style={{ display: user.photoURL ? 'none' : 'flex' }}>
+                                    {user.name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U'}
+                                </span>
+                            </button>
+                            <AnimatePresence>
+                                {profileDropdownOpen && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 8 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: 8 }}
+                                        className="absolute right-0 top-full mt-2 w-64 bg-white border border-[#E8E4DE] rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] overflow-hidden z-[100] p-4 text-left"
+                                    >
+                                        <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#E8E4DE]">
+                                            <div className="h-10 w-10 rounded-full bg-[#E8F5EE] flex items-center justify-center border border-[#E8E4DE] shrink-0 overflow-hidden">
+                                                {user.photoURL ? (
+                                                    <img src={user.photoURL} alt="Avatar" className="h-full w-full object-cover" />
+                                                ) : (
+                                                    <span className="font-dm text-xs font-semibold text-[#2D6A4F]">
+                                                        {user.name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <h4 className="font-dm font-semibold text-sm text-[#1A1814] truncate">{user.name || 'User'}</h4>
+                                                <p className="font-dm text-xs text-[#7A7065] truncate">{user.email}</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between text-xs py-1.5 px-2">
+                                                <span className="text-[#7A7065]">Role</span>
+                                                <span className="font-medium text-[#1A1814]">{user.role || 'Executive'}</span>
+                                            </div>
+                                            {user.company && (
+                                                <div className="flex justify-between text-xs py-1.5 px-2">
+                                                    <span className="text-[#7A7065]">Company</span>
+                                                    <span className="font-medium text-[#1A1814]">{user.company}</span>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="mt-4 pt-3 border-t border-[#E8E4DE] flex flex-col gap-1.5">
+                                            <button
+                                                onClick={() => { setProfileDropdownOpen(false); setView('settings'); }}
+                                                className="w-full text-left px-3 py-2 text-xs font-medium text-[#1A1814] hover:bg-[#F7F5F2] rounded-lg transition-colors flex items-center gap-2"
+                                            >
+                                                <Settings size={14} /> Profile & Settings
+                                            </button>
+                                            <button
+                                                onClick={() => { setProfileDropdownOpen(false); handleSignOut(); }}
+                                                className="w-full text-left px-3 py-2 text-xs font-medium text-red-500 hover:bg-red-50/50 rounded-lg transition-colors flex items-center gap-2"
+                                            >
+                                                Sign Out
+                                            </button>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
                         </div>
                     </div>
                 </header>

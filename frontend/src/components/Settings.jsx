@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE } from '../config'
 import { apiFetch } from '../utils/apiClient'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
     User, Palette, Plug, Brain, ShieldCheck, LogOut,
     Sun, Moon, Monitor, Bell, Zap, Mail, Calendar,
@@ -14,23 +14,23 @@ import { doc, setDoc } from 'firebase/firestore'
 
 const Section = ({ icon: Icon, title, children }) => (
     <motion.div
-        initial={{ opacity: 0, y: 16 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl bg-surface-container border border-outline-variant/40 overflow-hidden"
+        className="wi-card overflow-hidden"
     >
-        <div className="flex items-center gap-3 px-7 py-5 border-b border-outline-variant/30 bg-surface-container-high/40">
-            <Icon size={18} className="text-primary" />
-            <h3 className="font-manrope font-bold text-on-surface tracking-tight">{title}</h3>
+        <div className="flex items-center gap-3 pb-4 mb-0 border-b border-[#E8E4DE]">
+            <Icon size={16} className="text-[#2D6A4F]" />
+            <h3 className="font-fraunces font-500 text-base text-[#1A1814]">{title}</h3>
         </div>
-        <div className="divide-y divide-outline-variant/20">{children}</div>
+        <div className="divide-y divide-[#E8E4DE]">{children}</div>
     </motion.div>
 );
 
 const Row = ({ label, description, children }) => (
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 px-5 lg:px-7 py-4 lg:py-5 hover:bg-surface-container-high/30 transition-colors">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 px-5 py-4 hover:bg-[#F7F5F2] transition-colors">
         <div className="flex-1 min-w-0">
-            <p className="font-semibold text-sm text-on-surface">{label}</p>
-            {description && <p className="text-xs text-on-surface-variant mt-0.5 opacity-80">{description}</p>}
+            <p className="font-dm font-medium text-sm text-[#1A1814]">{label}</p>
+            {description && <p className="font-dm text-xs text-[#7A7065] mt-0.5">{description}</p>}
         </div>
         <div className="shrink-0 w-full sm:w-auto">{children}</div>
     </div>
@@ -39,9 +39,9 @@ const Row = ({ label, description, children }) => (
 const Toggle = ({ value, onChange }) => (
     <button
         onClick={() => onChange(!value)}
-        className={`w-12 h-6 rounded-full relative p-1 transition-colors duration-200 ${value ? 'bg-primary' : 'bg-outline'}`}
+        className={`w-10 h-[22px] rounded-full relative p-[3px] transition-colors duration-150 ${value ? 'bg-[#2D6A4F]' : 'bg-[#F0F0EE]'}`}
     >
-        <div className={`w-4 h-4 bg-white rounded-full shadow transition-all duration-200 ${value ? 'translate-x-6' : 'translate-x-0'}`} />
+        <div className={`w-4 h-4 bg-white rounded-full shadow transition-all duration-150 ${value ? 'translate-x-[18px]' : 'translate-x-0'}`} />
     </button>
 );
 
@@ -60,6 +60,7 @@ const Settings = () => {
     const [draftPreferences, setDraftPreferences] = useState(() => ({ ...preferences }));
     const [toast, setToast] = useState(null);
     const [resetConfirm, setResetConfirm] = useState(false);
+    const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
     const [editName, setEditName] = useState(user.name || '');
     const [editEmail, setEditEmail] = useState(user.email || '');
@@ -69,7 +70,6 @@ const Settings = () => {
     // Keep draftPreferences in sync if store updates externally
     useEffect(() => {
         setDraftPreferences(prev => ({ ...preferences, ...prev }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Sync WhatsApp status from global store (driven by WebSocket push)
@@ -185,6 +185,37 @@ const Settings = () => {
         }
     };
 
+    const handleExportData = () => {
+        try {
+            const exportData = {
+                exportedAt: new Date().toISOString(),
+                user: {
+                    uid: user.uid,
+                    name: editName,
+                    email: editEmail,
+                    role: editRole,
+                    timezone: 'Asia/Kolkata (IST)'
+                },
+                preferences: draftPreferences,
+                themePreference: theme,
+                telegramConfig: teleConfig,
+                about: "This file contains the complete local preferences and profile details stored for your AI Twin."
+            };
+
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", `aitwin_profile_export_${user.uid || 'guest'}.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+            showToast('Profile data exported successfully.');
+        } catch (err) {
+            console.error("Export data failed", err);
+            showToast('Failed to export data.', 'error');
+        }
+    };
+
     const handleResetMemory = async () => {
         if (!resetConfirm) {
             setResetConfirm(true);
@@ -206,74 +237,46 @@ const Settings = () => {
     };
 
     return (
-        <div className="p-4 sm:p-6 lg:p-10 max-w-3xl mx-auto space-y-6 lg:space-y-8 relative pb-36">
+        <div className="p-4 sm:p-6 lg:p-10 max-w-3xl mx-auto space-y-5 relative pb-32">
             {toast && (
-                <div className={`fixed top-6 right-6 z-[200] px-5 py-3 rounded-2xl shadow-2xl text-sm font-bold flex items-center gap-3 transition-all ${
-                    toast.type === 'error'
-                        ? 'bg-red-500/90 text-white border border-red-400/30'
-                        : 'bg-primary/90 text-white border border-primary/30'
-                }`}>
-                    {toast.type === 'error' ? '\u274c' : '\u2705'} {toast.msg}
+                <div className={`fixed top-6 right-6 z-[200] px-4 py-2.5 rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.08)] text-sm font-dm font-medium flex items-center gap-2 ${toast.type === 'error'
+                    ? 'bg-[#FFF0EE] text-[#C0392B] border border-[#C0392B]/20'
+                    : 'bg-[#E6F4EC] text-[#2D6A4F] border border-[#2D6A4F]/20'
+                    }`}>
+                    {toast.type === 'error' ? '✕' : '✓'} {toast.msg}
                 </div>
             )}
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-2">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-4">
                 <div>
-                    <p className="text-xs font-bold uppercase tracking-widest text-primary mb-2">Configuration</p>
-                    <h2 className="text-3xl lg:text-4xl font-manrope font-extrabold text-on-surface tracking-tight">Settings</h2>
-                    <p className="text-on-surface-variant mt-1 text-sm">Manage your AI Twin behaviour, integrations & account.</p>
+                    <p className="wi-label mb-2">Configuration</p>
+                    <h2 className="font-fraunces font-semibold text-3xl text-[#1A1814]">Settings</h2>
+                    <p className="font-dm text-sm text-[#7A7065] mt-1">Manage your AI Twin behaviour, integrations &amp; account.</p>
                 </div>
                 <motion.button
-                    whileTap={{ scale: 0.95 }}
+                    whileTap={{ scale: 0.97 }}
                     onClick={handleSave}
                     disabled={isSaving}
-                    className={`flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all shadow-lg shadow-primary/20 w-full sm:w-fit ${saved ? 'bg-green-500/20 text-green-500 shadow-none' : 'bg-primary text-white hover:brightness-110'} ${isSaving ? 'opacity-80 cursor-wait' : ''}`}
+                    className={`flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg font-dm font-medium text-sm transition-all w-full sm:w-fit ${saved ? 'bg-[#E6F4EC] text-[#2D6A4F]' : 'bg-[#2D6A4F] text-white hover:brightness-105'
+                        } ${isSaving ? 'opacity-70 cursor-wait' : ''}`}
                 >
-                    {isSaving ? (
-                        <><Loader2 size={16} className="animate-spin" /> Saving...</>
-                    ) : saved ? (
-                        <><Check size={16} /> Saved!</>
-                    ) : (
-                        'Save Changes'
-                    )}
+                    {isSaving ? <><Loader2 size={14} className="animate-spin" /> Saving...</> : saved ? <><Check size={14} /> Saved</> : 'Save Changes'}
                 </motion.button>
             </div>
 
             <Section icon={User} title="Account">
                 <Row label="Display Name" description="Used in greetings and AI responses">
-                    <input
-                        type="text"
-                        value={editName}
-                        onChange={(e) => setEditName(e.target.value)}
-                        className="text-on-surface font-semibold text-sm bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-full sm:w-48 sm:text-right"
+                    <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
+                        className="wi-input sm:w-48 text-right"
                     />
                 </Row>
-                <Row label="Profile Image" description="Publicly visible in Agent Network">
-                    <div className="flex items-center gap-3 w-full sm:w-auto">
-                        {editPhoto && (
-                            <img src={editPhoto} className="w-8 h-8 rounded-full border border-primary/20 shrink-0" alt="Preview" />
-                        )}
-                        <input
-                            type="text"
-                            value={editPhoto}
-                            onChange={(e) => setEditPhoto(e.target.value)}
-                            placeholder="https://..."
-                            className="text-on-surface font-semibold text-xs bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-full sm:w-64 sm:text-right"
-                        />
-                    </div>
-                </Row>
                 <Row label="Email" description="Your primary login email">
-                    <input
-                        type="text"
-                        value={editEmail}
-                        onChange={(e) => setEditEmail(e.target.value)}
-                        className="text-on-surface font-semibold text-sm bg-surface-container-high px-4 py-1.5 rounded-lg border border-outline-variant/30 focus:border-primary focus:outline-none w-full sm:w-72 sm:text-right"
+                    <input type="text" value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
+                        className="wi-input sm:w-64 text-right"
                     />
                 </Row>
                 <Row label="Role" description="Determines AI Twin tone and prioritisation">
-                    <select
-                        value={editRole}
-                        onChange={(e) => setEditRole(e.target.value)}
-                        className="text-primary font-bold text-xs uppercase tracking-wider bg-primary/10 px-3 py-1.5 rounded-full outline-none focus:ring-1 focus:ring-primary/50 text-right appearance-none cursor-pointer"
+                    <select value={editRole} onChange={(e) => setEditRole(e.target.value)}
+                        className="font-dm font-medium text-xs text-[#2D6A4F] bg-[#E8F5EE] px-3 py-1.5 rounded-full border border-[#2D6A4F]/20 outline-none cursor-pointer appearance-none"
                     >
                         <option value="Product Manager">Product Manager</option>
                         <option value="Engineering Lead">Engineering Lead</option>
@@ -282,7 +285,7 @@ const Settings = () => {
                     </select>
                 </Row>
                 <Row label="Time Zone" description="Affects calendar scheduling defaults">
-                    <span className="flex items-center gap-1.5 text-sm text-on-surface-variant"><Clock size={14} /> Asia/Kolkata (IST)</span>
+                    <span className="font-mono-ji text-xs text-[#7A7065]">Asia/Kolkata (IST)</span>
                 </Row>
             </Section>
 
@@ -389,12 +392,12 @@ const Settings = () => {
                             <Toggle value={teleConfig.enabled} onChange={(val) => setTeleConfig(prev => ({ ...prev, enabled: val }))} />
                         </div>
                         <div className="text-right">
-                           <p className="text-[10px] text-on-surface-variant opacity-80 decoration-primary/40 underline-offset-2">
-                             1. Open <a href="https://t.me/aitwin_assistant_bot" target="_blank" rel="noopener noreferrer" className="text-primary font-bold hover:underline">@aitwin_assistant_bot</a>
-                           </p>
-                           <p className="text-[10px] text-on-surface-variant opacity-80">
-                             2. Send <b>/start</b> to get your ID
-                           </p>
+                            <p className="text-[10px] text-on-surface-variant opacity-80 decoration-primary/40 underline-offset-2">
+                                1. Open <a href="https://t.me/aitwin_assistant_bot" target="_blank" rel="noopener noreferrer" className="text-primary font-bold hover:underline">@aitwin_assistant_bot</a>
+                            </p>
+                            <p className="text-[10px] text-on-surface-variant opacity-80">
+                                2. Send <b>/start</b> to get your ID
+                            </p>
                         </div>
                     </div>
                 </Row>
@@ -409,34 +412,97 @@ const Settings = () => {
                 </Row>
             </Section>
 
-            <Section icon={ShieldCheck} title="Account & Security">
+            <Section icon={ShieldCheck} title="Account &amp; Security">
                 <Row label="Privacy Policy" description="Review data handling practices">
-                    <button className="flex items-center gap-1 text-primary text-sm font-semibold hover:underline">View <ChevronRight size={14} /></button>
+                    <button onClick={() => setShowPrivacyModal(true)} className="font-dm text-sm text-[#2D6A4F] hover:underline">View &rsaquo;</button>
                 </Row>
                 <Row label="Export My Data" description="Download everything the Twin knows about you">
-                    <button className="text-xs font-bold px-4 py-2 border border-outline-variant/60 rounded-xl text-on-surface hover:bg-surface-container-high transition-colors">Export</button>
+                    <button onClick={handleExportData} className="btn-secondary text-xs py-1.5 px-4">Export</button>
                 </Row>
-                <Row label="Reset Memory" description="Clear all stored AI context & preferences">
+                <Row label="Reset Memory" description="Clear all stored AI context &amp; preferences">
                     <button
                         onClick={handleResetMemory}
-                        className={`flex items-center gap-1.5 text-xs font-bold px-4 py-2 border rounded-xl transition-all ${
-                            resetConfirm
-                                ? 'bg-red-500 text-white border-red-500 animate-pulse'
-                                : 'border-red-500/30 text-red-500 hover:bg-red-500/10'
-                        }`}
+                        className={`font-dm text-sm font-medium transition-colors ${resetConfirm ? 'text-[#C0392B] underline' : 'text-[#C0392B] hover:underline'
+                            }`}
                     >
-                        <Trash2 size={13} /> {resetConfirm ? 'Click again to confirm' : 'Reset'}
+                        {resetConfirm ? 'Click again to confirm' : 'Reset Memory'}
                     </button>
                 </Row>
                 <Row label="Sign Out" description="Log out of this device">
-                    <button
-                        onClick={handleSignOut}
-                        className="flex items-center gap-2 px-5 py-2 bg-red-500/10 text-red-500 font-bold rounded-xl hover:bg-red-500/20 transition-colors text-sm"
-                    >
-                        <LogOut size={15} /> Sign Out
+                    <button onClick={handleSignOut} className="font-dm text-sm text-[#C0392B] hover:underline flex items-center gap-1.5">
+                        <LogOut size={14} /> Sign Out
                     </button>
                 </Row>
             </Section>
+
+            <AnimatePresence>
+                {showPrivacyModal && (
+                    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setShowPrivacyModal(false)}
+                            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                        />
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                            transition={{ type: 'spring', duration: 0.4 }}
+                            className="bg-surface border border-surface-border rounded-3xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-8 relative z-10 shadow-2xl flex flex-col gap-6 text-[var(--text-primary)]"
+                        >
+                            <div className="flex items-center gap-3 pb-4 border-b border-surface-border">
+                                <ShieldCheck size={24} className="text-[#2D6A4F]" />
+                                <h3 className="font-fraunces font-semibold text-xl">Privacy Sovereignty Protocol</h3>
+                            </div>
+                            <div className="space-y-5 text-sm leading-relaxed text-[var(--text-secondary)] font-dm">
+                                <p>
+                                    Your AI Twin operates under a strict Zero-Trust Privacy Pact. All workspace operations are isolated to your local domain.
+                                </p>
+                                <div className="space-y-4">
+                                    <div className="flex gap-4">
+                                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-[#2D6A4F] shrink-0 font-bold text-sm">1</div>
+                                        <div>
+                                            <h4 className="font-bold text-[var(--text-primary)]">Neural Isolation</h4>
+                                            <p className="text-xs mt-0.5">All executive behavior patterns and memories are stored on secure private databases siloed strictly to your user profile.</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-[#2D6A4F] shrink-0 font-bold text-sm">2</div>
+                                        <div>
+                                            <h4 className="font-bold text-[var(--text-primary)]">Zero Public Training</h4>
+                                            <p className="text-xs mt-0.5">Your email replies, calendar updates, and decisions are never used to train public models or shared with third parties.</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-[#2D6A4F] shrink-0 font-bold text-sm">3</div>
+                                        <div>
+                                            <h4 className="font-bold text-[var(--text-primary)]">Anonymized Processing</h4>
+                                            <p className="text-xs mt-0.5">Data accessed through connected APIs (Gmail/Calendar) is sanitized locally to protect sensitive user details before model inference.</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-[#2D6A4F] shrink-0 font-bold text-sm">4</div>
+                                        <div>
+                                            <h4 className="font-bold text-[var(--text-primary)]">Sovereign Control</h4>
+                                            <p className="text-xs mt-0.5">You can delete all vector context and purge tool integrations instantly from the database using the "Reset Memory" tool.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="pt-4 border-t border-surface-border flex justify-end">
+                                <button
+                                    onClick={() => setShowPrivacyModal(false)}
+                                    className="btn-primary w-full justify-center rounded-xl py-2.5 font-bold"
+                                >
+                                    Acknowledge & Close
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 };

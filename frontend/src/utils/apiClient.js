@@ -11,6 +11,28 @@ const processQueue = (error, token = null) => {
     failedQueue = [];
 };
 
+// Retry a fetch up to maxAttempts times on transient connection errors (ECONNREFUSED etc.)
+const fetchWithRetry = async (url, options, maxAttempts = 3) => {
+    let lastErr;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        try {
+            return await fetch(url, options);
+        } catch (err) {
+            const isConnectionErr = (
+                err instanceof TypeError &&
+                (err.message.includes('Failed to fetch') ||
+                 err.message.includes('NetworkError') ||
+                 err.message.includes('Load failed'))
+            );
+            if (!isConnectionErr || attempt === maxAttempts - 1) throw err;
+            lastErr = err;
+            // Exponential backoff: 500ms, 1000ms, 2000ms
+            await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+        }
+    }
+    throw lastErr;
+};
+
 const GOOGLE_INTEGRATION_ENDPOINTS = [
     '/gmail/',
     '/calendar/',
@@ -34,7 +56,7 @@ const shouldSkipTokenRefresh = (endpoint, errData = {}) => {
 export const apiFetch = async (endpoint, options = {}) => {
     const fullUrl = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
     const headers = {
-        'Content-Type': 'application/json',
+        ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
         ...options.headers,
     };
 
@@ -57,7 +79,7 @@ export const apiFetch = async (endpoint, options = {}) => {
     }
 
     try {
-        const response = await fetch(fullUrl, { ...options, headers });
+        const response = await fetchWithRetry(fullUrl, { ...options, headers });
 
         // Handle 401 Unauthorized
         if (response.status === 401) {
@@ -92,7 +114,7 @@ export const apiFetch = async (endpoint, options = {}) => {
 
                     const fbToken = await user.getIdToken(true);
                     
-                    const authRes = await fetch(`${API_BASE}/auth/firebase`, {
+                    const authRes = await fetchWithRetry(`${API_BASE}/auth/firebase`, {
                         method: 'POST',
                         headers: { 
                             'Content-Type': 'application/json',

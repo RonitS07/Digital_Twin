@@ -81,6 +81,7 @@ from services.agent_registry import register_agent
 # ── Twin-to-Twin Direct Chat ───────────────────────────────────────────────
 from db.twin_chat_models import DirectChatSession, DirectChatMessage  # register models
 from routers.twin_chat import router as twin_chat_router
+from routers.voice import router as voice_router
 from mcp.servers import register_all_servers
 from mcp.registry import mcp_registry
 
@@ -180,6 +181,7 @@ app.include_router(admin_router, prefix="/admin", tags=["admin"])
 
 # Mount Twin-to-Twin Direct Chat router
 app.include_router(twin_chat_router)
+app.include_router(voice_router)
 
 def _safe_frontend_url(url: str) -> str:
     """
@@ -379,7 +381,7 @@ Return ONLY valid JSON: {"action_item": "null or string", "entities": [{"key":"t
                         try:
                             cat_mem = StructuredMemory(
                                 user_id=uid,
-                                category="reference",
+                                category="email_triage",
                                 key=f"email_category_{email['id'][:8]}",
                                 value=f"{category}: {info['subject'][:60]}",
                                 source=f"email_{email['id']}"
@@ -1199,6 +1201,9 @@ class ProcessRequest(BaseModel):
     intent_hint: Optional[str] = None
     approved: bool = False
 
+class CreateSessionRequest(BaseModel):
+    session_id: str
+
 class MemoryRequest(BaseModel):
     user_id: str
     doc_id: str
@@ -1597,7 +1602,7 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
                 doc_id=f"{uuid.uuid4().hex}_user",
                 content=req.input,
                 type="chat",
-                metadata={"role": "user", "timestamp": datetime.now(timezone.utc).isoformat()}
+                metadata={"role": "user", "session_id": req.session_id, "timestamp": datetime.now(timezone.utc).isoformat()}
             )
             if final_state.get("output"):
                 store_memory(
@@ -1605,7 +1610,7 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
                     doc_id=f"{uuid.uuid4().hex}_assistant",
                     content=str(final_state.get("output")),
                     type="chat",
-                    metadata={"role": "assistant", "intent": final_state.get("intent", "other"), "timestamp": datetime.now(timezone.utc).isoformat()}
+                    metadata={"role": "assistant", "session_id": req.session_id, "intent": final_state.get("intent", "other"), "timestamp": datetime.now(timezone.utc).isoformat()}
                 )
         except Exception as e:
             logger.warning(f"Memory store skipped: {e}")
@@ -1659,7 +1664,11 @@ async def process(request: Request, req: ProcessRequest, current_user: User = De
     except HTTPException:
         raise
     except Exception as e:
+        from llm.client import is_rate_limited, user_facing_llm_error, AllProvidersFailedError
         logger.exception(f"Graph Error: {e}")
+        if isinstance(e, AllProvidersFailedError) or is_rate_limited(e):
+            msg = user_facing_llm_error(e)
+            return {"output": msg, "error": "rate_limited", "response_type": "text"}
         return {"output": f"❌ **Intelligence Error:** {str(e)}", "error": str(e)}
 
 class GenerateTitleRequest(BaseModel):
@@ -2104,15 +2113,52 @@ def get_sessions(current_user: User = Depends(get_current_user), db: Session = D
         logger.exception(f"Sessions Error: {e}")
         return {"sessions": []}
 
+@app.post("/sessions/create")
+def create_session(req: CreateSessionRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        from db.models import TaskLog
+        # Create an initialization entry so it shows up in get_sessions immediately
+        new_log = TaskLog(
+            user_id=current_user.id,
+            session_id=req.session_id,
+            kind="session",
+            input="New Chat",
+            intent="system",
+            output="Session initialized"
+        )
+        db.add(new_log)
+        db.commit()
+        return {"ok": True, "session_id": req.session_id}
+    except Exception as e:
+        logger.exception(f"Create Session Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create session")
+
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     try:
-        # Verify the logs belong to the current user and delete them
+        from db.models import StructuredMemory
+        from memory.chroma import delete_documents_by_session_id
+
+        # 1. Delete task logs
         deleted_count = db.query(TaskLog).filter(
             TaskLog.session_id == session_id,
             TaskLog.user_id == current_user.id
         ).delete()
+
+        # 2. Delete structured memory titles associated with the session
+        db.query(StructuredMemory).filter(
+            StructuredMemory.user_id == current_user.id,
+            StructuredMemory.category == "session_title",
+            StructuredMemory.key == session_id
+        ).delete()
+
         db.commit()
+
+        # 3. Purge associated Chroma DB context memory documents for this session
+        try:
+            delete_documents_by_session_id(user_id=current_user.id, session_id=session_id)
+        except Exception as chroma_e:
+            logger.warning(f"Failed to evict Chroma memories for session {session_id}: {chroma_e}")
         
         return {"ok": True, "deleted": deleted_count}
     except Exception as e:
@@ -2129,10 +2175,13 @@ def list_calendar(max_results: int = 20, current_user: User = Depends(get_curren
     except HttpError as e:
         sc, payload = _map_google_http_error(e)
         raise HTTPException(status_code=sc, detail=payload)
+    except (TimeoutError, OSError) as e:
+        logger.warning("Calendar request timed out or failed: %s", e)
+        return {"events": [], "count": 0}
     except Exception as e:
-        err_msg = str(e)
-        if "unable to find the server" in err_msg.lower() or "temporary failure in name resolution" in err_msg.lower():
-            logger.warning(f"🌐 Calendar Connectivity issue: {err_msg}")
+        err_msg = str(e).lower()
+        if any(s in err_msg for s in ("timed out", "timeout", "unable to find the server", "name resolution")):
+            logger.warning("Calendar connectivity issue: %s", e)
         else:
             logger.exception(e)
         return {"events": [], "count": 0}
@@ -2147,10 +2196,13 @@ def inbox(max_results: int = 5, current_user: User = Depends(get_current_user), 
     except HttpError as e:
         sc, payload = _map_google_http_error(e)
         raise HTTPException(status_code=sc, detail=payload)
+    except (TimeoutError, OSError) as e:
+        logger.warning("Gmail request timed out or failed: %s", e)
+        return {"emails": []}
     except Exception as e:
-        err_msg = str(e)
-        if "unable to find the server" in err_msg.lower() or "temporary failure in name resolution" in err_msg.lower():
-            logger.warning(f"🌐 Gmail Connectivity issue: {err_msg}")
+        err_msg = str(e).lower()
+        if any(s in err_msg for s in ("timed out", "timeout", "unable to find the server", "name resolution")):
+            logger.warning("Gmail connectivity issue: %s", e)
         else:
             logger.exception(e)
         return {"emails": []}
@@ -2896,19 +2948,28 @@ def get_analytics(
     for t in recent_tasks:
         day_name = t.created_at.strftime('%a')
         if day_name in distribution:
-            distribution[day_name] += 1
+            # High cognitive demand intents get 15 points, simpler ones 8
+            if t.intent in ("email_draft", "email_send", "calendar_create", "file_generate", "visual"):
+                distribution[day_name] += 15
+            else:
+                distribution[day_name] += 8
         
     for e in recent_emails:
         day_name = e.processed_at.strftime('%a')
         if day_name in distribution:
-            distribution[day_name] += 1
+            if e.action_taken == 'sent':
+                distribution[day_name] += 6
+            elif e.action_taken == 'drafted':
+                distribution[day_name] += 4
+            else:
+                distribution[day_name] += 2
     
     for m in meetings:
         try:
             m_date = datetime.fromisoformat(m["start"].replace("Z", "+00:00"))
             m_day = m_date.strftime('%a')
             if m_day in distribution:
-                distribution[m_day] += 1
+                distribution[m_day] += 20  # Meetings require high active engagement/focus
         except Exception:
             continue
 
@@ -2923,6 +2984,7 @@ def get_analytics(
         heatmap.append({
             "day": d,
             "tasks": val,
+            "load": val,
             "intensity": intensity
         })
 
