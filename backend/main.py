@@ -628,7 +628,7 @@ async def monitor_telegram():
                             continue
                         
                         if text == "/help":
-                            help_msg = """
+                            help_msg = r"""
 🤖 *AI Twin Telegram Commands*
 
 📅 *Intelligence*
